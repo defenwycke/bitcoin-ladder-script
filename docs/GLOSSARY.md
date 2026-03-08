@@ -31,6 +31,23 @@ expects the fully adapted signature in the witness -- it verifies as a standard 
 signature against the signing key. The adaptor point is committed in the conditions to
 prove the protocol structure.
 
+### Anchor
+
+A block family (0x0500-0x05FF) that commits to external state references, bridging on-chain
+UTXOs to off-chain protocols and external data sources. Six anchor types are defined:
+
+- **ANCHOR (0x0501):** Generic anchor point. Commits to one or more typed fields.
+- **ANCHOR_CHANNEL (0x0502):** Payment channel anchor. Commits to a channel ID and
+  sequence number for state binding.
+- **ANCHOR_POOL (0x0503):** Liquidity pool anchor. Binds the UTXO to a specific pool
+  structure.
+- **ANCHOR_RESERVE (0x0504):** Reserve proof anchor. Commits to a minimum reserve
+  amount for off-chain balance proofs.
+- **ANCHOR_SEAL (0x0505):** Tamper-evident seal. Single-use commitment for client-side
+  validation.
+- **ANCHOR_ORACLE (0x0506):** Oracle attestation anchor. Requires a signed attestation
+  from a committed oracle key.
+
 ### AND Logic
 
 The evaluation rule within a single rung. All blocks in a rung must independently
@@ -82,6 +99,38 @@ An enum (`RungCoilType`, `uint8_t`) that determines the unlock semantics of a ru
   address specified in the coil.
 - **COVENANT (0x03):** The coil constrains the spending transaction's output structure.
   Used with recursion and CTV blocks to enforce output conditions.
+
+In the Ladder Engine visual tool, additional coil types are available for cross-rung
+composition within the diagram:
+
+- **RELAY:** Sets an internal flag that other rungs can read via relay contacts. The rung
+  does not produce a TX output -- it is an intermediate logic signal.
+- **LATCH:** Sets a persistent flag that remains active once set. Other rungs can read the
+  latch state via contacts.
+- **UNLATCH:** Clears a previously set latch flag.
+- **SIGNAL:** Emits a named signal that downstream rungs can reference. Used for multi-stage
+  approval patterns.
+
+These relay coil types are evaluated top-to-bottom within the ladder diagram. Circular
+dependencies are not permitted. Relay coils compile to multi-rung conditions in the wire
+format -- they are a visual composition tool, not separate consensus-level coil types.
+
+### Compound Block
+
+A block from the Compound family (0x0700-0x07FF) that collapses common multi-block
+patterns into a single block, reducing wire overhead by eliminating duplicate block
+headers. Three compound blocks are defined:
+
+- **TIMELOCKED_SIG (0x0701):** Signature verification with relative timelock. Replaces
+  the SIG + CSV two-block pattern, saving 8 bytes on wire.
+- **HTLC (0x0702):** Hash Time Locked Contract. Combines hash preimage verification,
+  relative timelock, and signature check. Replaces the HASH_PREIMAGE + CSV + SIG
+  three-block pattern, saving 16 bytes.
+- **HASH_SIG (0x0703):** Hash preimage verification combined with signature check.
+  Replaces the HASH_PREIMAGE + SIG two-block pattern, saving 8 bytes.
+
+Each compound block performs the evaluation of its constituent blocks in sequence. All
+sub-checks must pass for the compound block to return SATISFIED.
 
 ### Condition
 
@@ -153,6 +202,27 @@ The OR evaluation strategy across rungs. The evaluator iterates rungs in order a
 returns true as soon as one rung evaluates to SATISFIED. Remaining rungs are not
 evaluated. This means the first satisfied rung determines the spend path. Defined in
 `EvalLadder()`.
+
+### Governance Block
+
+A block from the Governance family (0x0800-0x08FF) that enforces transaction-level
+constraints by inspecting the spending transaction's structure, weight, input/output
+counts, and value ratios. These constraints have no Tapscript equivalent. Six governance
+blocks are defined:
+
+- **EPOCH_GATE (0x0801):** Periodic spending windows using block height modular
+  arithmetic. Allows spending only during specific portions of each epoch.
+- **WEIGHT_LIMIT (0x0802):** Maximum transaction weight constraint. Prevents the UTXO
+  from being spent in oversized transactions.
+- **INPUT_COUNT (0x0803):** Min/max bounds on the number of inputs in the spending
+  transaction.
+- **OUTPUT_COUNT (0x0804):** Min/max bounds on the number of outputs in the spending
+  transaction.
+- **RELATIVE_VALUE (0x0805):** Anti-siphon ratio enforcement. Ensures output value
+  maintains a minimum ratio to input value using integer numerator/denominator with
+  overflow protection.
+- **ACCUMULATOR (0x0806):** Merkle set membership proof. Verifies that a value belongs
+  to a committed set using sorted-pair Merkle proofs with root update.
 
 ### Inversion
 
@@ -280,6 +350,19 @@ on-chain primitive but a conceptual term for the NUMERIC parameters within PLC b
 that change over time through RECURSE_MODIFIED mutations. Examples include the
 `accumulated` field in TIMER_CONTINUOUS, the `state` field in LATCH_SET/LATCH_RESET,
 and the `current` field in COUNTER_UP/COUNTER_PRESET.
+
+### Relay Coil
+
+A visual composition mechanism in the Ladder Engine that enables cross-rung AND logic.
+A relay coil allows one rung to set an internal flag that another rung reads via a relay
+contact. This creates multi-condition approval patterns where Rung A must be satisfied
+before Rung B can proceed, even though they are separate evaluation paths.
+
+Four relay coil types are supported in the engine: RELAY (set/read flag), LATCH (set
+persistent flag), UNLATCH (clear latch), and SIGNAL (named signal). Relay coils are
+evaluated top-to-bottom; circular dependencies are rejected. In the wire format, relay
+patterns compile into multi-rung conditions on the same TX output -- they are a
+compositional tool, not separate consensus primitives.
 
 ### Rung
 
