@@ -1655,28 +1655,6 @@ body {
   opacity: 0.3;
 }
 
-/* Watch mode */
-.watch-indicator {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  font-size: 10px;
-  color: var(--green-bright);
-  background: var(--green-dim);
-  border: 1px solid var(--green);
-}
-
-@keyframes watchBlink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
-}
-.watch-dot {
-  width: 6px;
-  height: 6px;
-  background: var(--green-bright);
-  animation: watchBlink 1s ease-in-out infinite;
-}
 
 /* Examples Modal */
 .examples-overlay {
@@ -3988,7 +3966,7 @@ function RungView({ rung, rungIndex, rungCount, selectedBlock, selectedCoil, sel
 }
 
 function LadderView({ rungs, selectedBlock, selectedCoil, selectedInput, mode, simState, onSelectBlock, onSelectCoil, onSelectInput, onDeleteBlock, onDeleteRung, onDropBlock, onAddRung, onAddRungWithBlock, onRungLabelChange, onReorderBlock, onMoveRung, onMoveBlockCrossRung, txOutputs, txInputs, fullscreen, onToggleFullscreen, scanPhase, scanStep, scanResults, scanSpeed, onScanStart, onScanPause, onScanResume, onScanStepFwd, onScanStepBack, onScanReset, onScanSpeedChange, scanIdx, scanTotal, spentRungs, forcedBlocks, onForceBlock, onExecuteRung, onResetSim, onStartScanFrom, simActiveRungId, simActiveStep, simStepResults, onStepBlock, tips, onNameChange, onExpandBlock, onBlockContextMenu, renamingBlockId, onClearRenaming, onClear, onInputContextMenu, onRungChange, renamingInputId, onClearRenamingInput, onDeselect, onOutputContextMenu, onJustifyLeft }) {
-  const simMode = mode === 'simulate' || mode === 'watch';
+  const simMode = mode === 'simulate';
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
@@ -4083,12 +4061,6 @@ function LadderView({ rungs, selectedBlock, selectedCoil, selectedInput, mode, s
     <div className="ladder-area">
       <div className="ladder-toolbar">
         <span style={{ fontSize: 10, color: 'var(--text-secondary)', letterSpacing: 1 }}>LADDER</span>
-        {mode === 'watch' && (
-          <div className="watch-indicator">
-            <div className="watch-dot" />
-            LIVE
-          </div>
-        )}
         <div className="zoom-controls">
           <button className="zoom-btn" onClick={() => setZoom(z => Math.round(Math.max(0.3, z - 0.1) * 10) / 10)} title="Zoom out">−</button>
           <span className="zoom-level" onClick={resetView} style={{ cursor: 'pointer' }} title="Click to reset zoom">{Math.round(zoom * 100)}%</span>
@@ -6479,7 +6451,7 @@ function App() {
     return () => window.removeEventListener('keydown', handler);
   }, [showExamples, ladderFullscreen, simActiveRungId, contextMenu, inputContextMenu, outputContextMenu, selectedBlockId, selectedInputId, selectedCoilId, isSimMode]);
 
-  const isSimMode = mode === 'simulate' || mode === 'watch';
+  const isSimMode = mode === 'simulate';
 
   // Auto-switch right panel tab when entering/leaving sim mode
   useEffect(() => {
@@ -6490,42 +6462,6 @@ function App() {
     }
   }, [isSimMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Watch mode — poll signet for real block height, no fallback ticker
-  const [watchLive, setWatchLive] = useState(false);
-  useEffect(() => {
-    if (mode !== 'watch') { setWatchLive(false); return; }
-    let cancelled = false;
-
-    const pollSignet = async () => {
-      try {
-        const r = await fetch(SIGNET_API + '/api/ladder/status');
-        if (cancelled) return;
-        if (r.ok) {
-          const data = await r.json();
-          if (data.blocks) {
-            setWatchLive(true);
-            setSimState(prev => {
-              const heightDelta = data.blocks - (prev.blockHeight || 0);
-              return {
-                ...prev,
-                blockHeight: data.blocks,
-                csvBlocks: prev.csvBlocks + Math.max(0, heightDelta),
-              };
-            });
-          }
-        } else {
-          setWatchLive(false);
-        }
-      } catch {
-        if (!cancelled) setWatchLive(false);
-      }
-    };
-
-    pollSignet();
-    const signetInterval = setInterval(pollSignet, 10000);
-
-    return () => { cancelled = true; clearInterval(signetInterval); };
-  }, [mode]);
 
   // Build the flat scan sequence: input → block0 → block1 → ... → coil, for each rung
   const scanSequence = useMemo(() => {
@@ -7416,7 +7352,6 @@ ${ladderRows.map(r => `
           <button className={`mode-tab ${mode === 'build' ? 'active' : ''}`} onClick={() => setMode('build')} title={showTooltips ? 'Construct ladder rungs — drag blocks from palette' : undefined}>BUILD</button>
           <button className={`mode-tab ${mode === 'simulate' ? 'active' : ''}`} onClick={() => setMode('simulate')} title={showTooltips ? 'Test rungs — click rung labels to step through, Alt+click blocks to force' : undefined}>SIMULATE</button>
           <button className={`mode-tab ${mode === 'signet' ? 'active' : ''}`} onClick={() => setMode('signet')} title={showTooltips ? 'Submit transactions to Ghost signet via RPC proxy' : undefined} style={mode === 'signet' ? { color: 'var(--green-bright)', borderBottomColor: 'var(--green-bright)' } : {}}>SIGNET</button>
-          <button className={`mode-tab ${mode === 'watch' ? 'active' : ''}`} onClick={() => setMode('watch')} title={showTooltips ? 'Live mode — block height auto-increments' : undefined}>WATCH</button>
         </div>
         <div className="header-actions">
           <button className="header-btn primary" onClick={() => setShowExamples(true)} title={showTooltips ? 'Load pre-built example programs' : undefined}>EXAMPLES</button>
@@ -7434,20 +7369,8 @@ ${ladderRows.map(r => `
           </div>
         ) : <>
         {isSimMode ? (
-          <div className="palette" style={{ opacity: mode === 'watch' && !watchLive ? 1 : 0.3, pointerEvents: 'none' }}>
-            {mode === 'watch' && !watchLive ? (
-              <div style={{ padding: '12px 8px' }}>
-                <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: 1.5, color: 'var(--amber)', textTransform: 'uppercase', marginBottom: 8, textAlign: 'center' }}>WATCH MODE</div>
-                <div style={{ padding: '8px', background: 'rgba(230, 168, 23, 0.1)', border: '1px solid rgba(230, 168, 23, 0.25)', fontSize: 10, color: 'var(--amber)', lineHeight: 1.6 }}>
-                  Signet proxy is not available. Live block data requires a ghost-core node running the feature/ladder-script branch.
-                </div>
-                <div style={{ marginTop: 10, fontSize: 9, color: 'var(--text-dim)', textAlign: 'center', letterSpacing: 0.5, lineHeight: 1.6 }}>
-                  Waiting for signet connection...
-                </div>
-              </div>
-            ) : (
-              <div style={{ padding: '12px 8px', fontSize: 9, color: 'var(--text-dim)', letterSpacing: 1, textAlign: 'center' }}>PALETTE LOCKED<br/>IN {mode === 'watch' ? 'WATCH' : 'SIMULATOR'} MODE</div>
-            )}
+          <div className="palette" style={{ opacity: 0.3, pointerEvents: 'none' }}>
+              <div style={{ padding: '12px 8px', fontSize: 9, color: 'var(--text-dim)', letterSpacing: 1, textAlign: 'center' }}>PALETTE LOCKED<br/>IN SIMULATOR MODE</div>
           </div>
         ) : (
           <PalettePanel />
@@ -7635,8 +7558,8 @@ ${ladderRows.map(r => `
         </>}
       </div>
 
-      {/* Register Table — hidden in signet and watch modes for more space */}
-      {mode !== 'signet' && mode !== 'watch' && <RegisterTable rungs={rungs} simMode={isSimMode} simState={fullSimState} />}
+      {/* Register Table — hidden in signet mode for more space */}
+      {mode !== 'signet' && <RegisterTable rungs={rungs} simMode={isSimMode} simState={fullSimState} />}
 
       {/* Status Bar */}
       <div className="status-bar">
@@ -7649,12 +7572,6 @@ ${ladderRows.map(r => `
           <div className="status-item">
             <div className={`status-dot ${energizedCount > 0 ? 'amber' : 'red'}`} />
             {energizedCount} ENERGIZED
-          </div>
-        )}
-        {mode === 'watch' && (
-          <div className="status-item">
-            <div className={`status-dot ${watchLive ? 'green' : 'amber'}`} />
-            {watchLive ? 'SIGNET LIVE' : 'LOCAL'} HEIGHT: {simState.blockHeight}
           </div>
         )}
         {(() => {
