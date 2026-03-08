@@ -29,8 +29,7 @@ OR logic across rungs (first satisfied rung wins).
 
 ### 1. SIG (0x0001)
 
-**Family:** Signature | **Phase:** 1
-
+**Family:** Signature
 **Purpose:** Verify a single cryptographic signature against a public key. Supports
 Schnorr (BIP-340), ECDSA, and post-quantum schemes via the SCHEME field.
 
@@ -96,8 +95,7 @@ CLTV for timelocked spending paths. Combined with HASH_PREIMAGE for HTLC pattern
 
 ### 2. MULTISIG (0x0002)
 
-**Family:** Signature | **Phase:** 1
-
+**Family:** Signature
 **Purpose:** M-of-N threshold signature verification. Requires M valid signatures from
 a set of N public keys, where each signature must correspond to a distinct key.
 
@@ -176,8 +174,7 @@ recovery_key + CSV(144)).
 
 ### 3. ADAPTOR_SIG (0x0003)
 
-**Family:** Signature | **Phase:** 1
-
+**Family:** Signature
 **Purpose:** Verify an adaptor signature for atomic swap and PTLC (point-timelocked
 contract) protocols. The adapted signature (with the adaptor secret already applied)
 verifies as a standard Schnorr signature against the signing key.
@@ -241,8 +238,7 @@ for timeout refund paths.
 
 ### 4. CSV (0x0101)
 
-**Family:** Timelock | **Phase:** 1
-
+**Family:** Timelock
 **Purpose:** Enforce a relative block-height timelock using BIP68 sequence numbers. The
 input can only be spent after the specified number of blocks have elapsed since the
 UTXO was confirmed.
@@ -295,8 +291,7 @@ Lightning HTLC timeout paths.
 
 ### 5. CSV_TIME (0x0102)
 
-**Family:** Timelock | **Phase:** 1
-
+**Family:** Timelock
 **Purpose:** Enforce a relative time-based lock using BIP68 time-based sequence
 encoding. The input can only be spent after the specified number of seconds have
 elapsed (in units of 512-second intervals per BIP68).
@@ -347,8 +342,7 @@ BIP68 time flag is bit 22. The value encodes a time-based relative lock.
 
 ### 6. CLTV (0x0103)
 
-**Family:** Timelock | **Phase:** 1
-
+**Family:** Timelock
 **Purpose:** Enforce an absolute block-height lock. The input cannot be spent until the
 blockchain has reached the specified block height (via `nLockTime`).
 
@@ -398,8 +392,7 @@ with SIG for "key OR timelock" patterns.
 
 ### 7. CLTV_TIME (0x0104)
 
-**Family:** Timelock | **Phase:** 1
-
+**Family:** Timelock
 **Purpose:** Enforce an absolute timestamp lock. The input cannot be spent until the
 median time past (MTP) reaches the specified Unix timestamp.
 
@@ -450,8 +443,7 @@ LOCKTIME_THRESHOLD). Values below that threshold are block heights.
 
 ### 8. HASH_PREIMAGE (0x0201)
 
-**Family:** Hash | **Phase:** 1
-
+**Family:** Hash
 **Purpose:** Verify that a witness preimage hashes to the committed SHA-256 digest.
 The preimage is revealed in the witness; the hash is committed in the scriptPubKey
 conditions.
@@ -502,8 +494,7 @@ alternative rung. Payment channel routing secrets.
 
 ### 9. HASH160_PREIMAGE (0x0202)
 
-**Family:** Hash | **Phase:** 1
-
+**Family:** Hash
 **Purpose:** Verify a witness preimage against a RIPEMD160(SHA256()) digest. This is
 the same hash construction used by P2PKH and P2SH addresses.
 
@@ -553,8 +544,7 @@ commitment (20 bytes vs 32 bytes) for space-constrained conditions.
 
 ### 10. TAGGED_HASH (0x0203)
 
-**Family:** Hash | **Phase:** 1
-
+**Family:** Hash
 **Purpose:** Verify a BIP-340 tagged hash. Computes
 `SHA256(SHA256(tag) || SHA256(tag) || preimage)` and compares against the expected
 digest. The tag hash field contains the pre-computed `SHA256(tag)`.
@@ -613,8 +603,7 @@ schemes using BIP-340 tagged hash convention.
 
 ### 11. CTV (0x0301)
 
-**Family:** Covenant | **Phase:** 2
-
+**Family:** Covenant
 **Purpose:** BIP-119 CheckTemplateVerify. Constrains the spending transaction to match
 a pre-committed template hash. Commits to transaction version, locktime, scriptSigs
 hash, input count, sequences hash, output count, outputs hash, and input index.
@@ -667,8 +656,7 @@ templates.
 
 ### 12. VAULT_LOCK (0x0302)
 
-**Family:** Covenant | **Phase:** 2
-
+**Family:** Covenant
 **Purpose:** Two-path vault construction. A recovery key can sweep funds immediately
 (cold sweep). A hot key can spend only after a CSV delay has elapsed. This provides a
 cancellation window for unauthorized hot-key spends.
@@ -741,8 +729,7 @@ monitoring. Pairs with CTV for vault re-encumbrance.
 
 ### 13. AMOUNT_LOCK (0x0303)
 
-**Family:** Covenant | **Phase:** 2
-
+**Family:** Covenant
 **Purpose:** Constrain the output amount to a specific range. SATISFIED when the output
 value falls within `[min_sats, max_sats]` inclusive.
 
@@ -804,8 +791,7 @@ When fields are valid, evaluation returns SATISFIED.
 
 ### 14. ANCHOR (0x0501)
 
-**Family:** Anchor | **Phase:** 2
-
+**Family:** Anchor
 **Purpose:** Generic anchor block for attaching typed metadata to a UTXO. Requires at
 least one field to be present.
 
@@ -843,8 +829,7 @@ return SATISFIED
 
 ### 15. ANCHOR_CHANNEL (0x0502)
 
-**Family:** Anchor | **Phase:** 2
-
+**Family:** Anchor
 **Purpose:** Lightning-style channel anchor. Records local and remote channel keys and
 a commitment number.
 
@@ -888,8 +873,7 @@ ERROR if fewer than 2 PUBKEY_COMMITs.
 
 ### 16. ANCHOR_POOL (0x0503)
 
-**Family:** Anchor | **Phase:** 2
-
+**Family:** Anchor
 **Purpose:** Pool anchor for VTXO (virtual transaction output) tree roots. Records a
 Merkle root of the VTXO tree and participant count.
 
@@ -930,8 +914,7 @@ return SATISFIED
 
 ### 17. ANCHOR_RESERVE (0x0504)
 
-**Family:** Anchor | **Phase:** 2
-
+**Family:** Anchor
 **Purpose:** Reserve anchor for guardian set management. Records threshold parameters
 and a guardian set hash. Verifies that threshold_n <= threshold_m.
 
@@ -979,8 +962,7 @@ ERROR if missing fields.
 
 ### 18. ANCHOR_SEAL (0x0505)
 
-**Family:** Anchor | **Phase:** 2
-
+**Family:** Anchor
 **Purpose:** Seal anchor for client-side-validated asset protocols. Records an asset
 identifier and a state transition hash.
 
@@ -1020,8 +1002,7 @@ return SATISFIED
 
 ### 19. ANCHOR_ORACLE (0x0506)
 
-**Family:** Anchor | **Phase:** 2
-
+**Family:** Anchor
 **Purpose:** Oracle anchor for DLC (Discreet Log Contract) constructions. Records an
 oracle public key and outcome count.
 
@@ -1069,8 +1050,7 @@ spends.
 
 ### 20. RECURSE_SAME (0x0401)
 
-**Family:** Recursion | **Phase:** 3
-
+**Family:** Recursion
 **Purpose:** Enforce identical re-encumbrance. The spending transaction's output must
 carry exactly the same rung conditions as the input being spent, preserving the full
 ladder structure across spends.
@@ -1128,8 +1108,7 @@ for key-gated recursive vaults.
 
 ### 21. RECURSE_MODIFIED (0x0402)
 
-**Family:** Recursion | **Phase:** 3
-
+**Family:** Recursion
 **Purpose:** Mutation covenant. Enforces re-encumbrance where specific NUMERIC fields
 in specific blocks are allowed to change by an exact additive delta. All other fields
 must remain identical. Used to implement state machines, counters, and accumulators
@@ -1213,8 +1192,7 @@ TIMER_CONTINUOUS). Any PLC block that needs tracked state changes.
 
 ### 22. RECURSE_UNTIL (0x0403)
 
-**Family:** Recursion | **Phase:** 3
-
+**Family:** Recursion
 **Purpose:** Height-terminated covenant. Before the target height, the UTXO must
 re-encumber with identical conditions. At or after the target height, the covenant
 terminates and the funds can be spent freely (this block returns SATISFIED without
@@ -1280,8 +1258,7 @@ Governance periods with fixed end dates.
 
 ### 23. RECURSE_COUNT (0x0404)
 
-**Family:** Recursion | **Phase:** 3
-
+**Family:** Recursion
 **Purpose:** Countdown covenant. Each spend must decrement the counter by exactly 1 in
 the output. When the counter reaches 0, the covenant terminates and funds can be spent
 freely.
@@ -1344,8 +1321,7 @@ limited withdrawal (spend once per block, N times total).
 
 ### 24. RECURSE_SPLIT (0x0405)
 
-**Family:** Recursion | **Phase:** 3
-
+**Family:** Recursion
 **Purpose:** UTXO splitting covenant. Allows a single UTXO to be split into multiple
 outputs, each carrying the same covenant with a decremented split counter. Enforces
 minimum output sizes and total value conservation.
@@ -1410,8 +1386,7 @@ UTXO expansion.
 
 ### 25. RECURSE_DECAY (0x0406)
 
-**Family:** Recursion | **Phase:** 3
-
+**Family:** Recursion
 **Purpose:** Progressive relaxation covenant. Identical to RECURSE_MODIFIED except all
 deltas are negated: `output_value = input_value - delta`. This causes parameter values
 to decrease over successive spends, progressively relaxing conditions (e.g., lowering
@@ -1470,8 +1445,7 @@ fields that are modified across covenant spends using RECURSE_MODIFIED.
 
 ### 26. HYSTERESIS_FEE (0x0601)
 
-**Family:** PLC | **Phase:** 3
-
+**Family:** PLC
 **Purpose:** Fee rate band (hysteresis). SATISFIED only when the spending transaction's
 fee rate (sat/vB) falls within the specified band `[low, high]`.
 
@@ -1535,8 +1509,7 @@ environments. Rate-limiting high-fee spending.
 
 ### 27. HYSTERESIS_VALUE (0x0602)
 
-**Family:** PLC | **Phase:** 3
-
+**Family:** PLC
 **Purpose:** Value band (hysteresis). SATISFIED only when the input UTXO amount falls
 within the specified satoshi band `[low, high]`.
 
@@ -1591,8 +1564,7 @@ Only spendable when UTXO value is between 1,000 and 100,000 sats.
 
 ### 28. TIMER_CONTINUOUS (0x0611)
 
-**Family:** PLC | **Phase:** 3
-
+**Family:** PLC
 **Purpose:** Elapsed timer. Tracks accumulated time units across covenant spends.
 SATISFIED when accumulated >= target (timer has fully elapsed). Pair with
 RECURSE_MODIFIED to increment the accumulated value each spend.
@@ -1651,8 +1623,7 @@ create spend-counted timers.
 
 ### 29. TIMER_OFF_DELAY (0x0612)
 
-**Family:** PLC | **Phase:** 3
-
+**Family:** PLC
 **Purpose:** Hold-off timer. SATISFIED while the remaining count is positive (still in
 the hold-off period). UNSATISFIED when remaining reaches 0 (delay expired). Pair with
 RECURSE_MODIFIED (delta=-1) to decrement each spend.
@@ -1703,8 +1674,7 @@ covenant spends.
 
 ### 30. LATCH_SET (0x0621)
 
-**Family:** PLC | **Phase:** 3
-
+**Family:** PLC
 **Purpose:** Latch activation. A bistable state element that is SATISFIED when the
 state is 0 (unset), allowing the latch to be set. Pair with RECURSE_MODIFIED to
 enforce state transition from 0 to 1 in the output.
@@ -1758,8 +1728,7 @@ spending paths.
 
 ### 31. LATCH_RESET (0x0622)
 
-**Family:** PLC | **Phase:** 3
-
+**Family:** PLC
 **Purpose:** Latch reset. SATISFIED when the state is >= 1 (set), allowing the latch
 to be reset. Includes a delay parameter for timed reset windows. Pair with
 RECURSE_MODIFIED to enforce state transition from 1 to 0.
@@ -1817,8 +1786,7 @@ RECURSE_MODIFIED (delta=-1) to enforce 1-to-0 transition.
 
 ### 32. COUNTER_DOWN (0x0631)
 
-**Family:** PLC | **Phase:** 3
-
+**Family:** PLC
 **Purpose:** Down counter. SATISFIED while count > 0 (can still decrement). Pair with
 RECURSE_MODIFIED (delta=-1) to decrement each spend.
 
@@ -1869,8 +1837,7 @@ RECURSE_COUNT but operates as a PLC contact for complex ladder logic.
 
 ### 33. COUNTER_PRESET (0x0632)
 
-**Family:** PLC | **Phase:** 3
-
+**Family:** PLC
 **Purpose:** Preset counter (approval accumulator). SATISFIED while current < preset
 (still accumulating). UNSATISFIED when current >= preset (target reached). Pair with
 RECURSE_MODIFIED (delta=+1 on current) to increment.
@@ -1924,8 +1891,7 @@ return UNSATISFIED
 
 ### 34. COUNTER_UP (0x0633)
 
-**Family:** PLC | **Phase:** 3
-
+**Family:** PLC
 **Purpose:** Up counter with target. SATISFIED while current < target (still counting
 up). UNSATISFIED when current >= target. Requires a PUBKEY_COMMIT for authorization.
 
@@ -1982,8 +1948,7 @@ with a PUBKEY_COMMIT requirement for spending authorization.
 
 ### 35. COMPARE (0x0641)
 
-**Family:** PLC | **Phase:** 3
-
+**Family:** PLC
 **Purpose:** Amount comparator. Compares the input UTXO amount against threshold values
 using a specified comparison operator.
 
@@ -2051,8 +2016,7 @@ size. Pairs with AMOUNT_LOCK for comprehensive value constraints.
 
 ### 36. SEQUENCER (0x0651)
 
-**Family:** PLC | **Phase:** 3
-
+**Family:** PLC
 **Purpose:** Step sequencer. SATISFIED when the current step index is valid (within
 bounds). Pair with RECURSE_MODIFIED (delta=+1 on current_step) to advance the sequence
 each spend.
@@ -2106,8 +2070,7 @@ State machine step tracking.
 
 ### 37. ONE_SHOT (0x0661)
 
-**Family:** PLC | **Phase:** 3
-
+**Family:** PLC
 **Purpose:** Single-fire activation. SATISFIED only if state is 0 (unfired). Once
 fired, the state is set to 1 via RECURSE_MODIFIED and the block becomes permanently
 UNSATISFIED. The HASH256 commitment provides a unique identity for the one-shot event.
@@ -2158,8 +2121,7 @@ time claim tickets.
 
 ### 38. RATE_LIMIT (0x0671)
 
-**Family:** PLC | **Phase:** 3
-
+**Family:** PLC
 **Purpose:** Per-block rate limiter. Constrains the output amount to not exceed
 max_per_block in a single transaction. Accumulation cap and refill parameters are
 available for UTXO-chain tracking.
@@ -2219,8 +2181,7 @@ protection on hot wallets.
 
 ### 39. COSIGN (0x0681)
 
-**Family:** PLC | **Phase:** 3
-
+**Family:** PLC
 **Purpose:** Co-spend contact. Requires that another input in the same transaction
 has a spent output whose scriptPubKey hashes to the committed value. This creates a
 dependency between inputs, ensuring two specific UTXOs are spent atomically together.

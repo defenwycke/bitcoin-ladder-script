@@ -736,7 +736,7 @@ All block type enum values. Phase 3+ blocks return `UNSATISFIED` in Phase 1 impl
 | `0x0661` | `ONE_SHOT` | PLC | 3 | Single-activation monoflop |
 | `0x0671` | `RATE_LIMIT` | PLC | 3 | Per-block spending rate limiter |
 
-**Total: 39 block types across 4 phases.**
+**Total: 48 block types across 9 families.**
 
 ---
 

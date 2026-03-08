@@ -2,14 +2,14 @@
 
 ## 1. Overview
 
-Ladder Script introduces transaction version 3 (`RUNG_TX`) to Bitcoin, replacing opcode-based Script with typed, structured spending conditions for participating outputs. The soft fork changes the following:
+Ladder Script introduces transaction version 4 (`RUNG_TX`) to Bitcoin, replacing opcode-based Script with typed, structured spending conditions for participating outputs. The soft fork changes the following:
 
 **What changes:**
-- Transaction version 3 gains consensus meaning (currently non-standard, treated as anyone-can-spend).
+- Transaction version 4 gains consensus meaning (currently non-standard, treated as anyone-can-spend).
 - Outputs with scriptPubKey prefix `0xc1` are recognized as ladder conditions and evaluated by the ladder evaluator.
-- Witness validation for v3 inputs uses the ladder sighash (`TaggedHash("LadderSighash")`) instead of the Script interpreter.
+- Witness validation for v4 inputs uses the ladder sighash (`TaggedHash("LadderSighash")`) instead of the Script interpreter.
+- All 48 block types across 9 families are activated simultaneously.
 - Post-quantum signature schemes (FALCON-512/1024, Dilithium3, SPHINCS+-SHA) become available through the SCHEME field.
-- New mempool policy distinguishes Phase 1 (standard) from Phase 2/3 (non-standard) block types.
 
 **What does not change:**
 - Transaction versions 1 and 2 are validated identically to current rules.
@@ -19,7 +19,7 @@ Ladder Script introduces transaction version 3 (`RUNG_TX`) to Bitcoin, replacing
 
 ## 2. Activation Strategy
 
-Ladder Script uses BIP-9 versionbits deployment with a three-phase activation schedule. Each phase activates independently with its own signaling bit, threshold, and timeout.
+Ladder Script uses BIP-9 versionbits deployment with a single activation covering all 48 block types. All nine families — Signature, Timelock, Hash, Covenant, Recursion, Anchor, PLC, Compound, and Governance — activate together as one unit.
 
 ### BIP-9 Mechanics
 
@@ -37,115 +37,63 @@ DEFINED  -->  STARTED  -->  LOCKED_IN  -->  ACTIVE
 - **ACTIVE:** The new consensus rules are enforced.
 - **FAILED:** The `timeout` has passed without reaching the threshold.
 
-### Phase Independence
+### Single Activation Rationale
 
-Each phase has its own BIP-9 deployment entry. Phase 2 activation does not require Phase 1 to be active, but the evaluation semantics are designed such that Phase 2 block types are consensus-valid but always return UNSATISFIED on nodes that have not activated Phase 2. This means:
+A single activation is preferred over a phased approach because:
 
-- Phase 1 activation enables SIG, MULTISIG, ADAPTOR_SIG, CSV, CSV_TIME, CLTV, CLTV_TIME, HASH_PREIMAGE, HASH160_PREIMAGE, and TAGGED_HASH.
-- Phase 2 activation enables CTV, VAULT_LOCK, AMOUNT_LOCK, ANCHOR, ANCHOR_CHANNEL, ANCHOR_POOL, ANCHOR_RESERVE, ANCHOR_SEAL, and ANCHOR_ORACLE.
-- Phase 3 activation enables RECURSE_SAME, RECURSE_MODIFIED, RECURSE_UNTIL, RECURSE_COUNT, RECURSE_SPLIT, RECURSE_DECAY, and all PLC block types (HYSTERESIS through COSIGN).
+1. **All block types are interdependent.** Compound blocks reference base block evaluators. Governance blocks constrain transactions that contain any family's blocks. Recursion depends on covenants. Splitting activation creates artificial boundaries that do not reflect the architecture.
+2. **Reduced complexity.** One activation means one set of consensus rules, one signaling period, one upgrade path. No need for version bit juggling or conditional policy logic.
+3. **Complete testing.** All 48 block types and their interactions have been tested together from the start. Splitting them into phases would require testing configurations that were never developed against.
 
-In practice, Phase 2 should not be activated before Phase 1 is ACTIVE, and Phase 3 should not be activated before Phase 2 is ACTIVE, because the higher phases depend on the core framework established by Phase 1.
+## 3. Block Type Families
 
-## 3. Phase-Based Rollout
+All 48 block types activated as a single unit:
 
-### Phase 1: Signature, Timelock, and Hash (Lowest Risk)
+| Family | Range | Count | Block Types |
+|--------|-------|-------|-------------|
+| Signature | 0x0001-0x00FF | 3 | SIG, MULTISIG, ADAPTOR_SIG |
+| Timelock | 0x0100-0x01FF | 4 | CSV, CSV_TIME, CLTV, CLTV_TIME |
+| Hash | 0x0200-0x02FF | 3 | HASH_PREIMAGE, HASH160_PREIMAGE, TAGGED_HASH |
+| Covenant | 0x0300-0x03FF | 3 | CTV, VAULT_LOCK, AMOUNT_LOCK |
+| Recursion | 0x0400-0x04FF | 6 | RECURSE_SAME, RECURSE_MODIFIED, RECURSE_UNTIL, RECURSE_COUNT, RECURSE_SPLIT, RECURSE_DECAY |
+| Anchor | 0x0500-0x05FF | 6 | ANCHOR, ANCHOR_CHANNEL, ANCHOR_POOL, ANCHOR_RESERVE, ANCHOR_SEAL, ANCHOR_ORACLE |
+| PLC | 0x0600-0x06FF | 14 | HYSTERESIS_FEE, HYSTERESIS_VALUE, TIMER_CONTINUOUS, TIMER_OFF_DELAY, LATCH_SET, LATCH_RESET, COUNTER_DOWN, COUNTER_PRESET, COUNTER_UP, COMPARE, SEQUENCER, ONE_SHOT, RATE_LIMIT, COSIGN |
+| Compound | 0x0700-0x07FF | 3 | TIMELOCKED_SIG, HTLC, HASH_SIG |
+| Governance | 0x0800-0x08FF | 6 | EPOCH_GATE, WEIGHT_LIMIT, INPUT_COUNT, OUTPUT_COUNT, RELATIVE_VALUE, ACCUMULATOR |
 
-**Block type range:** 0x0001-0x02FF (10 block types)
-
-**Scope:** Phase 1 establishes the core ladder framework and provides feature parity with existing Script capabilities. Every spending pattern expressible in P2PKH, P2SH, P2WPKH, P2WSH, and P2TR can be expressed as a Phase 1 ladder.
-
-**Block types activated:**
-- SIG (0x0001) -- Single signature, equivalent to P2PKH/P2WPKH/P2TR key-path.
-- MULTISIG (0x0002) -- M-of-N threshold, equivalent to OP_CHECKMULTISIG.
-- ADAPTOR_SIG (0x0003) -- Adaptor signatures for atomic swaps and payment channels.
-- CSV (0x0101) / CSV_TIME (0x0102) -- Relative timelocks, equivalent to BIP-68/BIP-112.
-- CLTV (0x0103) / CLTV_TIME (0x0104) -- Absolute timelocks, equivalent to BIP-65.
-- HASH_PREIMAGE (0x0201) -- SHA-256 HTLC hash locks.
-- HASH160_PREIMAGE (0x0202) -- HASH160 hash locks.
-- TAGGED_HASH (0x0203) -- BIP-340 tagged hash verification.
-
-**Risk profile:** Low. These conditions map directly to well-understood Script operations that have been running on mainnet for years. The primary new risk surface is the wire format deserialization and the ladder sighash computation, both of which are covered by 185 unit tests and 115 functional tests.
+**Risk profile:** The block types range from low-risk (Signature, Timelock, Hash — direct equivalents of existing Script operations) to higher complexity (Recursion, PLC — stateful logic with no Script equivalent). All have been tested together and evaluated as a complete system.
 
 **What this enables:**
 - Standard single-sig and multisig wallets using ladder outputs.
-- Lightning HTLCs expressed as ladder conditions (HASH_PREIMAGE + CSV + SIG).
-- Time-locked savings vaults (SIG + CLTV).
-- Atomic swaps via adaptor signatures (ADAPTOR_SIG).
-- Post-quantum signatures via the SCHEME field in SIG and MULTISIG blocks.
-
-### Phase 2: Covenant and Anchor (Moderate Complexity)
-
-**Block type range:** 0x0300-0x05FF (9 block types)
-
-**Scope:** Phase 2 adds output constraints and protocol-specific UTXO tagging. These are capabilities that do not exist in current Script and represent genuinely new transaction semantics.
-
-**Block types activated:**
-- CTV (0x0301) -- OP_CHECKTEMPLATEVERIFY (BIP-119) covenant.
-- VAULT_LOCK (0x0302) -- Vault with enforced delay period.
-- AMOUNT_LOCK (0x0303) -- Output amount range enforcement.
-- ANCHOR (0x0501) -- Generic protocol anchor.
-- ANCHOR_CHANNEL (0x0502) -- Lightning channel anchor.
-- ANCHOR_POOL (0x0503) -- Pool participant anchor.
-- ANCHOR_RESERVE (0x0504) -- N-of-M guardian reserve anchor.
-- ANCHOR_SEAL (0x0505) -- Permanent data commitment seal.
-- ANCHOR_ORACLE (0x0506) -- Oracle quorum anchor.
-
-**Risk profile:** Moderate. CTV introduces transaction introspection (the spending transaction must match a committed template). AMOUNT_LOCK introduces output amount inspection. Anchor types introduce protocol-specific semantics that must be correctly evaluated. Vaults introduce a new time-delay covenant pattern.
-
-**What this enables:**
-- Non-interactive payment channels via CTV.
-- Vault custody patterns with enforced cooling periods.
-- Protocol-tagged UTXOs for Lightning, mining pools, and oracle networks.
-- Amount-bounded outputs for change management and dust prevention.
-
-### Phase 3: Recursion and Programmable Logic Controllers (Highest Complexity)
-
-**Block type range:** 0x0400-0x06FF (20 block types)
-
-**Scope:** Phase 3 adds self-referencing conditions and stateful logic. Recursive block types require the ladder evaluator to inspect both the input conditions and the output conditions of the spending transaction. PLC block types introduce industrial automation primitives.
-
-**Block types activated:**
-- RECURSE_SAME (0x0401) through RECURSE_DECAY (0x0406) -- Six recursion variants enabling self-perpetuating UTXOs with controlled evolution.
-- HYSTERESIS_FEE (0x0601) through COSIGN (0x0681) -- Fourteen PLC block types enabling stateful spending logic.
-
-**Risk profile:** High. Recursive conditions create the possibility of permanently unspendable outputs if the recursion termination condition is never met. PLC state machines introduce implicit state that must be correctly tracked across transaction chains. The interaction between recursion and covenants requires careful analysis to prevent unexpected constraint propagation.
-
-**What this enables:**
-- Self-perpetuating vaults that re-encumber on every spend (RECURSE_SAME).
-- Countdown vaults that allow spending after N intermediate transactions (RECURSE_COUNT).
-- Rate-limited wallets that restrict withdrawal frequency (RATE_LIMIT).
-- Multi-step approval processes with accumulating signatures (COUNTER_PRESET).
-- State machines for complex business logic (LATCH_SET + LATCH_RESET chains).
-- Fee-governed outputs that constrain transaction fee rates (HYSTERESIS_FEE).
-- Time-decaying parameters for graduated release schedules (RECURSE_DECAY).
+- Lightning HTLCs as single compound blocks (HTLC), saving 16 bytes per instance.
+- Covenants, vaults, and output constraints without new opcodes.
+- Self-perpetuating recursive covenants with provable termination.
+- Industrial automation patterns (rate limiting, sequencing, latching) for spending policy.
+- Transaction-level governance (weight limits, I/O count bounds, value ratio enforcement).
+- Post-quantum signatures via the SCHEME field.
+- Merkle set membership proofs (ACCUMULATOR) for whitelist/blacklist enforcement.
 
 ## 4. Node Upgrade Path
 
-### Upgraded nodes (all three phases)
+### Upgraded nodes
 
-Upgraded nodes enforce the full ladder evaluation rules for v3 transactions. Phase 2 and Phase 3 block types are consensus-valid but policy-non-standard until their respective activation thresholds are met. This means:
-
-- Before Phase 1 activation: v3 transactions are non-standard (not relayed, not mined by default). If included in a block by a miner, they are valid (anyone-can-spend semantics).
-- After Phase 1 activation: v3 transactions with Phase 1 block types are standard and relayed. Phase 2/3 block types in conditions are consensus-valid but the transactions are not relayed by default.
-- After Phase 2 activation: Phase 2 block types become policy-standard and relayed.
-- After Phase 3 activation: Phase 3 block types become policy-standard and relayed.
+Upgraded nodes enforce the full ladder evaluation rules for v4 transactions. All 48 block types are consensus-valid and policy-standard after activation. Before activation, v4 transactions are non-standard (not relayed, not mined by default). If included in a block by a miner, they are valid (anyone-can-spend semantics).
 
 ### Non-upgraded nodes
 
 Non-upgraded nodes do not recognize the `0xc1` prefix or the ladder evaluator. Their behavior depends on the activation state:
 
-**Before activation:** v3 transactions are non-standard. Non-upgraded nodes neither relay nor mine them. No impact.
+**Before activation:** v4 transactions are non-standard. Non-upgraded nodes neither relay nor mine them. No impact.
 
-**After activation:** Non-upgraded nodes accept blocks containing v3 transactions because:
+**After activation:** Non-upgraded nodes accept blocks containing v4 transactions because:
 
-1. The transaction version 3 is not invalid under existing consensus rules (versions are a 32-bit signed integer; only negative versions are invalid).
+1. The transaction version 4 is not invalid under existing consensus rules (versions are a 32-bit signed integer; only negative versions are invalid).
 2. The `0xc1` scriptPubKey prefix does not match any existing standard output type, so the output is treated as anyone-can-spend.
 3. The soft fork security model ensures that non-upgraded nodes accept all blocks that upgraded nodes accept, because the new rules are strictly more restrictive (upgraded nodes reject transactions that non-upgraded nodes would accept, never the reverse).
 
-**Risk to non-upgraded nodes:** Non-upgraded nodes may accept an invalid v3 transaction (one that violates ladder rules) if it appears in a block. However, this can only happen if a majority of mining hashrate colludes to include an invalid transaction, which breaks the security assumption for any soft fork.
+**Risk to non-upgraded nodes:** Non-upgraded nodes may accept an invalid v4 transaction (one that violates ladder rules) if it appears in a block. However, this can only happen if a majority of mining hashrate colludes to include an invalid transaction, which breaks the security assumption for any soft fork.
 
-**Recommendation:** Node operators should upgrade before Phase 1 activation to enforce the full rule set.
+**Recommendation:** Node operators should upgrade before activation to enforce the full rule set.
 
 ### SPV clients
 
@@ -153,13 +101,11 @@ SPV clients verify block headers and Merkle proofs but do not validate transacti
 
 ## 5. Miner Signaling
 
-### BIP-9 Bit Assignments
+### BIP-9 Bit Assignment
 
-| Phase | Version Bit | Start Time | Timeout | Threshold |
-|-------|-------------|------------|---------|-----------|
-| Phase 1 | Bit 5 | Epoch TBD | Start + 1 year | 90% (1,815 of 2,016 blocks) |
-| Phase 2 | Bit 6 | Phase 1 ACTIVE + 6 months | Start + 1 year | 90% |
-| Phase 3 | Bit 7 | Phase 2 ACTIVE + 6 months | Start + 1 year | 90% |
+| Version Bit | Start Time | Timeout | Threshold |
+|-------------|------------|---------|-----------|
+| Bit 5 | Epoch TBD | Start + 1 year | 90% (1,815 of 2,016 blocks) |
 
 **Threshold rationale:** The 90% threshold (rather than 95%) balances activation speed against consensus safety. Ladder Script introduces new transaction semantics but does not modify existing validation rules, limiting the blast radius of a split.
 
@@ -172,7 +118,7 @@ SPV clients verify block headers and Merkle proofs but do not validate transacti
 Miners who signal for Ladder Script should ensure:
 
 1. Their node software includes the ladder evaluator and enforces ladder consensus rules.
-2. Their block template construction correctly handles v3 transactions in the mempool.
+2. Their block template construction correctly handles v4 transactions in the mempool.
 3. Their fee estimation accounts for the different witness size characteristics of ladder transactions (PQ signatures can be significantly larger than Schnorr).
 
 Miners who have not upgraded should not signal, as signaling implies enforcement of the new rules.
@@ -181,12 +127,12 @@ Miners who have not upgraded should not signal, as signaling implies enforcement
 
 ### Detecting Ladder Support
 
-Wallets can determine the activation state of each phase by querying the node's `getblockchaininfo` RPC, which includes the BIP-9 deployment status for each soft fork.
+Wallets can determine the activation state by querying the node's `getblockchaininfo` RPC, which includes the BIP-9 deployment status:
 
 ```json
 {
   "softforks": {
-    "ladder_phase1": {
+    "ladder_script": {
       "type": "bip9",
       "bip9": {
         "status": "active",
@@ -205,15 +151,15 @@ Wallets create ladder-locked outputs using the `createrung` and `createrungtx` R
 
 1. Define the spending conditions as a JSON structure of rungs, blocks, and typed fields.
 2. Call `createrung` to serialize the conditions to hex.
-3. Call `createrungtx` with the serialized conditions and desired output amounts to construct an unsigned v3 transaction.
+3. Call `createrungtx` with the serialized conditions and desired output amounts to construct an unsigned v4 transaction.
 
-The resulting transaction has `nVersion = 3` and outputs with `scriptPubKey = 0xc1 || conditions`.
+The resulting transaction has `nVersion = 4` and outputs with `scriptPubKey = 0xc1 || conditions`.
 
 ### Spending Ladder Outputs
 
 Wallets spend ladder-locked outputs using the `signrungtx` RPC:
 
-1. Construct a v3 transaction that spends the ladder-locked UTXO.
+1. Construct a v4 transaction that spends the ladder-locked UTXO.
 2. Call `signrungtx` with the unsigned transaction, the private key(s), and the spent output information (amount, scriptPubKey).
 3. The RPC computes the ladder sighash, signs with the appropriate scheme, and assembles the witness.
 
@@ -242,7 +188,7 @@ The MAX_LADDER_WITNESS_SIZE limit of 100,000 bytes applies per input. Transactio
 
 **Risk:** If the activation threshold is met but a significant minority of hashrate has not upgraded, the network could experience a temporary chain split where non-upgraded miners build on blocks that upgraded miners reject.
 
-**Mitigation:** The 90% threshold ensures overwhelming hashrate agreement before activation. The LOCKED_IN grace period (one retarget period, approximately 2 weeks) provides additional time for stragglers to upgrade. The phased rollout further reduces risk by activating simple functionality first.
+**Mitigation:** The 90% threshold ensures overwhelming hashrate agreement before activation. The LOCKED_IN grace period (one retarget period, approximately 2 weeks) provides additional time for stragglers to upgrade.
 
 ### Deserialization Vulnerabilities
 
@@ -258,9 +204,9 @@ The MAX_LADDER_WITNESS_SIZE limit of 100,000 bytes applies per input. Transactio
 
 ### Recursive Output Locking
 
-**Risk:** Phase 3 recursion block types can create UTXOs that re-encumber indefinitely if the termination condition is never met. Users could accidentally lock funds permanently.
+**Risk:** Recursion block types can create UTXOs that re-encumber indefinitely if the termination condition is never met. Users could accidentally lock funds permanently.
 
-**Mitigation:** RECURSE_UNTIL has an explicit block height termination. RECURSE_COUNT has a countdown to zero. RECURSE_DECAY reduces parameters toward termination. Wallet software should warn users when creating recursive conditions and simulate the termination path. Recursion is Phase 3, activated last, providing maximum time for tooling maturity.
+**Mitigation:** RECURSE_UNTIL has an explicit block height termination. RECURSE_COUNT has a countdown to zero. RECURSE_DECAY reduces parameters toward termination. Wallet software should warn users when creating recursive conditions and simulate the termination path.
 
 ### PLC State Machine Complexity
 
@@ -278,7 +224,7 @@ The MAX_LADDER_WITNESS_SIZE limit of 100,000 bytes applies per input. Transactio
 
 **Risk:** The forward-compatibility rule (unknown types return UNSATISFIED, inverted unknown returns SATISFIED) could be exploited if an attacker crafts a transaction with an unknown block type in an inverted position, causing it to be trivially spendable.
 
-**Mitigation:** Conditions with unknown block types are policy-non-standard and will not be relayed or mined by default. A miner would have to deliberately include such a transaction. After activation of the phase that defines the block type, the evaluator enforces the actual condition.
+**Mitigation:** Conditions with unknown block types are policy-non-standard and will not be relayed or mined by default. A miner would have to deliberately include such a transaction. After a future soft fork defines the block type, the evaluator enforces the actual condition.
 
 ## 8. Timeline
 
@@ -289,27 +235,19 @@ The following timeline assumes community review begins at publication and procee
 | BIP publication | 2026-03-06 | -- | Formal specification published for community review. |
 | Reference implementation review | 2026-03 to 2026-06 | 3 months | Code review of `src/rung/` by independent reviewers. Fuzz testing campaigns. |
 | Testnet deployment | 2026-06 | -- | Ladder Script activated on signet/testnet. Wallet developers begin integration testing. |
-| Phase 1 signaling start | 2026-09 | -- | BIP-9 signaling for Phase 1 begins on mainnet. |
-| Phase 1 activation | 2026-10 to 2026-11 | 1-2 months | Estimated activation assuming 90% miner readiness. |
-| Phase 1 stabilization | 2026-11 to 2027-05 | 6 months | Phase 1 runs on mainnet. Wallet ecosystem matures. |
-| Phase 2 signaling start | 2027-05 | -- | BIP-9 signaling for Phase 2 begins. |
-| Phase 2 activation | 2027-06 to 2027-07 | 1-2 months | Estimated activation. |
-| Phase 2 stabilization | 2027-07 to 2028-01 | 6 months | Covenant and anchor usage matures. |
-| Phase 3 signaling start | 2028-01 | -- | BIP-9 signaling for Phase 3 begins. |
-| Phase 3 activation | 2028-02 to 2028-03 | 1-2 months | Estimated activation. |
+| Signaling start | 2026-09 | -- | BIP-9 signaling begins on mainnet. |
+| Activation | 2026-10 to 2026-11 | 1-2 months | Estimated activation assuming 90% miner readiness. |
 
-**Total timeline:** Approximately 24 months from publication to full Phase 3 activation.
+**Total timeline:** Approximately 8 months from publication to full activation.
 
-**Acceleration criteria:** If Phase 1 operates without incident for 3 months (rather than 6), Phase 2 signaling could begin early. The 6-month stabilization periods are conservative defaults.
-
-**Failure criteria:** If any phase fails to reach the 90% threshold within its 1-year timeout, the deployment enters FAILED state. A new BIP-9 deployment with a fresh version bit and updated parameters would be required to retry.
+**Failure criteria:** If the deployment fails to reach the 90% threshold within its 1-year timeout, it enters FAILED state. A new BIP-9 deployment with a fresh version bit and updated parameters would be required to retry.
 
 ### Post-Activation Monitoring
 
-After each phase activation, the following should be monitored:
+After activation, the following should be monitored:
 
-- **Block validation time:** Ladder evaluation adds computation per v3 input. Monitor for block validation latency increases.
-- **Mempool behavior:** Ensure v3 transactions are correctly relayed and that policy enforcement matches expectations.
+- **Block validation time:** Ladder evaluation adds computation per v4 input. Monitor for block validation latency increases.
+- **Mempool behavior:** Ensure v4 transactions are correctly relayed and that policy enforcement matches expectations.
 - **UTXO set growth:** Ladder conditions use PUBKEY_COMMIT (32 bytes) rather than raw public keys, keeping UTXO overhead constant regardless of key size. Monitor growth rate.
-- **Reorg behavior:** Verify that v3 transactions are correctly handled during chain reorganizations.
-- **Wallet adoption:** Track the percentage of outputs using ladder conditions to gauge ecosystem readiness for subsequent phases.
+- **Reorg behavior:** Verify that v4 transactions are correctly handled during chain reorganizations.
+- **Wallet adoption:** Track the percentage of outputs using ladder conditions to gauge ecosystem uptake.

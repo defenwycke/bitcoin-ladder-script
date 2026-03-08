@@ -374,9 +374,9 @@ The reference implementation is located in the `src/rung/` directory of ghost-co
 | `types.h` / `types.cpp` | Core type definitions: `RungBlockType`, `RungDataType`, `RungCoilType`, `RungAttestationMode`, `RungScheme`, and all struct definitions. |
 | `conditions.h` / `conditions.cpp` | Conditions (locking side): `RungConditions`, serialization to/from `CScript` with `0xc1` prefix, condition data type validation. |
 | `serialize.h` / `serialize.cpp` | Wire format v2 serialization/deserialization with full validation. Policy limit constants. |
-| `evaluator.h` / `evaluator.cpp` | Block evaluators for all 39 block types across three phases. Rung AND logic, ladder OR logic, inversion. `VerifyRungTx` entry point. `LadderSignatureChecker` for Schnorr/PQ signature verification. |
+| `evaluator.h` / `evaluator.cpp` | Block evaluators for all 48 block types across 9 families. Rung AND logic, ladder OR logic, inversion. `VerifyRungTx` entry point. `LadderSignatureChecker` for Schnorr/PQ signature verification. |
 | `sighash.h` / `sighash.cpp` | `SignatureHashLadder` tagged hash computation. |
-| `policy.h` / `policy.cpp` | Mempool policy enforcement: `IsStandardRungTx`, `IsStandardRungOutput`, phase classification. |
+| `policy.h` / `policy.cpp` | Mempool policy enforcement: `IsStandardRungTx`, `IsStandardRungOutput`, family classification. |
 | `aggregate.h` / `aggregate.cpp` | Block-level signature aggregation and deferred attestation. |
 | `adaptor.h` / `adaptor.cpp` | Adaptor signature creation, verification, and secret extraction. |
 | `pq_verify.h` / `pq_verify.cpp` | Post-quantum signature verification via liboqs (FALCON-512/1024, Dilithium3, SPHINCS+-SHA). |
@@ -388,9 +388,9 @@ The implementation includes comprehensive test coverage across two layers:
 
 **Unit tests** (`src/test/rung_tests.cpp`): 185 test cases covering:
 - Field validation for all 9 data types with boundary conditions
-- Serialization round-trips for all 39 block types
+- Serialization round-trips for all 48 block types
 - Deserialization rejection of malformed inputs (empty, truncated, trailing bytes, oversized, unknown types)
-- Block evaluation for all Phase 1, 2, and 3 block types
+- Block evaluation for all 48 block types across 9 families
 - Inversion logic including ERROR non-inversion
 - Rung AND logic and ladder OR logic
 - Policy enforcement (standard/non-standard classification)

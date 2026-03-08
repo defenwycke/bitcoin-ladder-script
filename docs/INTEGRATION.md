@@ -205,15 +205,17 @@ Validates a `0xc1`-prefixed `scriptPubKey`:
 - All fields must be condition-allowed data types (no PUBKEY, no SIGNATURE, no PREIMAGE).
 - All fields must pass size validation.
 
-### 6.3 Phase Restrictions
+### 6.3 Family Classification
 
-The current policy implementation accepts all known block types. Block types are categorized by family:
+The current policy implementation accepts all 48 known block types. Block types are categorized by family:
 
 - **Base** (0x0001--0x02FF): SIG, MULTISIG, ADAPTOR_SIG, CSV, CSV_TIME, CLTV, CLTV_TIME, HASH_PREIMAGE, HASH160_PREIMAGE, TAGGED_HASH.
 - **Covenant + Anchor** (0x0300--0x05FF): CTV, VAULT_LOCK, AMOUNT_LOCK, ANCHOR_*.
 - **Recursion + PLC** (0x0400--0x06FF): RECURSE_*, HYSTERESIS_*, TIMER_*, LATCH_*, COUNTER_*, COMPARE, SEQUENCER, ONE_SHOT, RATE_LIMIT, COSIGN.
+- **Compound** (0x0700--0x07FF): TIMELOCKED_SIG, HTLC, HASH_SIG.
+- **Governance** (0x0800--0x08FF): EPOCH_GATE, WEIGHT_LIMIT, INPUT_COUNT, OUTPUT_COUNT, RELATIVE_VALUE, ACCUMULATOR.
 
-The functions `IsPhase1BlockType()`, `IsPhase2BlockType()`, and `IsPhase3BlockType()` classify blocks into these families. These are available for future policy tightening where covenant/recursion/PLC blocks could be made non-standard while remaining consensus-valid.
+The functions `IsBaseBlockType()`, `IsCovenantBlockType()`, and `IsStatefulBlockType()` classify blocks into these groups. These are available for future policy tightening where specific families could be made non-standard while remaining consensus-valid.
 
 ---
 

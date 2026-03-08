@@ -172,7 +172,7 @@ The AGGREGATE mode uses an `AggregateProof` structure containing pubkey commitme
 
 ## 4. Block Type System
 
-Ladder Script defines 40 block types across seven families. Each family occupies a dedicated range in the uint16_t block type space.
+Ladder Script defines 48 block types across nine families. Each family occupies a dedicated range in the uint16_t block type space.
 
 ### 4.1 Signature Family (0x0001--0x00FF)
 
@@ -439,9 +439,9 @@ The `MergeConditionsAndWitness` function performs strict structural validation b
 
 Ladder Script replaces Bitcoin's untyped, imperative scripting model with a typed, declarative block system that draws on decades of industrial control system design. By requiring every byte to be typed, every condition to be named, and every evaluation to be deterministic, Ladder Script eliminates the classes of ambiguity and complexity that have constrained Bitcoin's programmability.
 
-The 40 block types across seven families -- signature, timelock, hash, covenant, recursion, anchor, and PLC -- provide a comprehensive vocabulary for transaction authorization. Post-quantum cryptography is supported natively through the SCHEME routing mechanism and PUBKEY_COMMIT compact representations. Spam resistance is structural rather than policy-dependent.
+The 48 block types across nine families — signature, timelock, hash, covenant, recursion, anchor, PLC, compound, and governance — provide a comprehensive vocabulary for transaction authorization. Post-quantum cryptography is supported natively through the SCHEME routing mechanism and PUBKEY_COMMIT compact representations. Spam resistance is structural rather than policy-dependent.
 
-The phased deployment model allows the network to adopt capabilities incrementally: Phase 1 provides full parity with existing Bitcoin Script functionality; Phase 2 adds covenants and layer-2 integration; Phase 3 introduces state machines and advanced control flow. Forward compatibility ensures that transactions using future block types are structurally valid even to nodes that do not yet implement those types.
+All block types activate together in a single soft fork. Forward compatibility ensures that transactions using future block types are structurally valid even to nodes that do not yet implement those types.
 
 The design is implemented in Bitcoin Ghost's fork of Bitcoin Core, with 185 unit tests and 19 functional test scenarios validating the complete evaluation pipeline.
 

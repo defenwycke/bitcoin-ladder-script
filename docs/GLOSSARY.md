@@ -318,18 +318,20 @@ single spending condition. Represented by the `RungBlock` struct containing:
 ### RungBlockType
 
 An enum (`uint16_t`) identifying the type of a block. Encoded as 2 bytes (little-endian)
-in the wire format. 39 block types are defined across 7 families. The numeric ranges
+in the wire format. 48 block types are defined across 9 families. The numeric ranges
 partition the type space by family:
 
-| Range | Family | Phase |
-|-------|--------|-------|
-| 0x0001-0x00FF | Signature | 1 |
-| 0x0100-0x01FF | Timelock | 1 |
-| 0x0200-0x02FF | Hash | 1 |
-| 0x0300-0x03FF | Covenant | 2 |
-| 0x0400-0x04FF | Recursion | 3 |
-| 0x0500-0x05FF | Anchor/L2 | 2 |
-| 0x0600-0x06FF | PLC | 3 |
+| Range | Family |
+|-------|--------|
+| 0x0001-0x00FF | Signature |
+| 0x0100-0x01FF | Timelock |
+| 0x0200-0x02FF | Hash |
+| 0x0300-0x03FF | Covenant |
+| 0x0400-0x04FF | Recursion |
+| 0x0500-0x05FF | Anchor/L2 |
+| 0x0600-0x06FF | PLC |
+| 0x0700-0x07FF | Compound |
+| 0x0800-0x08FF | Governance |
 
 ### RungConditions
 

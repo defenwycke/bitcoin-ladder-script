@@ -41,7 +41,7 @@ COMPARE evaluates `input_amount` against `value_b` (and optionally `value_c` for
 
 No explicit SCHEME field is parsed or required.
 
-**Rationale:** Signature formats are unambiguous by length. Requiring an explicit SCHEME field would add a byte per signature block for zero additional information. If post-quantum schemes are activated (Phase 4), the SCHEME field can be added as an optional discriminator for the overlapping size ranges.
+**Rationale:** Signature formats are unambiguous by length. Requiring an explicit SCHEME field would add a byte per signature block for zero additional information. If post-quantum schemes are activated, the SCHEME field can be added as an optional discriminator for the overlapping size ranges.
 
 ---
 
@@ -75,7 +75,7 @@ Block layout: [NUMERIC threshold] [PUBKEY key_1] ... [PUBKEY key_N] [SIGNATURE s
 
 **Implementation:** max 7856 bytes (`FieldMaxSize` in types.h)
 
-**Rationale:** The spec's 144-byte limit only accommodates classical signatures. The implementation pre-allocates for the largest post-quantum scheme (SPHINCS+-SHA2-256f at 7856 bytes). This is a size validation bound, not a policy limit — policy can restrict to classical sizes before Phase 4 activation.
+**Rationale:** The spec's 144-byte limit only accommodates classical signatures. The implementation pre-allocates for the largest post-quantum scheme (SPHINCS+-SHA2-256f at 7856 bytes). This is a size validation bound, not a policy limit — policy can restrict to classical sizes before post-quantum activation.
 
 ---
 
@@ -131,9 +131,9 @@ Block layout: [NUMERIC threshold] [PUBKEY key_1] ... [PUBKEY key_N] [SIGNATURE s
 
 **Spec implies:** Base blocks standard, covenant/recursion/PLC blocks non-standard until activation.
 
-**Implementation:** All 39 known block types pass `IsStandardRungTx()` policy checks. Family classification functions (`IsPhase1BlockType`, `IsPhase2BlockType`, `IsPhase3BlockType`) exist but are not used as policy gates.
+**Implementation:** All 48 block types pass `IsStandardRungTx()` policy checks. Family classification functions (`IsBaseBlockType`, `IsCovenantBlockType`, `IsStatefulBlockType`) exist but are not used as policy gates.
 
-**Rationale:** Ghost Core operates on its own signet where all nodes run the same software. There is no need for a phased activation timeline — all block types are consensus-valid from genesis. The classification functions are retained for documentation and for potential mainnet activation logic.
+**Rationale:** Ghost Core operates on its own signet where all nodes run the same software. All block types are consensus-valid from genesis. The classification functions are retained for documentation and for potential mainnet activation logic.
 
 ---
 
@@ -146,7 +146,7 @@ Block layout: [NUMERIC threshold] [PUBKEY key_1] ... [PUBKEY key_N] [SIGNATURE s
 - 33-byte keys (compressed SEC): must start with 0x02 or 0x03
 - 34–64 bytes (reserved for PQ): no format validation beyond size bounds
 
-**Rationale:** X-only keys are inherently valid 32-byte scalars (any 32 bytes is a valid x-coordinate candidate). Post-quantum key formats are not yet standardized — validation will be added when Phase 4 schemes are specified.
+**Rationale:** X-only keys are inherently valid 32-byte scalars (any 32 bytes is a valid x-coordinate candidate). Post-quantum key formats are not yet standardized — validation will be added when PQ schemes are specified.
 
 ---
 
@@ -214,9 +214,9 @@ RungConditions in scriptPubKey:
 
 36 functional tests in `test/functional/rung_basic.py`:
 
-**Phase 1:** createrung, decoderung, validateladder, malformed input, SIG spend, HASH_PREIMAGE, CSV, CLTV, MULTISIG, SIG+CSV compound, OR logic, inverted CSV, inverted HASH_PREIMAGE
+**Core:** createrung, decoderung, validateladder, malformed input, SIG spend, HASH_PREIMAGE, CSV, CLTV, MULTISIG, SIG+CSV compound, OR logic, inverted CSV, inverted HASH_PREIMAGE
 
-**Phase 2:** TAGGED_HASH, AMOUNT_LOCK, AMOUNT_LOCK out-of-range, ANCHOR, COMPARE, CTV template, VAULT_LOCK
+**Covenant/PLC:** TAGGED_HASH, AMOUNT_LOCK, AMOUNT_LOCK out-of-range, ANCHOR, COMPARE, CTV template, VAULT_LOCK
 
 **Negative:** wrong sig, wrong preimage, CSV too early, CLTV too early, CTV wrong template, VAULT wrong key, COMPARE fails, TAGGED_HASH wrong preimage
 

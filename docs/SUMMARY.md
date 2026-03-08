@@ -5,7 +5,7 @@ Ladder Script is a typed, structured transaction format for Bitcoin that replace
 ## Key Innovations
 
 - **Typed data model.** Nine declared data types (PUBKEY, HASH256, SIGNATURE, NUMERIC, SCHEME, etc.) with enforced size bounds replace untyped stack elements. No arbitrary data pushes are possible.
-- **Named block architecture.** 40 block types across seven families replace opcode sequences. New capabilities are added as block types, not opcodes, using the same wire format.
+- **Named block architecture.** 48 block types across nine families replace opcode sequences. New capabilities are added as block types, not opcodes, using the same wire format.
 - **Declarative evaluation.** Conditions are stated, not computed. Static analysis requires only parsing, not execution simulation.
 - **Native post-quantum support.** The SCHEME field routes SIG blocks to FALCON-512/1024, Dilithium3, or SPHINCS+ verification. PUBKEY_COMMIT reduces 897-byte PQ keys to 32-byte UTXO commitments.
 - **Covenant recursion.** Six recursion block types (RECURSE_SAME through RECURSE_DECAY) enable perpetual covenants, state machines, countdowns, UTXO tree splitting, and progressive relaxation.
@@ -21,7 +21,9 @@ Ladder Script is a typed, structured transaction format for Bitcoin that replace
 | Covenant | 0x0300--0x03FF | CTV, VAULT_LOCK, AMOUNT_LOCK | Output constraints |
 | Recursion | 0x0400--0x04FF | RECURSE_SAME, RECURSE_MODIFIED, RECURSE_UNTIL, RECURSE_COUNT, RECURSE_SPLIT, RECURSE_DECAY | Self-referential conditions |
 | Anchor | 0x0500--0x05FF | ANCHOR, ANCHOR_CHANNEL, ANCHOR_POOL, ANCHOR_RESERVE, ANCHOR_SEAL, ANCHOR_ORACLE | Typed L2 metadata |
-| PLC | 0x0600--0x06FF | HYSTERESIS, TIMER, LATCH, COUNTER, COMPARE, SEQUENCER, ONE_SHOT, RATE_LIMIT, COSIGN | State machines |
+| PLC | 0x0600--0x06FF | HYSTERESIS_FEE, HYSTERESIS_VALUE, TIMER_CONTINUOUS, TIMER_OFF_DELAY, LATCH_SET, LATCH_RESET, COUNTER_DOWN, COUNTER_PRESET, COUNTER_UP, COMPARE, SEQUENCER, ONE_SHOT, RATE_LIMIT, COSIGN | State machines |
+| Compound | 0x0700--0x07FF | TIMELOCKED_SIG, HTLC, HASH_SIG | Wire-optimized patterns |
+| Governance | 0x0800--0x08FF | EPOCH_GATE, WEIGHT_LIMIT, INPUT_COUNT, OUTPUT_COUNT, RELATIVE_VALUE, ACCUMULATOR | Transaction constraints |
 
 ## Transaction Format
 
@@ -33,4 +35,4 @@ Ladder Script supports four post-quantum signature schemes (FALCON-512, FALCON-1
 
 ## Implementation Status
 
-Ladder Script is implemented in the `src/rung/` directory of ghost-core (Bitcoin Ghost's fork of Bitcoin Core). The implementation comprises 10 source files: type definitions, serialization, conditions, evaluation (all three phases), sighash computation, PQ verification, adaptor signatures, aggregate proofs, and policy enforcement. The test suite includes 185 unit tests (`src/test/rung_tests.cpp`) and 19 functional test scenarios (`test/functional/rung_basic.py`) covering serialization round-trips, field validation, all Phase 1 evaluators, PQ signature verification, covenant evaluation, and full transaction verification through the node's mempool acceptance path.
+Ladder Script is implemented in the `src/rung/` directory of ghost-core (Bitcoin Ghost's fork of Bitcoin Core). The implementation comprises 10 source files: type definitions, serialization, conditions, evaluation, sighash computation, PQ verification, adaptor signatures, aggregate proofs, and policy enforcement. The test suite includes 185 unit tests (`src/test/rung_tests.cpp`) and 19 functional test scenarios (`test/functional/rung_basic.py`) covering serialization round-trips, field validation, all block evaluators, PQ signature verification, covenant evaluation, and full transaction verification through the node's mempool acceptance path.
