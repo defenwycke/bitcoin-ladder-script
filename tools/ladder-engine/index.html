@@ -262,6 +262,12 @@ body {
   position: relative;
   margin: 0 16px 6px 16px;
   min-height: 52px;
+  transition: border-color 0.1s;
+  border: 1px solid transparent;
+}
+.rung.drag-target-rung {
+  border-color: var(--amber);
+  border-radius: 3px;
 }
 
 .rung-number {
@@ -275,12 +281,13 @@ body {
   width: 44px;
   text-align: right;
   line-height: 44px;
-  cursor: default;
+  cursor: grab;
   user-select: none;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.rung-number:active { cursor: grabbing; }
 .rung-number:hover {
   color: var(--amber-dim);
 }
@@ -2934,7 +2941,11 @@ function ContactView({ block, rungId, selected, simMode, simResult, scanClass, o
       draggable={!simMode}
       onDragStart={simMode ? undefined : (e) => { e.dataTransfer.setData('reorderBlockId', String(block.id)); e.dataTransfer.setData('sourceRungId', String(rungId)); onDragStart?.(block.id, e); }}
       onDragOver={simMode ? undefined : (e) => { e.preventDefault(); e.stopPropagation(); onDragOver?.(e, block.id); }}
-      onDrop={simMode ? undefined : (e) => { e.preventDefault(); e.stopPropagation(); onDrop?.(e, block.id); }}
+      onDrop={simMode ? undefined : (e) => {
+        // Only handle reorder drops here; let palette drops bubble to the slot handler
+        const reorderId = e.dataTransfer.getData('reorderBlockId');
+        if (reorderId) { e.preventDefault(); e.stopPropagation(); onDrop?.(e, block.id); }
+      }}
       title={tips ? (simMode ? (scanClass === 'step-next' ? 'Click to pass this block and advance' : 'Alt+click to force ON/OFF/AUTO') : 'Click to select · Double-click to name · Right-click for options · Drag to reorder') : undefined}
     >
       {block.inverted && <span className="contact-inverted" />}
@@ -3480,6 +3491,7 @@ const MAX_BLOCKS_PER_RUNG = 8;
 
 function RungView({ rung, rungIndex, rungCount, selectedBlock, selectedCoil, selectedInput, simMode, simState, onSelectBlock, onSelectCoil, onSelectInput, onDeleteBlock, onDeleteRung, onDropBlock, onRungLabelChange, onReorderBlock, onMoveRung, onMoveBlockCrossRung, txOutputs, txInputs, scanStep, scanResults, scanning, isSpent, spentType, forcedBlocks, onForceBlock, onExecuteRung, onStartScanFrom, isSteppingThrough, stepActiveIdx, stepResults, onStepBlock, tips, onNameChange, onExpandBlock, onBlockContextMenu, renamingBlockId, onClearRenaming, onInputContextMenu, onRungChange, renamingInputId, onClearRenamingInput, onOutputContextMenu, isCoilReferenced }) {
   const [dropSlot, setDropSlot] = useState(null);
+  const [rungDragOver, setRungDragOver] = useState(false);
   const [editingInputName, setEditingInputName] = useState(false);
   const inputNoteRef = useRef(null);
 
@@ -3609,7 +3621,20 @@ function RungView({ rung, rungIndex, rungCount, selectedBlock, selectedCoil, sel
   }
 
   return (
-    <div className={`rung ${rungEnergized ? 'energized' : ''} ${rungScanClass} ${isSpent ? 'spent' : ''} ${spentType === 'executed' ? 'spent-executed' : ''} ${spentType === 'blocked' ? 'spent-blocked' : ''} ${isSteppingThrough ? 'stepping' : ''} ${stepCoilReached ? 'step-complete' : ''}`}>
+    <div
+      className={`rung ${rungEnergized ? 'energized' : ''} ${rungScanClass} ${isSpent ? 'spent' : ''} ${spentType === 'executed' ? 'spent-executed' : ''} ${spentType === 'blocked' ? 'spent-blocked' : ''} ${isSteppingThrough ? 'stepping' : ''} ${stepCoilReached ? 'step-complete' : ''} ${rungDragOver ? 'drag-target-rung' : ''}`}
+      onDragOver={simMode ? undefined : (e) => {
+        if (e.dataTransfer.types.includes('rungdragidx')) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setRungDragOver(true); }
+      }}
+      onDragLeave={simMode ? undefined : (e) => {
+        if (!e.currentTarget.contains(e.relatedTarget)) setRungDragOver(false);
+      }}
+      onDrop={simMode ? undefined : (e) => {
+        setRungDragOver(false);
+        const fromStr = e.dataTransfer.getData('rungdragidx');
+        if (fromStr) { e.preventDefault(); e.stopPropagation(); onMoveRung?.(parseInt(fromStr), rungIndex); }
+      }}
+    >
       {editing ? (
         <input
           className="rung-number-input"
@@ -3623,9 +3648,11 @@ function RungView({ rung, rungIndex, rungCount, selectedBlock, selectedCoil, sel
       ) : (
         <span
           className={`rung-number ${simMode && !isSpent ? 'rung-number-sim' : ''}`}
+          draggable={!simMode}
+          onDragStart={simMode ? undefined : (e) => { e.dataTransfer.setData('rungdragidx', String(rungIndex)); e.dataTransfer.effectAllowed = 'move'; }}
           onDoubleClick={() => { if (!simMode) setEditing(true); }}
           onClick={() => { if (simMode && !isSpent && onStartScanFrom) onStartScanFrom(rungIndex); }}
-          title={tips ? (simMode ? (isSpent ? 'SPENT — cannot simulate' : 'Click to start step-through for this rung') : 'Double-click to rename') : undefined}
+          title={tips ? (simMode ? (isSpent ? 'SPENT — cannot simulate' : 'Click to start step-through for this rung') : 'Drag to reorder · Double-click to rename') : undefined}
         >{displayName}</span>
       )}
       <div className="rung-content">
@@ -7300,7 +7327,21 @@ ${ladderRows.map(r => `
                 </div>
                 {(() => {
                   const warnings = [];
-                  const unassigned = rungs.filter(r => r.output.txOutputId === null || r.output.txOutputId === undefined);
+                  // Exclude rungs whose coils are internally referenced (named output, outputRefs, or OUTPUT_REF blocks)
+                  const referencedNames = new Set();
+                  rungs.forEach((r, ri) => {
+                    if (r.output.name) referencedNames.add(r.output.name);
+                    referencedNames.add(r.label || `R${String(ri).padStart(3, '0')}`);
+                  });
+                  const isRungReferenced = (rung, ri) => {
+                    if (rung.output.name) return true;
+                    const rungName = rung.label || `R${String(ri).padStart(3, '0')}`;
+                    return rungs.some(other => other.id !== rung.id && (
+                      (other.outputRefs || []).some(ref => ref === rungName || ref === rung.output.name) ||
+                      other.blocks.some(b => b.type === 'OUTPUT_REF' && b.values?.ref_name && (b.values.ref_name === rungName || b.values.ref_name === rung.output.name))
+                    ));
+                  };
+                  const unassigned = rungs.filter((r, ri) => (r.output.txOutputId === null || r.output.txOutputId === undefined) && !isRungReferenced(r, ri));
                   if (unassigned.length > 0) warnings.push(`${unassigned.length} rung(s) not assigned to a TX output — will be excluded from wire JSON`);
                   const outRefBlocks = rungs.reduce((c, r) => c + r.blocks.filter(b => b.type === 'OUTPUT_REF').length, 0);
                   if (outRefBlocks > 0) warnings.push(`${outRefBlocks} OUTPUT_REF block(s) stripped — use input refs on the input contact instead`);

@@ -426,6 +426,24 @@ Additional functional tests:
 
 **Fuzz testing** (`src/test/fuzz/rung_deserialize.cpp`): Continuous fuzz testing of the deserialization path.
 
+## Design Considerations
+
+### Preimage Block Limit: Policy vs Consensus
+
+The `MAX_PREIMAGE_BLOCKS_PER_WITNESS = 2` limit is enforced at the **policy layer** (`IsStandardRungTx`), not at the consensus layer (`EvalBlock`). This means:
+
+- Standard relay and mempool acceptance reject transactions with more than 2 preimage-bearing blocks (HASH_PREIMAGE, HASH160_PREIMAGE, TAGGED_HASH combined).
+- A miner who constructs their own blocks could include a transaction exceeding this limit without violating consensus rules.
+- For networks where the mining stack is controlled (e.g. signet, private deployments), policy enforcement is sufficient. For mainnet deployment, consensus enforcement should be considered by moving the check into the evaluator.
+
+This design follows Bitcoin's existing precedent where many spam-mitigation rules (e.g. `MAX_STANDARD_TX_WEIGHT`, `nBytesPerSigOp`) are policy-only rather than consensus.
+
+### ADAPTOR_SIG as Spam-Free HTLC Alternative
+
+Hash Time-Locked Contracts (HTLCs) require HASH_PREIMAGE blocks, which introduce user-chosen data into the witness (up to 252 bytes per preimage). While witness data is prunable and preimages are cryptographically bound to their hash commitments, they remain the only channel for user-chosen bytes in a Ladder Script transaction.
+
+ADAPTOR_SIG provides a functionally equivalent mechanism — Point Time-Locked Contracts (PTLCs) — without any user-chosen data. Adaptor signatures use elliptic curve point arithmetic rather than hash preimages, meaning the "secret" is a scalar that satisfies a mathematical relation rather than an arbitrary byte string. PTLCs via ADAPTOR_SIG are recommended for cross-chain swaps and payment channel routing where eliminating all user-chosen data channels is desired.
+
 ## Copyright
 
 This document is placed in the public domain.
