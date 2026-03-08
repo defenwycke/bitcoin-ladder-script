@@ -35,6 +35,7 @@ using rung::LadderWitness;
 using rung::RungBlock;
 using rung::RungField;
 using rung::Rung;
+using rung::Relay;
 using rung::RungCoil;
 using rung::RungCoilType;
 using rung::RungAttestationMode;
@@ -108,15 +109,42 @@ static UniValue CoilToJSON(const RungCoil& coil)
 
 /** Convert a LadderWitness to JSON for RPC display.
  *  Returns an object with "rungs" array and "coil" object. */
+static UniValue RelayRefsToJSON(const std::vector<uint16_t>& refs)
+{
+    UniValue arr(UniValue::VARR);
+    for (uint16_t ref : refs) {
+        arr.push_back(static_cast<int>(ref));
+    }
+    return arr;
+}
+
 static UniValue LadderWitnessToJSON(const LadderWitness& ladder)
 {
     UniValue result(UniValue::VOBJ);
+
+    // Relays (if any)
+    if (!ladder.relays.empty()) {
+        UniValue relays_arr(UniValue::VARR);
+        for (size_t i = 0; i < ladder.relays.size(); ++i) {
+            UniValue relay_obj(UniValue::VOBJ);
+            relay_obj.pushKV("relay_index", static_cast<int>(i));
+            relay_obj.pushKV("blocks", BlocksToJSON(ladder.relays[i].blocks));
+            if (!ladder.relays[i].relay_refs.empty()) {
+                relay_obj.pushKV("relay_refs", RelayRefsToJSON(ladder.relays[i].relay_refs));
+            }
+            relays_arr.push_back(relay_obj);
+        }
+        result.pushKV("relays", relays_arr);
+    }
 
     UniValue rungs_arr(UniValue::VARR);
     for (size_t r = 0; r < ladder.rungs.size(); ++r) {
         UniValue rung_obj(UniValue::VOBJ);
         rung_obj.pushKV("rung_index", static_cast<int>(r));
         rung_obj.pushKV("blocks", BlocksToJSON(ladder.rungs[r].blocks));
+        if (!ladder.rungs[r].relay_refs.empty()) {
+            rung_obj.pushKV("relay_refs", RelayRefsToJSON(ladder.rungs[r].relay_refs));
+        }
         rungs_arr.push_back(rung_obj);
     }
     result.pushKV("rungs", rungs_arr);
@@ -537,11 +565,43 @@ static RPCHelpMan validateladder()
     };
 }
 
+/** Helper: parse relay_refs from a JSON array of integers. */
+static std::vector<uint16_t> ParseRelayRefs(const UniValue& arr)
+{
+    std::vector<uint16_t> refs;
+    for (size_t i = 0; i < arr.size(); ++i) {
+        refs.push_back(static_cast<uint16_t>(arr[i].getInt<int>()));
+    }
+    return refs;
+}
+
 /** Helper: parse a conditions JSON spec into a RungConditions struct.
- *  rungs_arr is the array of rung specs; coil_obj is the optional coil spec (per-output). */
-static RungConditions ParseConditionsSpec(const UniValue& rungs_arr, const UniValue& coil_obj = UniValue())
+ *  rungs_arr is the array of rung specs; coil_obj is the optional coil spec (per-output).
+ *  relays_arr is the optional relays array (top-level, shared across outputs). */
+static RungConditions ParseConditionsSpec(const UniValue& rungs_arr,
+                                          const UniValue& coil_obj = UniValue(),
+                                          const UniValue& relays_arr = UniValue())
 {
     RungConditions conditions;
+
+    // Parse relays (if provided)
+    if (!relays_arr.isNull() && relays_arr.isArray()) {
+        for (size_t i = 0; i < relays_arr.size(); ++i) {
+            const UniValue& relay_obj = relays_arr[i];
+            Relay relay;
+
+            const UniValue& blocks_arr = relay_obj["blocks"].get_array();
+            for (size_t b = 0; b < blocks_arr.size(); ++b) {
+                relay.blocks.push_back(ParseBlockSpec(blocks_arr[b], /*conditions_only=*/true));
+            }
+
+            if (relay_obj.exists("relay_refs")) {
+                relay.relay_refs = ParseRelayRefs(relay_obj["relay_refs"].get_array());
+            }
+
+            conditions.relays.push_back(std::move(relay));
+        }
+    }
 
     for (size_t r = 0; r < rungs_arr.size(); ++r) {
         const UniValue& rung_obj = rungs_arr[r];
@@ -550,6 +610,10 @@ static RungConditions ParseConditionsSpec(const UniValue& rungs_arr, const UniVa
         const UniValue& blocks_arr = rung_obj["blocks"].get_array();
         for (size_t b = 0; b < blocks_arr.size(); ++b) {
             rung.blocks.push_back(ParseBlockSpec(blocks_arr[b], /*conditions_only=*/true));
+        }
+
+        if (rung_obj.exists("relay_refs")) {
+            rung.relay_refs = ParseRelayRefs(rung_obj["relay_refs"].get_array());
         }
 
         conditions.rungs.push_back(std::move(rung));
@@ -627,6 +691,37 @@ static RPCHelpMan createrungtx()
                 },
             },
             {"locktime", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "Transaction nLockTime (default 0). Set for CLTV spends."},
+            {"relays", RPCArg::Type::ARR, RPCArg::Optional::OMITTED, "Relay definitions (shared condition sets referenced by rung relay_refs)",
+                {
+                    {"relay", RPCArg::Type::OBJ, RPCArg::Optional::NO, "A relay definition",
+                        {
+                            {"blocks", RPCArg::Type::ARR, RPCArg::Optional::NO, "Block specs (same format as rung blocks)",
+                                {
+                                    {"block", RPCArg::Type::OBJ, RPCArg::Optional::NO, "A block",
+                                        {
+                                            {"type", RPCArg::Type::STR, RPCArg::Optional::NO, "Block type"},
+                                            {"inverted", RPCArg::Type::BOOL, RPCArg::Optional::OMITTED, "Invert evaluation"},
+                                            {"fields", RPCArg::Type::ARR, RPCArg::Optional::NO, "Fields",
+                                                {
+                                                    {"field", RPCArg::Type::OBJ, RPCArg::Optional::NO, "A field",
+                                                        {
+                                                            {"type", RPCArg::Type::STR, RPCArg::Optional::NO, "Data type"},
+                                                            {"hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Field data hex"},
+                                                        },
+                                                    },
+                                                },
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                            {"relay_refs", RPCArg::Type::ARR, RPCArg::Optional::OMITTED, "Indices of required relays (must be < own index)",
+                                {{"index", RPCArg::Type::NUM, RPCArg::Optional::NO, "Relay index"}},
+                            },
+                        },
+                    },
+                },
+            },
         },
         RPCResult{RPCResult::Type::OBJ, "", "", {
             {RPCResult::Type::STR_HEX, "hex", "The unsigned transaction hex"},
@@ -646,6 +741,9 @@ static RPCHelpMan createrungtx()
     if (!request.params[2].isNull()) {
         mtx.nLockTime = request.params[2].getInt<uint32_t>();
     }
+
+    // Optional relays (4th param) — shared across all outputs
+    UniValue relays_val = !request.params[3].isNull() ? request.params[3] : UniValue();
 
     // Parse inputs
     for (size_t i = 0; i < inputs_arr.size(); ++i) {
@@ -672,7 +770,7 @@ static RPCHelpMan createrungtx()
 
         const UniValue& cond_arr = outp["conditions"].get_array();
         UniValue coil_val = outp.exists("coil") ? outp["coil"] : UniValue();
-        RungConditions conditions = ParseConditionsSpec(cond_arr, coil_val);
+        RungConditions conditions = ParseConditionsSpec(cond_arr, coil_val, relays_val);
 
         CTxOut txout;
         txout.nValue = amount;
@@ -952,6 +1050,28 @@ static RPCHelpMan signrungtx()
                                     },
                                 },
                             },
+                            {"relay_blocks", RPCArg::Type::ARR, RPCArg::Optional::OMITTED, "Per-relay signing specs (indexed same as conditions relays)",
+                                {
+                                    {"relay", RPCArg::Type::OBJ, RPCArg::Optional::NO, "Relay signing spec (null/empty to skip)",
+                                        {
+                                            {"blocks", RPCArg::Type::ARR, RPCArg::Optional::OMITTED, "Block signing specs for this relay",
+                                                {
+                                                    {"block", RPCArg::Type::OBJ, RPCArg::Optional::NO, "A block spec",
+                                                        {
+                                                            {"type", RPCArg::Type::STR, RPCArg::Optional::NO, "Block type"},
+                                                            {"privkey", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "WIF key for SIG"},
+                                                            {"privkeys", RPCArg::Type::ARR, RPCArg::Optional::OMITTED, "WIF keys for MULTISIG",
+                                                                {{"key", RPCArg::Type::STR, RPCArg::Optional::NO, "A WIF key"}},
+                                                            },
+                                                            {"preimage", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "Preimage hex"},
+                                                        },
+                                                    },
+                                                },
+                                            },
+                                        },
+                                    },
+                                },
+                            },
                         },
                     },
                 },
@@ -1106,6 +1226,61 @@ static RPCHelpMan signrungtx()
         } else {
             throw JSONRPCError(RPC_INVALID_PARAMETER,
                 "Signer entry must have either 'privkey' (legacy) or 'blocks' (new format)");
+        }
+
+        // Build relay witnesses if conditions have relays
+        if (has_conditions && !conditions.relays.empty()) {
+            if (signer_obj.exists("relay_blocks")) {
+                const UniValue& relay_blocks_arr = signer_obj["relay_blocks"].get_array();
+                if (relay_blocks_arr.size() != conditions.relays.size()) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER,
+                        "relay_blocks count (" + std::to_string(relay_blocks_arr.size()) +
+                        ") must match conditions relay count (" + std::to_string(conditions.relays.size()) + ")");
+                }
+                for (size_t rl = 0; rl < relay_blocks_arr.size(); ++rl) {
+                    Relay wit_relay;
+                    wit_relay.relay_refs = conditions.relays[rl].relay_refs;
+                    const UniValue& relay_spec = relay_blocks_arr[rl];
+                    if (relay_spec.isNull() || !relay_spec.exists("blocks")) {
+                        // Dummy relay — correct types, empty fields
+                        for (const auto& cond_block : conditions.relays[rl].blocks) {
+                            RungBlock dummy;
+                            dummy.type = cond_block.type;
+                            wit_relay.blocks.push_back(std::move(dummy));
+                        }
+                    } else {
+                        const UniValue& rb_arr = relay_spec["blocks"].get_array();
+                        if (rb_arr.size() != conditions.relays[rl].blocks.size()) {
+                            throw JSONRPCError(RPC_INVALID_PARAMETER,
+                                "relay_blocks[" + std::to_string(rl) + "] block count (" +
+                                std::to_string(rb_arr.size()) + ") must match conditions relay " +
+                                std::to_string(rl) + " block count (" +
+                                std::to_string(conditions.relays[rl].blocks.size()) + ")");
+                        }
+                        for (size_t b = 0; b < rb_arr.size(); ++b) {
+                            wit_relay.blocks.push_back(
+                                BuildWitnessBlock(rb_arr[b], mtx, input_idx, txdata, conditions));
+                        }
+                    }
+                    ladder.relays.push_back(std::move(wit_relay));
+                }
+            } else {
+                // No relay_blocks provided — build dummy relays for all
+                for (size_t rl = 0; rl < conditions.relays.size(); ++rl) {
+                    Relay wit_relay;
+                    wit_relay.relay_refs = conditions.relays[rl].relay_refs;
+                    for (const auto& cond_block : conditions.relays[rl].blocks) {
+                        RungBlock dummy;
+                        dummy.type = cond_block.type;
+                        wit_relay.blocks.push_back(std::move(dummy));
+                    }
+                    ladder.relays.push_back(std::move(wit_relay));
+                }
+            }
+            // Copy relay_refs from conditions to witness rungs
+            for (size_t r = 0; r < ladder.rungs.size() && r < conditions.rungs.size(); ++r) {
+                ladder.rungs[r].relay_refs = conditions.rungs[r].relay_refs;
+            }
         }
 
         auto witness_bytes = rung::SerializeLadderWitness(ladder);

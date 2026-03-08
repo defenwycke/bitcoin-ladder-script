@@ -562,6 +562,24 @@ body {
 .coil.has-ref .coil-name {
   color: var(--green);
 }
+.coil.relay-coil {
+  border: 1px dashed var(--amber-dim);
+  background: #2a2510;
+}
+.coil.relay-coil .coil-symbol {
+  color: var(--amber);
+}
+.coil.relay-coil .coil-name {
+  color: var(--amber-dim);
+}
+.coil.relay-coil.energized {
+  border-color: var(--amber);
+  background: #3a3018;
+}
+.coil.relay-coil.energized .coil-symbol {
+  color: var(--amber-bright);
+  text-shadow: 0 0 10px var(--amber-glow);
+}
 .coil-warn {
   position: absolute;
   top: -6px;
@@ -2204,14 +2222,6 @@ const { useState, useCallback, useMemo, useRef, useEffect } = React;
 
 const BLOCK_FAMILIES = [
   {
-    name: 'I/O', color: '#e6a817',
-    blocks: [
-      { type: 'OUTPUT_REF', label: 'OUT_REF', desc: 'Reference an output coil from another rung', fields: [
-        { name: 'ref_name', dataType: 'TEXT', label: 'Output Name', placeholder: 'MOTOR_RUN' }
-      ]},
-    ]
-  },
-  {
     name: 'SIGNATURE', color: '#e6a817',
     blocks: [
       { type: 'SIG', label: 'SIG', desc: 'Single signature check — Schnorr, ECDSA, or post-quantum', fields: [
@@ -2482,6 +2492,7 @@ const COIL_TYPES = [
   { value: 'unlatch', symbol: '(U)', label: 'Unlatch' },
   { value: 'retentive', symbol: '(M)', label: 'Retentive' },
   { value: 'negated', symbol: '(/)', label: 'Negated' },
+  { value: 'relay', symbol: '\u25C7R', label: 'Relay' },
 ];
 
 function getCoilSymbol(type) {
@@ -2756,16 +2767,39 @@ function exportCreateRungtx(rungs, txOutputs, txInputs, locktime) {
       return inp;
     });
 
-  // Group rungs by their assigned txOutputId
+  // Collect relay rungs and assign indices
+  const relayRungs = rungs.filter(r => r.output.type === 'relay');
+  const relayNameToIndex = new Map();
+  relayRungs.forEach((r, idx) => {
+    const name = r.output.name || r.label || `R${String(rungs.indexOf(r)).padStart(3, '0')}`;
+    relayNameToIndex.set(name, idx);
+  });
+
+  // Build relays array for wire format
+  const relays = relayRungs.map(r => {
+    const relay = {
+      blocks: r.blocks
+        .filter(b => b.type !== 'OUTPUT_REF')
+        .map(exportBlockFields)
+    };
+    // Relay-to-relay refs
+    if (r.outputRefs && r.outputRefs.length > 0) {
+      const refs = r.outputRefs
+        .map(ref => relayNameToIndex.get(ref))
+        .filter(idx => idx !== undefined);
+      if (refs.length > 0) relay.relay_refs = refs;
+    }
+    return relay;
+  });
+
+  // Group non-relay rungs by their assigned txOutputId
   const rungsByOutput = new Map(); // txOutputId -> [rung, ...]
-  const unassignedRungs = [];
   rungs.forEach(rung => {
+    if (rung.output.type === 'relay') return; // skip relay rungs
     if (rung.output.txOutputId !== null && rung.output.txOutputId !== undefined) {
       const key = rung.output.txOutputId;
       if (!rungsByOutput.has(key)) rungsByOutput.set(key, []);
       rungsByOutput.get(key).push(rung);
-    } else {
-      unassignedRungs.push(rung);
     }
   });
 
@@ -2777,12 +2811,21 @@ function exportCreateRungtx(rungs, txOutputs, txInputs, locktime) {
       const amt = parseInt(o.amount) || 0;
 
       // Build conditions: each rung becomes an entry in the conditions array
-      // Filter out OUTPUT_REF blocks (simulation-only, not wire format)
-      const conditions = assignedRungs.map(rung => ({
-        blocks: rung.blocks
-          .filter(b => b.type !== 'OUTPUT_REF')
-          .map(exportBlockFields)
-      }));
+      const conditions = assignedRungs.map(rung => {
+        const cond = {
+          blocks: rung.blocks
+            .filter(b => b.type !== 'OUTPUT_REF')
+            .map(exportBlockFields)
+        };
+        // Convert outputRefs (relay names) to relay_refs (relay indices)
+        if (rung.outputRefs && rung.outputRefs.length > 0) {
+          const refs = rung.outputRefs
+            .map(ref => relayNameToIndex.get(ref))
+            .filter(idx => idx !== undefined);
+          if (refs.length > 0) cond.relay_refs = refs;
+        }
+        return cond;
+      });
 
       // Coil: use wire fields from the first assigned rung (all rungs share one coil per output)
       const firstRung = assignedRungs[0];
@@ -2813,6 +2856,7 @@ function exportCreateRungtx(rungs, txOutputs, txInputs, locktime) {
     });
 
   const result = { inputs, outputs };
+  if (relays.length > 0) result.relays = relays;
   const lt = parseInt(locktime);
   if (lt > 0) result.locktime = lt;
 
@@ -3104,6 +3148,7 @@ function InputModal({ rung, rungIndex, onRungChange, txInputs, allRungs, onClose
     if (!allRungs) return [];
     return allRungs.map((r, i) => {
       if (r.id === rung.id) return null;
+      if (r.output.type !== 'relay') return null; // only relay coils can be referenced
       const label = r.label || `R${String(i).padStart(3, '0')}`;
       const coilName = r.output.name;
       const refValue = coilName || r.label || `R${String(i).padStart(3, '0')}`;
@@ -3174,9 +3219,9 @@ function InputModal({ rung, rungIndex, onRungChange, txInputs, allRungs, onClose
             )}
           </div>
           <div className="block-modal-section">
-            <div className="block-modal-section-title">OUTPUT REFERENCES</div>
+            <div className="block-modal-section-title">RELAY REFERENCES</div>
             <div style={{ fontSize: 9, color: 'var(--text-dim)', marginBottom: 8, lineHeight: 1.4 }}>
-              Reference outputs from other rungs as input conditions.
+              Require relay coils to be satisfied before this rung can pass.
             </div>
             {availableOutputs.map((out) => {
               const isChecked = (rung.outputRefs || []).includes(out.refValue);
@@ -3199,7 +3244,7 @@ function InputModal({ rung, rungIndex, onRungChange, txInputs, allRungs, onClose
               );
             })}
             {availableOutputs.length === 0 && (
-              <div style={{ fontSize: 9, color: 'var(--text-dim)' }}>No other rungs available to reference.</div>
+              <div style={{ fontSize: 9, color: 'var(--text-dim)' }}>No relay coils available. Set a coil type to "Relay" first.</div>
             )}
           </div>
         </div>
@@ -3262,74 +3307,85 @@ function OutputModal({ rung, rungIndex, onChange, txOutputs, onClose }) {
               ))}
             </select>
           </div>
-          <div className="block-modal-section">
-            <div className="block-modal-section-title">WIRE FORMAT</div>
-            <div style={{ fontSize: 9, color: 'var(--text-dim)', marginBottom: 6, lineHeight: 1.4 }}>
-              On-chain unlock parameters for this output.
-            </div>
-            <div className="block-modal-field-row">
-              <span className="block-modal-field-label">Coil Type</span>
-              <select
-                className="block-modal-field-select"
-                value={rung.output.wireType || 'UNLOCK'}
-                onChange={(e) => onChange(rung.id, 'wireType', e.target.value)}
-              >
-                {WIRE_COIL_TYPES.map(ct => (
-                  <option key={ct.value} value={ct.value}>{ct.label}</option>
-                ))}
-              </select>
-            </div>
-            <div className="block-modal-field-row">
-              <span className="block-modal-field-label">Attestation</span>
-              <select
-                className="block-modal-field-select"
-                value={rung.output.attestation || 'INLINE'}
-                onChange={(e) => onChange(rung.id, 'attestation', e.target.value)}
-              >
-                {ATTESTATION_TYPES.map(at => (
-                  <option key={at.value} value={at.value}>{at.label}</option>
-                ))}
-              </select>
-            </div>
-            <div className="block-modal-field-row">
-              <span className="block-modal-field-label">Scheme</span>
-              <select
-                className="block-modal-field-select"
-                value={rung.output.scheme || 'SCHNORR'}
-                onChange={(e) => onChange(rung.id, 'scheme', e.target.value)}
-              >
-                {SCHEME_TYPES.map(st => (
-                  <option key={st.value} value={st.value}>{st.label}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div className="block-modal-section">
-            <div className="block-modal-section-title">TX OUTPUT</div>
-            <div style={{ fontSize: 9, color: 'var(--text-dim)', marginBottom: 6, lineHeight: 1.4 }}>
-              Assign a transaction output to send funds when this path is satisfied.
-            </div>
-            <select
-              className="block-modal-field-select"
-              value={rung.output.txOutputId || ''}
-              onChange={(e) => onChange(rung.id, 'txOutputId', e.target.value ? parseInt(e.target.value) : null)}
-            >
-              <option value="">— none —</option>
-              {(txOutputs || []).map((o, idx) => (
-                <option key={o.id} value={o.id}>
-                  VOUT {idx}: {o.address ? (o.address.length > 20 ? o.address.substring(0, 10) + '...' + o.address.slice(-6) : o.address) : '(no addr)'} — {(parseInt(o.amount) || 0).toLocaleString()} sats
-                </option>
-              ))}
-            </select>
-            {assignedTxOut && (
-              <div style={{ marginTop: 8, padding: '6px 8px', background: 'var(--bg-primary)', border: '1px solid var(--border)', fontSize: 10 }}>
-                <div style={{ color: 'var(--text-secondary)', marginBottom: 2 }}>Address:</div>
-                <div style={{ color: 'var(--amber)', wordBreak: 'break-all', fontSize: 9 }}>{assignedTxOut.address || '—'}</div>
-                <div style={{ color: 'var(--text-secondary)', marginTop: 4, marginBottom: 2 }}>Amount:</div>
-                <div style={{ color: 'var(--amber)' }}>{(parseInt(assignedTxOut.amount) || 0).toLocaleString()} sats</div>
+          {rung.output.type === 'relay' ? (
+            <div className="block-modal-section">
+              <div className="block-modal-section-title">RELAY COIL</div>
+              <div style={{ fontSize: 9, color: 'var(--text-dim)', lineHeight: 1.6 }}>
+                Relay coil — conditions evaluated and cached, not tied to a TX output. Other rungs reference this relay via their input contact.
               </div>
-            )}
-          </div>
+            </div>
+          ) : (
+            <>
+              <div className="block-modal-section">
+                <div className="block-modal-section-title">WIRE FORMAT</div>
+                <div style={{ fontSize: 9, color: 'var(--text-dim)', marginBottom: 6, lineHeight: 1.4 }}>
+                  On-chain unlock parameters for this output.
+                </div>
+                <div className="block-modal-field-row">
+                  <span className="block-modal-field-label">Coil Type</span>
+                  <select
+                    className="block-modal-field-select"
+                    value={rung.output.wireType || 'UNLOCK'}
+                    onChange={(e) => onChange(rung.id, 'wireType', e.target.value)}
+                  >
+                    {WIRE_COIL_TYPES.map(ct => (
+                      <option key={ct.value} value={ct.value}>{ct.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="block-modal-field-row">
+                  <span className="block-modal-field-label">Attestation</span>
+                  <select
+                    className="block-modal-field-select"
+                    value={rung.output.attestation || 'INLINE'}
+                    onChange={(e) => onChange(rung.id, 'attestation', e.target.value)}
+                  >
+                    {ATTESTATION_TYPES.map(at => (
+                      <option key={at.value} value={at.value}>{at.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="block-modal-field-row">
+                  <span className="block-modal-field-label">Scheme</span>
+                  <select
+                    className="block-modal-field-select"
+                    value={rung.output.scheme || 'SCHNORR'}
+                    onChange={(e) => onChange(rung.id, 'scheme', e.target.value)}
+                  >
+                    {SCHEME_TYPES.map(st => (
+                      <option key={st.value} value={st.value}>{st.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="block-modal-section">
+                <div className="block-modal-section-title">TX OUTPUT</div>
+                <div style={{ fontSize: 9, color: 'var(--text-dim)', marginBottom: 6, lineHeight: 1.4 }}>
+                  Assign a transaction output to send funds when this path is satisfied.
+                </div>
+                <select
+                  className="block-modal-field-select"
+                  value={rung.output.txOutputId || ''}
+                  onChange={(e) => onChange(rung.id, 'txOutputId', e.target.value ? parseInt(e.target.value) : null)}
+                >
+                  <option value="">— none —</option>
+                  {(txOutputs || []).map((o, idx) => (
+                    <option key={o.id} value={o.id}>
+                      VOUT {idx}: {o.address ? (o.address.length > 20 ? o.address.substring(0, 10) + '...' + o.address.slice(-6) : o.address) : '(no addr)'} — {(parseInt(o.amount) || 0).toLocaleString()} sats
+                    </option>
+                  ))}
+                </select>
+                {assignedTxOut && (
+                  <div style={{ marginTop: 8, padding: '6px 8px', background: 'var(--bg-primary)', border: '1px solid var(--border)', fontSize: 10 }}>
+                    <div style={{ color: 'var(--text-secondary)', marginBottom: 2 }}>Address:</div>
+                    <div style={{ color: 'var(--amber)', wordBreak: 'break-all', fontSize: 9 }}>{assignedTxOut.address || '—'}</div>
+                    <div style={{ color: 'var(--text-secondary)', marginTop: 4, marginBottom: 2 }}>Amount:</div>
+                    <div style={{ color: 'var(--amber)' }}>{(parseInt(assignedTxOut.amount) || 0).toLocaleString()} sats</div>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
         <div className="block-modal-footer">
           <button className="block-modal-ok" onClick={onClose}>OK</button>
@@ -3680,7 +3736,7 @@ function RungView({ rung, rungIndex, rungCount, selectedBlock, selectedCoil, sel
               {(() => {
                 const parts = [];
                 if (rung.txInputIds && rung.txInputIds.length > 0) parts.push(`${rung.txInputIds.length} VIN`);
-                if (rung.outputRefs && rung.outputRefs.length > 0) parts.push(`${rung.outputRefs.length} REF`);
+                if (rung.outputRefs && rung.outputRefs.length > 0) parts.push(`${rung.outputRefs.length} RELAY`);
                 return parts.length > 0 ? parts.join(' + ') : 'NONE';
               })()}
             </span>
@@ -3764,7 +3820,7 @@ function RungView({ rung, rungIndex, rungCount, selectedBlock, selectedCoil, sel
         </div>
 
         <div
-          className={`coil ${rungEnergized || stepCoilReached ? 'energized' : ''} ${selectedCoil === rung.id ? 'selected' : ''} ${rung.output.txOutputId ? 'has-tx-output' : ''} ${!rung.output.txOutputId && isCoilReferenced ? 'has-ref' : ''} ${scanning && isActiveRung && scanStep?.type === 'coil' ? 'scan-active' : ''} ${coilResult === 'pass' ? 'scan-pass' : ''} ${coilResult === 'fail' ? 'scan-fail' : ''} ${stepCoilReached ? 'step-complete' : ''}`}
+          className={`coil ${rungEnergized || stepCoilReached ? 'energized' : ''} ${selectedCoil === rung.id ? 'selected' : ''} ${rung.output.txOutputId ? 'has-tx-output' : ''} ${!rung.output.txOutputId && isCoilReferenced ? 'has-ref' : ''} ${rung.output.type === 'relay' ? 'relay-coil' : ''} ${scanning && isActiveRung && scanStep?.type === 'coil' ? 'scan-active' : ''} ${coilResult === 'pass' ? 'scan-pass' : ''} ${coilResult === 'fail' ? 'scan-fail' : ''} ${stepCoilReached ? 'step-complete' : ''}`}
           onClick={() => onSelectCoil(rung.id)}
           onContextMenu={(e) => { if (!simMode) { e.preventDefault(); e.stopPropagation(); onOutputContextMenu?.(e.clientX, e.clientY, rung); } }}
           onMouseDown={(e) => { if (e.button === 2) e.stopPropagation(); }}
@@ -3775,7 +3831,7 @@ function RungView({ rung, rungIndex, rungCount, selectedBlock, selectedCoil, sel
           {(rung.output.name || rung.output.txOutputId) && (
             <div className="coil-info">
               {rung.output.name && <span className="coil-name">{rung.output.name}</span>}
-              {(() => {
+              {rung.output.type !== 'relay' && (() => {
                 const txOut = txOutputs?.find(o => o.id === rung.output.txOutputId);
                 if (!txOut) return null;
                 const addr = txOut.address || '';
@@ -3785,7 +3841,7 @@ function RungView({ rung, rungIndex, rungCount, selectedBlock, selectedCoil, sel
               })()}
             </div>
           )}
-          {!rung.output.txOutputId && !isCoilReferenced && <span className="coil-warn" title="No TX output assigned">⚠</span>}
+          {!rung.output.txOutputId && !isCoilReferenced && rung.output.type !== 'relay' && <span className="coil-warn" title="No TX output assigned">⚠</span>}
           {simMode && !isSpent && !isSteppingThrough && onExecuteRung && (
             <span className={`coil-execute ${rungEnergized ? '' : 'coil-execute-dim'}`} onClick={(e) => { e.stopPropagation(); onExecuteRung(rung.id); }} title={tips ? (rungEnergized ? 'Execute this rung — marks as spent, cascades to shared inputs' : 'Force-execute — skip step-through, mark spent immediately') : undefined}>{rungEnergized ? 'EXECUTE' : 'FORCE'}</span>
           )}
@@ -3879,6 +3935,11 @@ function LadderView({ rungs, selectedBlock, selectedCoil, selectedInput, mode, s
   const referencedCoilIds = useMemo(() => {
     const refs = new Set();
     rungs.forEach((r, ri) => {
+      // Relay coils are always considered referenced (they don't need TX output)
+      if (r.output.type === 'relay') {
+        refs.add(r.id);
+        return;
+      }
       const rungName = r.label || `R${String(ri).padStart(3, '0')}`;
       // Check if any other rung's outputRefs reference this rung's name
       rungs.forEach(other => {
@@ -3886,12 +3947,6 @@ function LadderView({ rungs, selectedBlock, selectedCoil, selectedInput, mode, s
         if ((other.outputRefs || []).some(ref => ref === rungName || ref === r.output.name)) {
           refs.add(r.id);
         }
-        // Check if any OUTPUT_REF block in other rungs references this rung's output name
-        other.blocks.forEach(b => {
-          if (b.type === 'OUTPUT_REF' && b.values?.ref_name && (b.values.ref_name === rungName || b.values.ref_name === r.output.name)) {
-            refs.add(r.id);
-          }
-        });
       });
       // If this rung has a named output, it's considered referenced for internal use
       if (r.output.name) refs.add(r.id);
@@ -4332,6 +4387,7 @@ function InputPropertiesPanel({ rung, rungIndex, onRungChange, txInputs, allRung
     if (!allRungs) return [];
     return allRungs.map((r, i) => {
       if (r.id === rung.id) return null; // skip self
+      if (r.output.type !== 'relay') return null; // only relay coils can be referenced
       const label = r.label || `R${String(i).padStart(3, '0')}`;
       const coilName = r.output.name;
       const coilSym = getCoilSymbol(r.output.type);
@@ -4379,9 +4435,9 @@ function InputPropertiesPanel({ rung, rungIndex, onRungChange, txInputs, allRung
       </div>
 
       <div className="prop-section">
-        <div className="prop-section-title">OUTPUT REFERENCES</div>
+        <div className="prop-section-title">RELAY REFERENCES</div>
         <div style={{ fontSize: 9, color: 'var(--text-dim)', marginBottom: 8, lineHeight: 1.4 }}>
-          Reference outputs from other rungs as input conditions. This rung will depend on the referenced coils being energized.
+          Require relay coils to be satisfied. This rung will only pass if all referenced relays pass. Set a coil type to "Relay" to make it available here.
         </div>
         {availableOutputs.map((out) => {
           const isChecked = (rung.outputRefs || []).includes(out.refValue);
@@ -4407,7 +4463,7 @@ function InputPropertiesPanel({ rung, rungIndex, onRungChange, txInputs, allRung
         })}
         {availableOutputs.length === 0 && (
           <div style={{ fontSize: 9, color: 'var(--text-dim)', lineHeight: 1.4 }}>
-            No other rungs available to reference.
+            No relay coils available. Set a rung's coil type to "Relay" to reference it here.
           </div>
         )}
       </div>
@@ -4476,85 +4532,90 @@ function CoilPropertiesPanel({ rung, rungIndex, onChange, energizedOutputs, txOu
         </div>
       </div>
 
-      <div className="prop-section">
-        <div className="prop-section-title">WIRE FORMAT</div>
-        <div style={{ fontSize: 9, color: 'var(--text-dim)', marginBottom: 6, lineHeight: 1.4 }}>
-          C++ RPC coil settings. These define how the output is unlocked on-chain.
-        </div>
-        <div className="prop-row">
-          <span className="prop-label">Coil Type</span>
-          <select
-            className="prop-select"
-            value={rung.output.wireType || 'UNLOCK'}
-            onChange={(e) => onChange(rung.id, 'wireType', e.target.value)}
-          >
-            {WIRE_COIL_TYPES.map(ct => (
-              <option key={ct.value} value={ct.value}>{ct.label}</option>
-            ))}
-          </select>
-        </div>
-        <div className="prop-row">
-          <span className="prop-label">Attestation</span>
-          <select
-            className="prop-select"
-            value={rung.output.attestation || 'INLINE'}
-            onChange={(e) => onChange(rung.id, 'attestation', e.target.value)}
-          >
-            {ATTESTATION_TYPES.map(at => (
-              <option key={at.value} value={at.value}>{at.label}</option>
-            ))}
-          </select>
-        </div>
-        <div className="prop-row">
-          <span className="prop-label">Scheme</span>
-          <select
-            className="prop-select"
-            value={rung.output.scheme || 'SCHNORR'}
-            onChange={(e) => onChange(rung.id, 'scheme', e.target.value)}
-          >
-            {SCHEME_TYPES.map(st => (
-              <option key={st.value} value={st.value}>{st.label}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      <div className="prop-section">
-        <div className="prop-section-title">TX OUTPUT</div>
-        <div style={{ fontSize: 9, color: 'var(--text-dim)', marginBottom: 6, lineHeight: 1.4 }}>
-          Assign a transaction output to this rung. When this spending path is satisfied, these funds are sent.
-        </div>
-        <div className="prop-row">
-          <span className="prop-label">VOUT</span>
-          <select
-            className="prop-select"
-            value={rung.output.txOutputId || ''}
-            onChange={(e) => onChange(rung.id, 'txOutputId', e.target.value ? parseInt(e.target.value) : null)}
-          >
-            <option value="">— none —</option>
-            {(txOutputs || []).map((o, idx) => (
-              <option key={o.id} value={o.id}>
-                VOUT {idx}: {o.address ? (o.address.length > 20 ? o.address.substring(0, 10) + '...' + o.address.slice(-6) : o.address) : '(no addr)'} — {(parseInt(o.amount) || 0).toLocaleString()} sats
-              </option>
-            ))}
-          </select>
-        </div>
-        {assignedTxOut && (
-          <div style={{ marginTop: 6, padding: '6px 8px', background: 'var(--bg-primary)', border: '1px solid var(--border)', fontSize: 10 }}>
-            <div style={{ color: 'var(--text-secondary)', marginBottom: 2 }}>Address:</div>
-            <div style={{ color: 'var(--amber)', wordBreak: 'break-all', fontSize: 9 }}>{assignedTxOut.address || '—'}</div>
-            <div style={{ color: 'var(--text-secondary)', marginTop: 4, marginBottom: 2 }}>Amount:</div>
-            <div style={{ color: 'var(--amber)' }}>{(parseInt(assignedTxOut.amount) || 0).toLocaleString()} sats</div>
+      {rung.output.type === 'relay' ? (
+        <div className="prop-section">
+          <div className="prop-section-title">RELAY COIL</div>
+          <div style={{ fontSize: 9, color: 'var(--text-dim)', lineHeight: 1.6 }}>
+            <div style={{ marginBottom: 6 }}>This is a <span style={{ color: 'var(--amber)' }}>relay coil</span> — its conditions are evaluated and cached, but it does not map to a TX output.</div>
+            <div>Other rungs (and relays) can reference this relay via the <span style={{ color: 'var(--amber-dim)' }}>Relay References</span> panel on their input contact, enabling AND composition across rungs.</div>
           </div>
-        )}
-      </div>
-
-      <div className="prop-section">
-        <div className="prop-section-title">CROSS-REFERENCE</div>
-        <div style={{ fontSize: 9, color: 'var(--text-dim)', lineHeight: 1.6 }}>
-          Use an <span style={{ color: 'var(--amber-dim)' }}>OUT_REF</span> contact on another rung to reference this output as an input condition.
         </div>
-      </div>
+      ) : (
+        <>
+          <div className="prop-section">
+            <div className="prop-section-title">WIRE FORMAT</div>
+            <div style={{ fontSize: 9, color: 'var(--text-dim)', marginBottom: 6, lineHeight: 1.4 }}>
+              C++ RPC coil settings. These define how the output is unlocked on-chain.
+            </div>
+            <div className="prop-row">
+              <span className="prop-label">Coil Type</span>
+              <select
+                className="prop-select"
+                value={rung.output.wireType || 'UNLOCK'}
+                onChange={(e) => onChange(rung.id, 'wireType', e.target.value)}
+              >
+                {WIRE_COIL_TYPES.map(ct => (
+                  <option key={ct.value} value={ct.value}>{ct.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="prop-row">
+              <span className="prop-label">Attestation</span>
+              <select
+                className="prop-select"
+                value={rung.output.attestation || 'INLINE'}
+                onChange={(e) => onChange(rung.id, 'attestation', e.target.value)}
+              >
+                {ATTESTATION_TYPES.map(at => (
+                  <option key={at.value} value={at.value}>{at.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="prop-row">
+              <span className="prop-label">Scheme</span>
+              <select
+                className="prop-select"
+                value={rung.output.scheme || 'SCHNORR'}
+                onChange={(e) => onChange(rung.id, 'scheme', e.target.value)}
+              >
+                {SCHEME_TYPES.map(st => (
+                  <option key={st.value} value={st.value}>{st.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="prop-section">
+            <div className="prop-section-title">TX OUTPUT</div>
+            <div style={{ fontSize: 9, color: 'var(--text-dim)', marginBottom: 6, lineHeight: 1.4 }}>
+              Assign a transaction output to this rung. When this spending path is satisfied, these funds are sent.
+            </div>
+            <div className="prop-row">
+              <span className="prop-label">VOUT</span>
+              <select
+                className="prop-select"
+                value={rung.output.txOutputId || ''}
+                onChange={(e) => onChange(rung.id, 'txOutputId', e.target.value ? parseInt(e.target.value) : null)}
+              >
+                <option value="">— none —</option>
+                {(txOutputs || []).map((o, idx) => (
+                  <option key={o.id} value={o.id}>
+                    VOUT {idx}: {o.address ? (o.address.length > 20 ? o.address.substring(0, 10) + '...' + o.address.slice(-6) : o.address) : '(no addr)'} — {(parseInt(o.amount) || 0).toLocaleString()} sats
+                  </option>
+                ))}
+              </select>
+            </div>
+            {assignedTxOut && (
+              <div style={{ marginTop: 6, padding: '6px 8px', background: 'var(--bg-primary)', border: '1px solid var(--border)', fontSize: 10 }}>
+                <div style={{ color: 'var(--text-secondary)', marginBottom: 2 }}>Address:</div>
+                <div style={{ color: 'var(--amber)', wordBreak: 'break-all', fontSize: 9 }}>{assignedTxOut.address || '—'}</div>
+                <div style={{ color: 'var(--text-secondary)', marginTop: 4, marginBottom: 2 }}>Amount:</div>
+                <div style={{ color: 'var(--amber)' }}>{(parseInt(assignedTxOut.amount) || 0).toLocaleString()} sats</div>
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -6643,7 +6704,12 @@ function App() {
   const handleOutputChange = useCallback((rungId, field, value) => {
     setRungs(prev => prev.map(r => {
       if (r.id !== rungId) return r;
-      return { ...r, output: { ...r.output, [field]: value } };
+      const newOutput = { ...r.output, [field]: value };
+      // Relay coils don't map to TX outputs — clear assignment when switching to relay
+      if (field === 'type' && value === 'relay') {
+        newOutput.txOutputId = null;
+      }
+      return { ...r, output: newOutput };
     }));
   }, []);
 
@@ -6809,16 +6875,32 @@ function App() {
     const evalState = { ...simState, forcedBlocks };
     const outputs = new Set();
     const rungNums = new Set();
-    rungs.forEach((r, i) => {
-      if (r.blocks.length > 0) {
-        const allSatisfied = r.blocks.every(b => evaluateBlock(b, evalState) === 'satisfied');
-        if (allSatisfied) {
+    // Evaluate in two passes: first compute block satisfaction, then resolve relay deps
+    const blocksSatisfied = rungs.map(r =>
+      r.blocks.length > 0 && r.blocks.every(b => evaluateBlock(b, evalState) === 'satisfied')
+    );
+    // Iterative resolution: relay deps may cascade (max 8 relays, converges fast)
+    let changed = true;
+    while (changed) {
+      changed = false;
+      rungs.forEach((r, i) => {
+        const rungKey = `R${String(i).padStart(3, '0')}`;
+        if (rungNums.has(rungKey)) return; // already energized
+        if (!blocksSatisfied[i]) return;
+        // Check outputRefs (relay references)
+        const refsSatisfied = !r.outputRefs || r.outputRefs.length === 0 ||
+          r.outputRefs.every(ref => {
+            const refUpper = ref.trim().toUpperCase();
+            return outputs.has(refUpper) || rungNums.has(refUpper);
+          });
+        if (refsSatisfied) {
           if (r.output.name) outputs.add(r.output.name.trim().toUpperCase());
-          rungNums.add(`R${String(i).padStart(3, '0')}`);
+          rungNums.add(rungKey);
           if (r.label) rungNums.add(r.label.trim().toUpperCase());
+          changed = true;
         }
-      }
-    });
+      });
+    }
     return [outputs, rungNums];
   }, [rungs, isSimMode, simState, forcedBlocks]);
 
@@ -7382,7 +7464,7 @@ ${ladderRows.map(r => `
                       other.blocks.some(b => b.type === 'OUTPUT_REF' && b.values?.ref_name && (b.values.ref_name === rungName || b.values.ref_name === rung.output.name))
                     ));
                   };
-                  const unassigned = rungs.filter((r, ri) => (r.output.txOutputId === null || r.output.txOutputId === undefined) && !isRungReferenced(r, ri));
+                  const unassigned = rungs.filter((r, ri) => r.output.type !== 'relay' && (r.output.txOutputId === null || r.output.txOutputId === undefined) && !isRungReferenced(r, ri));
                   if (unassigned.length > 0) warnings.push(`${unassigned.length} rung(s) not assigned to a TX output — will be excluded from wire JSON`);
                   const outRefBlocks = rungs.reduce((c, r) => c + r.blocks.filter(b => b.type === 'OUTPUT_REF').length, 0);
                   if (outRefBlocks > 0) warnings.push(`${outRefBlocks} OUTPUT_REF block(s) stripped — use input refs on the input contact instead`);
