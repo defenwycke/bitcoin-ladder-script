@@ -946,6 +946,11 @@
           <div class="use-case-tag">Signature Family</div>
         </div>
         <div class="use-case">
+          <div class="use-case-title">Aggregate Threshold Signatures</div>
+          <div class="use-case-desc">MUSIG_THRESHOLD enables M-of-N multisig via MuSig2/FROST where the on-chain footprint is identical to single-sig (~131 bytes). A 3-of-5 treasury is indistinguishable from a solo wallet on-chain.</div>
+          <div class="use-case-tag">Signature Family</div>
+        </div>
+        <div class="use-case">
           <div class="use-case-title">Protocol Anchoring</div>
           <div class="use-case-desc">Six typed anchor blocks for Lightning channels, mining pools, reserve sets, sealed commitments, and oracle attestations. Replace ad-hoc OP_RETURN tagging.</div>
           <div class="use-case-tag">Anchor Family</div>
@@ -1558,6 +1563,101 @@
               <div class="example-block sig">SIG</div><div class="example-wire"></div>
               <div class="example-block cov">AMT_LOCK</div><div class="example-wire"></div>
               <div class="example-block cov">CTV</div><div class="example-wire"></div>
+              <div class="example-coil">( UNLOCK )</div>
+              <div class="example-wire"></div><div class="example-rail"></div>
+            </div>
+          </div>
+        </a>
+
+        <a href="ladder-engine.html?example=18" class="example-card">
+          <div class="example-title">MUSIG_THRESHOLD TREASURY</div>
+          <div class="example-desc">3-of-5 corporate treasury using MuSig2/FROST. On-chain looks identical to single-sig. Time-locked backup key for recovery.</div>
+          <div class="example-rungs">
+            <div class="example-rung">
+              <div class="example-rung-label">SPEND</div>
+              <div class="example-rail"></div><div class="example-wire"></div>
+              <div class="example-block sig">MUSIG_THR</div><div class="example-wire"></div>
+              <div class="example-coil">( UNLOCK )</div>
+              <div class="example-wire"></div><div class="example-rail"></div>
+            </div>
+            <div class="example-rung">
+              <div class="example-rung-label">RECOVER</div>
+              <div class="example-rail"></div><div class="example-wire"></div>
+              <div class="example-block time">CSV</div><div class="example-wire"></div>
+              <div class="example-block sig">SIG</div><div class="example-wire"></div>
+              <div class="example-coil">( UNLOCK )</div>
+              <div class="example-wire"></div><div class="example-rail"></div>
+            </div>
+          </div>
+        </a>
+
+        <a href="ladder-engine.html?example=19" class="example-card">
+          <div class="example-title">PTLC PAYMENT CHANNEL</div>
+          <div class="example-desc">Scriptless payment channel. Cooperative close via MuSig, unilateral close with PTLC adaptor sig + CSV timeout.</div>
+          <div class="example-rungs">
+            <div class="example-rung">
+              <div class="example-rung-label">COOP</div>
+              <div class="example-rail"></div><div class="example-wire"></div>
+              <div class="example-block sig">MUSIG_THR</div><div class="example-wire"></div>
+              <div class="example-coil">( UNLOCK )</div>
+              <div class="example-wire"></div><div class="example-rail"></div>
+            </div>
+            <div class="example-rung">
+              <div class="example-rung-label">FORCE</div>
+              <div class="example-rail"></div><div class="example-wire"></div>
+              <div class="example-block sig">PTLC</div><div class="example-wire"></div>
+              <div class="example-coil">( UNLOCK )</div>
+              <div class="example-wire"></div><div class="example-rail"></div>
+            </div>
+          </div>
+        </a>
+
+        <a href="ladder-engine.html?example=20" class="example-card">
+          <div class="example-title">CLTV_SIG VESTING SCHEDULE</div>
+          <div class="example-desc">Quarterly vesting unlocks at specific block heights using CLTV_SIG compound blocks with amount locks.</div>
+          <div class="example-rungs">
+            <div class="example-rung">
+              <div class="example-rung-label">Q1</div>
+              <div class="example-rail"></div><div class="example-wire"></div>
+              <div class="example-block sig">CLTV_SIG</div><div class="example-wire"></div>
+              <div class="example-block cov">AMT_LOCK</div><div class="example-wire"></div>
+              <div class="example-coil">( UNLOCK )</div>
+              <div class="example-wire"></div><div class="example-rail"></div>
+            </div>
+            <div class="example-rung">
+              <div class="example-rung-label">FULL</div>
+              <div class="example-rail"></div><div class="example-wire"></div>
+              <div class="example-block sig">CLTV_SIG</div><div class="example-wire"></div>
+              <div class="example-coil">( UNLOCK )</div>
+              <div class="example-wire"></div><div class="example-rail"></div>
+            </div>
+          </div>
+        </a>
+
+        <a href="ladder-engine.html?example=21" class="example-card">
+          <div class="example-title">TIMELOCKED_MULTISIG VAULT</div>
+          <div class="example-desc">Hot wallet spend, 2-of-3 board recovery after 1-week cooling period, emergency cold key sweep.</div>
+          <div class="example-rungs">
+            <div class="example-rung">
+              <div class="example-rung-label">HOT</div>
+              <div class="example-rail"></div><div class="example-wire"></div>
+              <div class="example-block sig">SIG</div><div class="example-wire"></div>
+              <div class="example-block cov">AMT_LOCK</div><div class="example-wire"></div>
+              <div class="example-coil">( UNLOCK )</div>
+              <div class="example-wire"></div><div class="example-rail"></div>
+            </div>
+            <div class="example-rung">
+              <div class="example-rung-label">BOARD</div>
+              <div class="example-rail"></div><div class="example-wire"></div>
+              <div class="example-block sig">TL_MULTI</div><div class="example-wire"></div>
+              <div class="example-coil">( UNLOCK )</div>
+              <div class="example-wire"></div><div class="example-rail"></div>
+            </div>
+            <div class="example-rung">
+              <div class="example-rung-label">COLD</div>
+              <div class="example-rail"></div><div class="example-wire"></div>
+              <div class="example-block time">CSV</div><div class="example-wire"></div>
+              <div class="example-block sig">SIG</div><div class="example-wire"></div>
               <div class="example-coil">( UNLOCK )</div>
               <div class="example-wire"></div><div class="example-rail"></div>
             </div>
