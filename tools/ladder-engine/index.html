@@ -675,18 +675,6 @@ body {
   z-index: 3;
   text-shadow: 0 0 4px var(--bg-primary);
 }
-/* Warning badge for unprogrammed blocks */
-.block-warn {
-  position: absolute;
-  top: -6px;
-  right: -4px;
-  font-size: 10px;
-  color: var(--amber);
-  line-height: 1;
-  z-index: 3;
-  text-shadow: 0 0 4px var(--bg-primary);
-  pointer-events: none;
-}
 .input-contact-note {
   position: absolute;
   bottom: -12px;
@@ -1655,6 +1643,28 @@ body {
   opacity: 0.3;
 }
 
+/* Watch mode */
+.watch-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 10px;
+  color: var(--green-bright);
+  background: var(--green-dim);
+  border: 1px solid var(--green);
+}
+
+@keyframes watchBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.watch-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--green-bright);
+  animation: watchBlink 1s ease-in-out infinite;
+}
 
 /* Examples Modal */
 .examples-overlay {
@@ -2227,6 +2237,11 @@ const BLOCK_FAMILIES = [
         { name: 'signing_key', dataType: 'PUBKEY', label: 'Signing Key', placeholder: '02abcdef...' },
         { name: 'adaptor_point', dataType: 'PUBKEY', label: 'Adaptor Point', placeholder: '32-byte x-only hex' }
       ]},
+      { type: 'MUSIG_THRESHOLD', label: 'MUSIG_THR', desc: 'MuSig2/FROST aggregate threshold — M-of-N produces single Schnorr sig', fields: [
+        { name: 'agg_pubkey', dataType: 'PUBKEY', label: 'Aggregate Key', placeholder: '02abcdef... (combined MuSig2/FROST key)' },
+        { name: 'threshold', dataType: 'NUMERIC', label: 'Threshold (M)', placeholder: '2' },
+        { name: 'group_size', dataType: 'NUMERIC', label: 'Group Size (N)', placeholder: '3' }
+      ]},
     ]
   },
   {
@@ -2403,6 +2418,22 @@ const BLOCK_FAMILIES = [
         { name: 'hash', dataType: 'HASH256', label: 'SHA256 Hash', placeholder: '32-byte hex' },
         { name: 'pubkey', dataType: 'PUBKEY', label: 'Public Key', placeholder: '02abcdef...' }
       ]},
+      { type: 'PTLC', label: 'PTLC', desc: 'Point Time Locked Contract — adaptor sig + CSV for payment channels', fields: [
+        { name: 'signing_key', dataType: 'PUBKEY', label: 'Signing Key', placeholder: '02abcdef...' },
+        { name: 'adaptor_point', dataType: 'PUBKEY', label: 'Adaptor Point', placeholder: '32-byte x-only hex' },
+        { name: 'blocks', dataType: 'NUMERIC', label: 'Timelock (blocks)', placeholder: '144' }
+      ]},
+      { type: 'CLTV_SIG', label: 'CLTV_SIG', desc: 'SIG + CLTV combined — signature with absolute timelock', fields: [
+        { name: 'pubkey', dataType: 'PUBKEY', label: 'Public Key', placeholder: '02abcdef...' },
+        { name: 'height', dataType: 'NUMERIC', label: 'Lock Height', placeholder: '850000' },
+        { name: 'scheme', dataType: 'SCHEME', label: 'Scheme', placeholder: 'SCHNORR', optional: true }
+      ]},
+      { type: 'TIMELOCKED_MULTISIG', label: 'TL_MULTI', desc: 'MULTISIG + CSV combined — M-of-N with relative timelock', fields: [
+        { name: 'threshold', dataType: 'NUMERIC', label: 'Threshold (M)', placeholder: '2' },
+        { name: 'pubkeys', dataType: 'PUBKEY', label: 'Public Keys', placeholder: '02ab..., 03cd...', multi: true },
+        { name: 'blocks', dataType: 'NUMERIC', label: 'Timelock (blocks)', placeholder: '144' },
+        { name: 'scheme', dataType: 'SCHEME', label: 'Scheme', placeholder: 'SCHNORR', optional: true }
+      ]},
     ]
   },
   {
@@ -2464,6 +2495,7 @@ const BLOCK_RULES = {
   SIG: 'Verifies a single signature against the public key. Schnorr (64-65B) or ECDSA (8-72B) detected by size. With PUBKEY_COMMIT, the key must hash to the commitment (commit-reveal for PQ migration). With SCHEME field, routes to PQ verification.',
   MULTISIG: 'M-of-N threshold: first NUMERIC is M, followed by N public keys and signatures. Exactly M valid signatures from distinct keys required.',
   ADAPTOR_SIG: 'Adaptor signature verification for atomic swaps. Second PUBKEY is the adaptor point T. Signature verified under combined challenge H(R+T || P || m).',
+  MUSIG_THRESHOLD: 'MuSig2/FROST aggregate threshold signature. M-of-N signers produce a single Schnorr signature off-chain. On-chain footprint identical to single-sig. Schnorr-only (no PQ path).',
   CSV: 'Relative timelock in blocks (BIP-68). Satisfied when input sequence meets the required delay. Disable flag bypasses check.',
   CSV_TIME: 'Relative timelock in seconds (BIP-68 time-based). Same logic as CSV but with time flag.',
   CLTV: 'Absolute timelock by block height (BIP-65). Satisfied when nLockTime >= specified height.',
@@ -2500,6 +2532,9 @@ const BLOCK_RULES = {
   ONE_SHOT: 'Single-use: satisfied when state is 0. Once fired (state=1), permanently unsatisfied.',
   RATE_LIMIT: 'Rate limiter: unsatisfied when output_amount > max_per_block.',
   COSIGN: 'Satisfied when another input in the same tx has conditions matching the hash.',
+  PTLC: 'Point Time Locked Contract. ADAPTOR_SIG + CSV combined. Adaptor signature reveals secret scalar; CSV enforces timeout. Used for scriptless payment channels.',
+  CLTV_SIG: 'SIG + CLTV combined. Signature verification with absolute block-height timelock. Saves 8 bytes vs separate blocks.',
+  TIMELOCKED_MULTISIG: 'MULTISIG + CSV combined. M-of-N threshold signatures with relative timelock. Used for penalty branches and vault recovery.',
   OUTPUT_REF: 'References a named output coil from another rung.',
 };
 
@@ -2592,6 +2627,13 @@ function evaluateBlock(block, simState) {
     case 'ADAPTOR_SIG':
       result = simState.availableKeys?.has(v.signing_key) ? 'satisfied' : 'unsatisfied';
       break;
+    case 'MUSIG_THRESHOLD': {
+      const keyOk = simState.availableKeys?.has(v.agg_pubkey);
+      const m = parseInt(v.threshold) || 0;
+      const n = parseInt(v.group_size) || 0;
+      result = (keyOk && m >= 1 && n >= m) ? 'satisfied' : 'unsatisfied';
+      break;
+    }
     case 'CSV': {
       const required = parseInt(v.blocks) || 0;
       const elapsed = simState.csvBlocks || 0;
@@ -2754,6 +2796,29 @@ function evaluateBlock(block, simState) {
       const keyOk = simState.availableKeys?.has(v.pubkey);
       const hashOk = simState.knownPreimages?.has(v.hash);
       result = (keyOk && hashOk) ? 'satisfied' : 'unsatisfied';
+      break;
+    }
+    case 'PTLC': {
+      const keyOk = simState.availableKeys?.has(v.signing_key);
+      const required = parseInt(v.blocks) || 0;
+      const elapsed = simState.csvBlocks || 0;
+      result = (keyOk && elapsed >= required) ? 'satisfied' : 'unsatisfied';
+      break;
+    }
+    case 'CLTV_SIG': {
+      const keyOk = simState.availableKeys?.has(v.pubkey);
+      const target = parseInt(v.height) || 0;
+      const current = simState.blockHeight || 0;
+      result = (keyOk && current >= target) ? 'satisfied' : 'unsatisfied';
+      break;
+    }
+    case 'TIMELOCKED_MULTISIG': {
+      const threshold = parseInt(v.threshold) || 0;
+      const keys = (v.pubkeys || '').split(',').map(k => k.trim()).filter(Boolean);
+      const available = keys.filter(k => simState.availableKeys?.has(k)).length;
+      const required = parseInt(v.blocks) || 0;
+      const elapsed = simState.csvBlocks || 0;
+      result = (available >= threshold && elapsed >= required) ? 'satisfied' : 'unsatisfied';
       break;
     }
     // Governance blocks
@@ -3039,11 +3104,6 @@ function ContactView({ block, rungId, selected, simMode, simResult, scanClass, o
     return pqBadge + valStr;
   }, [block.values, def]);
 
-  const hasEmptyRequired = useMemo(() => {
-    if (!def.fields || def.fields.length === 0) return false;
-    return def.fields.some(f => !f.optional && (!block.values[f.name] || block.values[f.name] === ''));
-  }, [block.values, def]);
-
   const handleClick = useCallback((e) => {
     if (simMode && !scanClass && e.altKey) {
       e.stopPropagation();
@@ -3103,7 +3163,6 @@ function ContactView({ block, rungId, selected, simMode, simResult, scanClass, o
       </div>
       <span className="contact-bracket-right" style={{ color: isEnergized && !isForced ? undefined : isForced ? undefined : def.familyColor + '80' }}>├─</span>
       {!simMode && <div className="contact-delete" onClick={(e) => { e.stopPropagation(); onDelete(); }}>✕</div>}
-      {!simMode && hasEmptyRequired && <span className="block-warn" title="Block has empty required fields">⚠</span>}
       {block.name && !editingNote && <span className="contact-note">{block.name}</span>}
       {editingNote && (
         <input
@@ -3966,7 +4025,7 @@ function RungView({ rung, rungIndex, rungCount, selectedBlock, selectedCoil, sel
 }
 
 function LadderView({ rungs, selectedBlock, selectedCoil, selectedInput, mode, simState, onSelectBlock, onSelectCoil, onSelectInput, onDeleteBlock, onDeleteRung, onDropBlock, onAddRung, onAddRungWithBlock, onRungLabelChange, onReorderBlock, onMoveRung, onMoveBlockCrossRung, txOutputs, txInputs, fullscreen, onToggleFullscreen, scanPhase, scanStep, scanResults, scanSpeed, onScanStart, onScanPause, onScanResume, onScanStepFwd, onScanStepBack, onScanReset, onScanSpeedChange, scanIdx, scanTotal, spentRungs, forcedBlocks, onForceBlock, onExecuteRung, onResetSim, onStartScanFrom, simActiveRungId, simActiveStep, simStepResults, onStepBlock, tips, onNameChange, onExpandBlock, onBlockContextMenu, renamingBlockId, onClearRenaming, onClear, onInputContextMenu, onRungChange, renamingInputId, onClearRenamingInput, onDeselect, onOutputContextMenu, onJustifyLeft }) {
-  const simMode = mode === 'simulate';
+  const simMode = mode === 'simulate' || mode === 'watch';
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
@@ -4061,6 +4120,12 @@ function LadderView({ rungs, selectedBlock, selectedCoil, selectedInput, mode, s
     <div className="ladder-area">
       <div className="ladder-toolbar">
         <span style={{ fontSize: 10, color: 'var(--text-secondary)', letterSpacing: 1 }}>LADDER</span>
+        {mode === 'watch' && (
+          <div className="watch-indicator">
+            <div className="watch-dot" />
+            LIVE
+          </div>
+        )}
         <div className="zoom-controls">
           <button className="zoom-btn" onClick={() => setZoom(z => Math.round(Math.max(0.3, z - 0.1) * 10) / 10)} title="Zoom out">−</button>
           <span className="zoom-level" onClick={resetView} style={{ cursor: 'pointer' }} title="Click to reset zoom">{Math.round(zoom * 100)}%</span>
@@ -4323,7 +4388,7 @@ function PropertiesPanel({ block, onChange, rungs, onExpand }) {
 
 function getTypeHex(type) {
   const map = {
-    SIG:'0001',MULTISIG:'0002',ADAPTOR_SIG:'0003',
+    SIG:'0001',MULTISIG:'0002',ADAPTOR_SIG:'0003',MUSIG_THRESHOLD:'0004',
     CSV:'0101',CSV_TIME:'0102',CLTV:'0103',CLTV_TIME:'0104',
     HASH_PREIMAGE:'0201',HASH160_PREIMAGE:'0202',TAGGED_HASH:'0203',
     CTV:'0301',VAULT_LOCK:'0302',AMOUNT_LOCK:'0303',
@@ -4337,9 +4402,7 @@ function getTypeHex(type) {
     COUNTER_DOWN:'0631',COUNTER_PRESET:'0632',COUNTER_UP:'0633',
     COMPARE:'0641',SEQUENCER:'0651',ONE_SHOT:'0661',
     RATE_LIMIT:'0671',COSIGN:'0681',
-    TIMELOCKED_SIG:'0701',HTLC:'0702',HASH_SIG:'0703',
-    EPOCH_GATE:'0801',WEIGHT_LIMIT:'0802',INPUT_COUNT:'0803',
-    OUTPUT_COUNT:'0804',RELATIVE_VALUE:'0805',ACCUMULATOR:'0806',
+    TIMELOCKED_SIG:'0701',HTLC:'0702',HASH_SIG:'0703',PTLC:'0704',CLTV_SIG:'0705',TIMELOCKED_MULTISIG:'0706',
   };
   return map[type] || '????';
 }
@@ -5078,8 +5141,11 @@ function RegisterTable({ rungs, simMode, simState }) {
         // Compute display value
         const v = block.values;
         switch (block.type) {
-          case 'SIG': case 'ADAPTOR_SIG': case 'VAULT_LOCK':
+          case 'SIG': case 'ADAPTOR_SIG': case 'VAULT_LOCK': case 'CLTV_SIG':
             value = v.pubkey || v.signing_key || '—'; break;
+          case 'MUSIG_THRESHOLD': value = `${v.threshold || '?'}-of-${v.group_size || '?'}`; break;
+          case 'PTLC': value = `${v.blocks || '?'} blk`; break;
+          case 'TIMELOCKED_MULTISIG': value = `${v.threshold || '?'}-of-N ${v.blocks || '?'} blk`; break;
           case 'CSV': value = `${v.blocks || '?'} blocks`; break;
           case 'CSV_TIME': value = `${v.seconds || '?'} sec`; break;
           case 'CLTV': value = `height ${v.height || '?'}`; break;
@@ -5719,6 +5785,95 @@ const EXAMPLES = [
     ],
     inputMap: [[0, 1, 2]], outputMap: [0],
   },
+  {
+    title: 'MUSIG_THRESHOLD TREASURY',
+    desc: 'Corporate 3-of-5 treasury using MuSig2/FROST aggregate signatures. On-chain looks identical to single-sig (~131 bytes). Recovery path via time-locked backup key.',
+    tags: [['MUSIG_THR', 'sig'], ['CSV', 'time'], ['SIG', 'sig']],
+    rungs: [
+      { label: 'SPEND', blocks: [
+        { type: 'MUSIG_THRESHOLD', values: { agg_pubkey: FAKE.pk1, threshold: '3', group_size: '5' } },
+      ], output: { name: 'TREASURY_SPEND', type: 'standard' } },
+      { label: 'RECOVER', blocks: [
+        { type: 'CSV', values: { blocks: '52560' } },
+        { type: 'SIG', values: { pubkey: FAKE.pk4 } },
+      ], output: { name: 'RECOVERY', type: 'standard' } },
+    ],
+    txInputs: [{ txid: FAKE.txid1, vout: 0 }],
+    txOutputs: [
+      { address: FAKE.addr1, amount: 9500000 },
+      { address: FAKE.addr2, amount: 500000 },
+    ],
+    inputMap: [[0], [0]], outputMap: [0, 1],
+  },
+  {
+    title: 'PTLC PAYMENT CHANNEL',
+    desc: 'Scriptless payment channel using Point Time Locked Contracts. Cooperative close via MuSig, unilateral close reveals adaptor secret after CSV timeout.',
+    tags: [['MUSIG_THR', 'sig'], ['PTLC', 'sig'], ['CSV', 'time']],
+    rungs: [
+      { label: 'COOP', blocks: [
+        { type: 'MUSIG_THRESHOLD', values: { agg_pubkey: FAKE.pk1, threshold: '2', group_size: '2' } },
+      ], output: { name: 'COOP_CLOSE', type: 'standard' } },
+      { label: 'FORCE', blocks: [
+        { type: 'PTLC', values: { signing_key: FAKE.pk2, adaptor_point: FAKE.hash1.substring(0, 64), blocks: '144' } },
+      ], output: { name: 'FORCE_CLOSE', type: 'standard' } },
+    ],
+    txInputs: [{ txid: FAKE.txid2, vout: 0 }],
+    txOutputs: [
+      { address: FAKE.addr3, amount: 3000000 },
+      { address: FAKE.addr4, amount: 2000000 },
+    ],
+    inputMap: [[0], [0]], outputMap: [0, 1],
+  },
+  {
+    title: 'CLTV_SIG VESTING SCHEDULE',
+    desc: 'Time-locked payouts at specific block heights. Employee vesting with quarterly unlocks using CLTV_SIG compound blocks.',
+    tags: [['CLTV_SIG', 'sig'], ['AMT_LOCK', 'cov']],
+    rungs: [
+      { label: 'Q1', blocks: [
+        { type: 'CLTV_SIG', values: { pubkey: FAKE.pk1, height: '860000' } },
+        { type: 'AMOUNT_LOCK', values: { min: '250000', max: '250000' } },
+      ], output: { name: 'Q1_VEST', type: 'standard' } },
+      { label: 'Q2', blocks: [
+        { type: 'CLTV_SIG', values: { pubkey: FAKE.pk1, height: '873000' } },
+        { type: 'AMOUNT_LOCK', values: { min: '250000', max: '250000' } },
+      ], output: { name: 'Q2_VEST', type: 'standard' } },
+      { label: 'FULL', blocks: [
+        { type: 'CLTV_SIG', values: { pubkey: FAKE.pk1, height: '900000' } },
+      ], output: { name: 'FULL_VEST', type: 'standard' } },
+    ],
+    txInputs: [{ txid: FAKE.txid3, vout: 0 }],
+    txOutputs: [
+      { address: FAKE.addr1, amount: 250000 },
+      { address: FAKE.addr2, amount: 250000 },
+      { address: FAKE.addr3, amount: 1000000 },
+    ],
+    inputMap: [[0], [0], [0]], outputMap: [0, 1, 2],
+  },
+  {
+    title: 'TIMELOCKED_MULTISIG VAULT RECOVERY',
+    desc: 'Hot wallet spend, timelocked 2-of-3 recovery, and emergency cold key. The TIMELOCKED_MULTISIG recovery path requires board quorum after 1-week cooling period.',
+    tags: [['SIG', 'sig'], ['TL_MULTI', 'sig'], ['CSV', 'time']],
+    rungs: [
+      { label: 'HOT', blocks: [
+        { type: 'SIG', values: { pubkey: FAKE.pk1 } },
+        { type: 'AMOUNT_LOCK', values: { min: '546', max: '1000000' } },
+      ], output: { name: 'HOT_SPEND', type: 'standard' } },
+      { label: 'BOARD', blocks: [
+        { type: 'TIMELOCKED_MULTISIG', values: { threshold: '2', pubkeys: `${FAKE.pk2}, ${FAKE.pk3}, ${FAKE.pk4}`, blocks: '1008' } },
+      ], output: { name: 'BOARD_RECOVERY', type: 'standard' } },
+      { label: 'COLD', blocks: [
+        { type: 'CSV', values: { blocks: '52560' } },
+        { type: 'SIG', values: { pubkey: FAKE.pk5 } },
+      ], output: { name: 'COLD_SWEEP', type: 'standard' } },
+    ],
+    txInputs: [{ txid: FAKE.txid4, vout: 0 }],
+    txOutputs: [
+      { address: FAKE.addr1, amount: 500000 },
+      { address: FAKE.addr3, amount: 4500000 },
+      { address: FAKE.addr5, amount: 5000000 },
+    ],
+    inputMap: [[0], [0], [0]], outputMap: [0, 1, 2],
+  },
 ];
 
 function ExamplesModal({ onClose, onLoad }) {
@@ -5857,7 +6012,7 @@ function decodedToBuilderRungs(data) {
     });
     return { rungs, txInputs, txOutputs };
   }
-  // Format 4: raw tx with version 4 — { version: 4, vin, vout[].rung_conditions }
+  // Format 4: raw tx with version 4 — { version: 3, vin, vout[].rung_conditions }
   if (data.version === 4 && data.vout) {
     const txInputs = (data.vin || []).map(v => ({ id: uid(), txid: v.txid || '', vout: v.vout || 0, sequence: v.sequence !== undefined ? String(v.sequence) : '' }));
     const txOutputs = [];
@@ -6454,7 +6609,7 @@ function App() {
     return () => window.removeEventListener('keydown', handler);
   }, [showExamples, ladderFullscreen, simActiveRungId, contextMenu, inputContextMenu, outputContextMenu, selectedBlockId, selectedInputId, selectedCoilId, isSimMode]);
 
-  const isSimMode = mode === 'simulate';
+  const isSimMode = mode === 'simulate' || mode === 'watch';
 
   // Auto-switch right panel tab when entering/leaving sim mode
   useEffect(() => {
@@ -6465,6 +6620,42 @@ function App() {
     }
   }, [isSimMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Watch mode — poll signet for real block height, no fallback ticker
+  const [watchLive, setWatchLive] = useState(false);
+  useEffect(() => {
+    if (mode !== 'watch') { setWatchLive(false); return; }
+    let cancelled = false;
+
+    const pollSignet = async () => {
+      try {
+        const r = await fetch(SIGNET_API + '/api/ladder/status');
+        if (cancelled) return;
+        if (r.ok) {
+          const data = await r.json();
+          if (data.blocks) {
+            setWatchLive(true);
+            setSimState(prev => {
+              const heightDelta = data.blocks - (prev.blockHeight || 0);
+              return {
+                ...prev,
+                blockHeight: data.blocks,
+                csvBlocks: prev.csvBlocks + Math.max(0, heightDelta),
+              };
+            });
+          }
+        } else {
+          setWatchLive(false);
+        }
+      } catch {
+        if (!cancelled) setWatchLive(false);
+      }
+    };
+
+    pollSignet();
+    const signetInterval = setInterval(pollSignet, 10000);
+
+    return () => { cancelled = true; clearInterval(signetInterval); };
+  }, [mode]);
 
   // Build the flat scan sequence: input → block0 → block1 → ... → coil, for each rung
   const scanSequence = useMemo(() => {
@@ -7355,6 +7546,7 @@ ${ladderRows.map(r => `
           <button className={`mode-tab ${mode === 'build' ? 'active' : ''}`} onClick={() => setMode('build')} title={showTooltips ? 'Construct ladder rungs — drag blocks from palette' : undefined}>BUILD</button>
           <button className={`mode-tab ${mode === 'simulate' ? 'active' : ''}`} onClick={() => setMode('simulate')} title={showTooltips ? 'Test rungs — click rung labels to step through, Alt+click blocks to force' : undefined}>SIMULATE</button>
           <button className={`mode-tab ${mode === 'signet' ? 'active' : ''}`} onClick={() => setMode('signet')} title={showTooltips ? 'Submit transactions to Ghost signet via RPC proxy' : undefined} style={mode === 'signet' ? { color: 'var(--green-bright)', borderBottomColor: 'var(--green-bright)' } : {}}>SIGNET</button>
+          <button className={`mode-tab ${mode === 'watch' ? 'active' : ''}`} onClick={() => setMode('watch')} title={showTooltips ? 'Live mode — block height auto-increments' : undefined}>WATCH</button>
         </div>
         <div className="header-actions">
           <button className="header-btn primary" onClick={() => setShowExamples(true)} title={showTooltips ? 'Load pre-built example programs' : undefined}>EXAMPLES</button>
@@ -7372,8 +7564,20 @@ ${ladderRows.map(r => `
           </div>
         ) : <>
         {isSimMode ? (
-          <div className="palette" style={{ opacity: 0.3, pointerEvents: 'none' }}>
-              <div style={{ padding: '12px 8px', fontSize: 9, color: 'var(--text-dim)', letterSpacing: 1, textAlign: 'center' }}>PALETTE LOCKED<br/>IN SIMULATOR MODE</div>
+          <div className="palette" style={{ opacity: mode === 'watch' && !watchLive ? 1 : 0.3, pointerEvents: 'none' }}>
+            {mode === 'watch' && !watchLive ? (
+              <div style={{ padding: '12px 8px' }}>
+                <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: 1.5, color: 'var(--amber)', textTransform: 'uppercase', marginBottom: 8, textAlign: 'center' }}>WATCH MODE</div>
+                <div style={{ padding: '8px', background: 'rgba(230, 168, 23, 0.1)', border: '1px solid rgba(230, 168, 23, 0.25)', fontSize: 10, color: 'var(--amber)', lineHeight: 1.6 }}>
+                  Signet proxy is not available. Live block data requires a ghost-core node running the feature/ladder-script branch.
+                </div>
+                <div style={{ marginTop: 10, fontSize: 9, color: 'var(--text-dim)', textAlign: 'center', letterSpacing: 0.5, lineHeight: 1.6 }}>
+                  Waiting for signet connection...
+                </div>
+              </div>
+            ) : (
+              <div style={{ padding: '12px 8px', fontSize: 9, color: 'var(--text-dim)', letterSpacing: 1, textAlign: 'center' }}>PALETTE LOCKED<br/>IN {mode === 'watch' ? 'WATCH' : 'SIMULATOR'} MODE</div>
+            )}
           </div>
         ) : (
           <PalettePanel />
@@ -7561,8 +7765,8 @@ ${ladderRows.map(r => `
         </>}
       </div>
 
-      {/* Register Table — hidden in signet mode for more space */}
-      {mode !== 'signet' && <RegisterTable rungs={rungs} simMode={isSimMode} simState={fullSimState} />}
+      {/* Register Table — hidden in signet and watch modes for more space */}
+      {mode !== 'signet' && mode !== 'watch' && <RegisterTable rungs={rungs} simMode={isSimMode} simState={fullSimState} />}
 
       {/* Status Bar */}
       <div className="status-bar">
@@ -7577,20 +7781,18 @@ ${ladderRows.map(r => `
             {energizedCount} ENERGIZED
           </div>
         )}
+        {mode === 'watch' && (
+          <div className="status-item">
+            <div className={`status-dot ${watchLive ? 'green' : 'amber'}`} />
+            {watchLive ? 'SIGNET LIVE' : 'LOCAL'} HEIGHT: {simState.blockHeight}
+          </div>
+        )}
         {(() => {
-          const unassigned = rungs.filter(r => r.output.type !== 'relay' && (r.output.txOutputId === null || r.output.txOutputId === undefined)).length;
-          const noInputs = rungs.filter(r => (!r.txInputIds || r.txInputIds.length === 0) && (!r.outputRefs || r.outputRefs.length === 0)).length;
-          const emptyBlocks = rungs.reduce((c, r) => c + r.blocks.filter(b => {
-            const bd = ALL_BLOCK_DEFS[b.type];
-            if (!bd || !bd.fields || bd.fields.length === 0) return false;
-            return bd.fields.some(f => !f.optional && (!b.values[f.name] || b.values[f.name] === ''));
-          }).length, 0);
+          const unassigned = rungs.filter(r => r.output.txOutputId === null || r.output.txOutputId === undefined).length;
           const outRefBlocks = rungs.reduce((c, r) => c + r.blocks.filter(b => b.type === 'OUTPUT_REF').length, 0);
           return (
             <>
               {unassigned > 0 && <div className="status-item" style={{ color: 'var(--red)' }}>{unassigned} RUNG(S) NOT ASSIGNED TO OUTPUT</div>}
-              {noInputs > 0 && <div className="status-item" style={{ color: 'var(--amber)' }}>{noInputs} RUNG(S) NO INPUT ASSIGNED</div>}
-              {emptyBlocks > 0 && <div className="status-item" style={{ color: 'var(--amber)' }}>⚠ {emptyBlocks} BLOCK(S) UNPROGRAMMED</div>}
               {outRefBlocks > 0 && <div className="status-item" style={{ color: 'var(--amber)' }}>{outRefBlocks} OUT_REF BLOCK(S) — USE INPUT REFS INSTEAD</div>}
             </>
           );
