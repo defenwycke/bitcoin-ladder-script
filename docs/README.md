@@ -26,6 +26,7 @@ cryptography, and stateful smart contracts.
 | [GLOSSARY.md](GLOSSARY.md) | Terminology definitions for Ladder Script concepts |
 | [EXAMPLES.md](EXAMPLES.md) | Worked examples with ASCII diagrams, JSON wire format, and evaluation walkthroughs |
 | [INTEGRATION.md](INTEGRATION.md) | Bitcoin integration guide: consensus changes, script interpreter, mempool policy |
+| [MERKLE-UTXO-SPEC.md](MERKLE-UTXO-SPEC.md) | Merkelized Ladder Script Conditions (MLSC): Merkle root outputs, witness reveal, data embedding resistance |
 | [SOFT_FORK_GUIDE.md](SOFT_FORK_GUIDE.md) | Activation strategy and deployment considerations |
 | [FAQ.md](FAQ.md) | Frequently asked questions organized by topic |
 
@@ -139,6 +140,7 @@ Transaction Input
 | Policy validation | `src/rung/policy.cpp` |
 | Unit tests | `src/test/rung_tests.cpp` |
 | Functional tests | `test/functional/rung_basic.py` |
+| MLSC functional tests | `test/functional/rung_mlsc.py` |
 | PQ functional tests | `test/functional/rung_pq_block.py` |
 | P2P relay tests | `test/functional/rung_p2p.py` |
 | Fuzz target | `src/test/fuzz/rung_deserialize.cpp` |

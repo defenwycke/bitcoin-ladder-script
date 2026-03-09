@@ -27,7 +27,9 @@ Ladder Script is a typed, structured transaction format for Bitcoin that replace
 
 ## Transaction Format
 
-A version 4 transaction output contains a `0xc1` prefix followed by serialized rung conditions (the lock). The input witness contains a serialized ladder witness (the key). At verification time, conditions and witness are merged field-by-field -- the conditions provide key commitments (PUBKEY_COMMIT), hashes, and parameters; the witness provides public keys, signatures, and preimages. The merged structure is evaluated by the three-level dispatch: `EvalLadder` (OR across rungs), `EvalRung` (AND within a rung), `EvalBlock` (type-specific logic). The sighash uses a tagged hash ("LadderSighash") that commits to the conditions hash, binding signatures to the exact conditions they satisfy.
+A version 4 transaction output uses one of two formats: `0xC1` (inline conditions) stores full serialized rung conditions directly, while `0xC2` (MLSC — Merkelized Ladder Script Conditions) stores only a 32-byte Merkle root, deferring all conditions to the spending witness. MLSC outputs reduce UTXO entries to a fixed 40 bytes regardless of script complexity, eliminate data embedding (fake conditions are never revealed on-chain), and provide MAST privacy (unused spending paths remain hidden). The Merkle tree uses BIP-341-style tagged hashes ("LadderLeaf" / "LadderInternal") for domain separation.
+
+At verification time, conditions and witness are merged field-by-field — the conditions provide key commitments (PUBKEY_COMMIT), hashes, and parameters; the witness provides public keys, signatures, and preimages. The merged structure is evaluated by the three-level dispatch: `EvalLadder` (OR across rungs), `EvalRung` (AND within a rung), `EvalBlock` (type-specific logic). The sighash uses a tagged hash ("LadderSighash") that commits to the conditions hash (or Merkle root for MLSC), binding signatures to the exact conditions they satisfy.
 
 ## Post-Quantum Support
 

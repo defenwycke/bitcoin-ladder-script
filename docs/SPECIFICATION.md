@@ -258,17 +258,39 @@ Savings increase with more complex witness structures (MULTISIG, HTLC, compound 
 
 ## 4. Output Format (scriptPubKey)
 
-A v4 output's `scriptPubKey` is constructed as:
+Two output formats are supported:
+
+### 4.1 Inline Conditions (`0xC1`)
 
 ```
 [0xc1] [serialized RungConditions]
 ```
 
-The prefix byte `0xc1` (`RUNG_CONDITIONS_PREFIX`) identifies the script as Ladder Script conditions. It was chosen to avoid conflict with any existing `OP_` prefix byte.
-
-The serialized conditions use the same wire format as a `LadderWitness` (Section 3), but **only condition data types are permitted**. The witness-only types SIGNATURE (`0x06`) and PREIMAGE (`0x05`) must not appear in conditions. This separation ensures that locking conditions never contain secret material.
+The prefix byte `0xc1` (`RUNG_CONDITIONS_PREFIX`) identifies the script as inline Ladder Script conditions. The serialized conditions use the same wire format as a `LadderWitness` (Section 3), but **only condition data types are permitted**. The witness-only types SIGNATURE (`0x06`) and PREIMAGE (`0x05`) must not appear in conditions.
 
 Deserialization strips the `0xc1` prefix and decodes the remainder as a `LadderWitness`, then validates that no witness-only fields are present.
+
+### 4.2 Merkelized Ladder Script Conditions — MLSC (`0xC2`)
+
+```
+[0xc2] [conditions_root: 32 bytes]
+```
+
+The prefix byte `0xc2` (`RUNG_MLSC_PREFIX`) identifies the output as an MLSC commitment. The `conditions_root` is a 32-byte Merkle root computed over all rung leaves, relay leaves, and the coil leaf. **No condition data is stored in the UTXO set** — only the root.
+
+At spend time, the witness reveals the exercised rung, coil, any referenced relays, and a Merkle proof (sibling hashes). The verifier reconstructs the root from the revealed data and proof, then checks it against the UTXO root.
+
+**Merkle tree construction uses BIP-341-style tagged hashes:**
+- Leaf: `TaggedHash("LadderLeaf", SerializeRung(rung))` (or coil/relay)
+- Interior: `TaggedHash("LadderInternal", min(A,B) || max(A,B))`
+- Empty padding: `TaggedHash("LadderLeaf", "")`
+- `TaggedHash(tag, data) = SHA256(SHA256(tag) || SHA256(tag) || data)`
+
+The tagged hash domain separation prevents second preimage attacks between leaf and interior nodes (same pattern as BIP-341 TapLeaf/TapBranch).
+
+**Output size: 42 bytes** (8 value + 1 scriptPubKey length + 1 prefix + 32 root), fixed regardless of script complexity. **UTXO entry: 40 bytes** (value + root).
+
+See `MERKLE-UTXO-SPEC.md` for the complete MLSC specification including witness format, verification algorithm, data embedding analysis, and worked examples.
 
 ---
 
@@ -1099,7 +1121,9 @@ The sighash commits to the following data in order:
 
 ### 8.4 Conditions Hash
 
-The conditions_hash is `SHA256(serialized_conditions)` where `serialized_conditions` is the wire format (Section 3) of the rung conditions from the spent output (rungs only, without the `0xc1` prefix).
+For `0xC1` (inline) outputs, the conditions_hash is `SHA256(serialized_conditions)` where `serialized_conditions` is the wire format (Section 3) of the rung conditions from the spent output (rungs only, without the `0xc1` prefix).
+
+For `0xC2` (MLSC) outputs, the conditions_hash is the `conditions_root` directly from the UTXO. The root already commits to all condition data through the Merkle tree, so hashing it again would add no security. Signers attest to the root, which is binding on all possible spending paths.
 
 ### 8.5 Differences from BIP-341
 
@@ -1408,9 +1432,9 @@ If liboqs proves insufficient for consensus-critical use, the PQ verification fu
 
 ---
 
-## 19. 0xc1 Prefix Collision Analysis
+## 19. Prefix Collision Analysis (`0xC1` / `0xC2`)
 
-The `0xc1` byte identifies a Ladder Script conditions output as the first byte of `scriptPubKey`. This section demonstrates that `0xc1` cannot collide with any existing or planned scriptPubKey format.
+The bytes `0xc1` (inline conditions) and `0xc2` (MLSC Merkle root) identify Ladder Script outputs as the first byte of `scriptPubKey`. This section demonstrates that neither collides with any existing or planned scriptPubKey format.
 
 ### 19.1 Existing scriptPubKey First Bytes
 
@@ -1427,23 +1451,23 @@ The `0xc1` byte identifies a Ladder Script conditions output as the first byte o
 
 ### 19.2 Witness Version Range
 
-BIP-141 defines witness programs as: `OP_n` (1 byte) followed by a data push of 2-40 bytes. The witness version opcodes are `OP_0` (`0x00`) through `OP_16` (`0x60`). Future witness versions occupy `0x51`-`0x60`. The byte `0xc1` is outside this range.
+BIP-141 defines witness programs as: `OP_n` (1 byte) followed by a data push of 2-40 bytes. The witness version opcodes are `OP_0` (`0x00`) through `OP_16` (`0x60`). Future witness versions occupy `0x51`-`0x60`. Both `0xc1` and `0xc2` are outside this range.
 
 ### 19.3 Opcode Identity
 
-`0xc1` is the opcode `OP_NOP2`, which was repurposed as `OP_CHECKLOCKTIMEVERIFY` (BIP-65). However:
+`0xc1` is `OP_NOP2` (repurposed as `OP_CHECKLOCKTIMEVERIFY`, BIP-65). `0xc2` is `OP_NOP3` (repurposed as `OP_CHECKSEQUENCEVERIFY`, BIP-112). However:
 
-- `OP_CHECKLOCKTIMEVERIFY` never appears as the *first byte* of a standard scriptPubKey. It is used within scripts (e.g., `<height> OP_CLTV OP_DROP ...`) but the first byte of such scripts would be a data push opcode for the height value.
-- No wallet software generates scriptPubKeys beginning with `0xc1`.
-- The Bitcoin Core `Solver()` function does not recognise any standard output type beginning with `0xc1`.
+- Neither CLTV nor CSV ever appears as the *first byte* of a standard scriptPubKey. They are used within scripts (e.g., `<height> OP_CLTV OP_DROP ...`) where the first byte is a data push opcode.
+- No wallet software generates scriptPubKeys beginning with `0xc1` or `0xc2`.
+- The Bitcoin Core `Solver()` function does not recognise any standard output type beginning with either byte.
 
 ### 19.4 Data Push Range
 
-Bitcoin Script data push opcodes occupy `0x01`-`0x4e` (direct pushes and `OP_PUSHDATA1/2/4`). `0xc1` is outside this range and cannot be interpreted as a data push prefix.
+Bitcoin Script data push opcodes occupy `0x01`-`0x4e` (direct pushes and `OP_PUSHDATA1/2/4`). Both `0xc1` and `0xc2` are outside this range and cannot be interpreted as data push prefixes.
 
 ### 19.5 Conclusion
 
-The byte `0xc1` does not collide with any existing standard scriptPubKey first byte, any witness version opcode, or any data push prefix. It is safe to use as the Ladder Script conditions identifier. The choice of a repurposed NOP opcode is intentional — non-upgraded nodes that encounter a bare `0xc1` scriptPubKey treat it as a non-standard output type, which is the correct behaviour for soft fork compatibility.
+Neither `0xc1` nor `0xc2` collides with any existing standard scriptPubKey first byte, any witness version opcode, or any data push prefix. They are safe to use as the Ladder Script conditions identifiers. The choice of repurposed NOP opcodes is intentional — non-upgraded nodes that encounter these scriptPubKey prefixes treat them as non-standard output types, which is the correct behaviour for soft fork compatibility.
 
 ---
 

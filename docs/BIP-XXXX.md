@@ -32,25 +32,35 @@ Ladder Script addresses these limitations by replacing opcode sequences with a t
 
 ### Transaction Format
 
-A Ladder Script transaction is identified by `nVersion = 4` (constant `CTransaction::RUNG_TX_VERSION`). When a node encounters a version 4 transaction spending an output whose `scriptPubKey` begins with the byte `0xc1`, it invokes the ladder evaluator instead of the Script interpreter.
+A Ladder Script transaction is identified by `nVersion = 4` (constant `CTransaction::RUNG_TX_VERSION`). When a node encounters a version 4 transaction spending an output whose `scriptPubKey` begins with `0xc1` or `0xc2`, it invokes the ladder evaluator instead of the Script interpreter.
 
-**Output (locking side):**
+**Output formats:**
 
-The `scriptPubKey` of a ladder-locked output is:
+Two output formats are supported:
 
-```
-0xc1 || SerializedRungConditions
-```
+1. **Inline conditions (`0xC1`)** — full conditions embedded in the output:
+   ```
+   0xc1 || SerializedRungConditions
+   ```
 
-The prefix byte `0xc1` was chosen after rigorous collision analysis (see Security Considerations). It does not collide with any existing standard scriptPubKey first byte (P2PKH `0x76`, P2SH `0xa9`, witness v0 `0x00`, witness v1 `0x51`, OP_RETURN `0x6a`), any witness version opcode (`0x00`-`0x60`), or any data push prefix (`0x01`-`0x4e`). While `0xc1` is the opcode for `OP_CHECKLOCKTIMEVERIFY` (BIP-65), CLTV never appears as the first byte of a standard scriptPubKey. The payload is a serialized `RungConditions` structure containing only condition data types (PUBKEY, PUBKEY_COMMIT, HASH256, HASH160, NUMERIC, SCHEME, SPEND_INDEX). The witness-only types SIGNATURE and PREIMAGE are forbidden in conditions.
+2. **MLSC — Merkelized Ladder Script Conditions (`0xC2`)** — only a 32-byte Merkle root:
+   ```
+   0xc2 || conditions_root    (1 + 32 = 33 bytes)
+   ```
+
+MLSC outputs store no condition data in the UTXO set. All conditions are revealed at spend time in the witness. This eliminates data embedding (fake conditions are never published since unspendable outputs are never spent), reduces UTXO set to 40 bytes per entry regardless of script complexity, and provides MAST privacy (unused spending paths are never revealed).
+
+The Merkle tree uses BIP-341-style tagged hashes for domain separation: leaf nodes are computed as `TaggedHash("LadderLeaf", SerializeRung(rung))` and interior nodes as `TaggedHash("LadderInternal", min(A,B) || max(A,B))`. See MERKLE-UTXO-SPEC.md for the complete specification.
+
+The prefix bytes `0xc1` and `0xc2` were chosen after rigorous collision analysis (see Security Considerations). They do not collide with any existing standard scriptPubKey first byte (P2PKH `0x76`, P2SH `0xa9`, witness v0 `0x00`, witness v1 `0x51`, OP_RETURN `0x6a`), any witness version opcode (`0x00`-`0x60`), or any data push prefix (`0x01`-`0x4e`). While `0xc1` is the opcode for `OP_CHECKLOCKTIMEVERIFY` (BIP-65) and `0xc2` for `OP_CHECKSEQUENCEVERIFY` (BIP-112), neither appears as the first byte of a standard scriptPubKey. Condition data types (PUBKEY, PUBKEY_COMMIT, HASH256, HASH160, NUMERIC, SCHEME, SPEND_INDEX) are enforced; witness-only types SIGNATURE and PREIMAGE are forbidden in conditions.
 
 **Input (unlocking side):**
 
-The first element of the segregated witness stack for each v4 input is a serialized `LadderWitness`. This structure contains the same rung/block layout as the conditions but additionally includes SIGNATURE and PREIMAGE fields that satisfy the locking conditions.
+The first element of the segregated witness stack for each v4 input is a serialized `LadderWitness`. For `0xC1` outputs, this contains the same rung/block layout as the conditions plus SIGNATURE and PREIMAGE fields. For `0xC2` (MLSC) outputs, the witness additionally contains the revealed rung conditions, Merkle proof hashes, and coil data.
 
 **Evaluation entry point:**
 
-The function `VerifyRungTx` is called for each input of a v4 transaction. It deserializes both the conditions (from the spent output's `scriptPubKey`) and the witness (from the spending input), then evaluates the ladder.
+The function `VerifyRungTx` is called for each input of a v4 transaction. For `0xC1` inputs, it deserializes conditions from the spent output's `scriptPubKey` and the witness from the spending input. For `0xC2` inputs, it deserializes the revealed conditions and Merkle proof from the witness, verifies the proof against the UTXO root, then evaluates the ladder. All 52 block evaluators are identical for both output formats.
 
 ### Wire Format (v3)
 

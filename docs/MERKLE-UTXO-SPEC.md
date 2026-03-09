@@ -6,7 +6,7 @@
 Ghost Labs
 
 ### Status
-Draft — Pre-implementation
+Draft — Implemented
 
 ---
 
@@ -65,9 +65,9 @@ MLSC applies the same principle to Ladder Script: outputs contain only the Merkl
 | Term | Definition |
 |------|-----------|
 | **Conditions** | The full set of Ladder Script rungs, blocks, and fields that define spending requirements |
-| **Rung leaf** | `SHA256(SerializeRung(rung))` — the hash of a serialized rung |
-| **Coil leaf** | `SHA256(SerializeCoil(coil))` — the hash of serialized coil metadata |
-| **Conditions root** | The Merkle root computed over all rung leaves and the coil leaf |
+| **Rung leaf** | `TaggedHash("LadderLeaf", SerializeRung(rung))` — the tagged hash of a serialized rung |
+| **Coil leaf** | `TaggedHash("LadderLeaf", SerializeCoil(coil))` — the tagged hash of serialized coil metadata |
+| **Conditions root** | The Merkle root computed over all rung leaves and the coil leaf using tagged interior hashes |
 | **Merkle proof** | The sibling hashes needed to prove a leaf belongs to the conditions root |
 
 ### 3.2 Output Format (Creating Transaction)
@@ -108,11 +108,13 @@ Merkle tree leaves (in order):
   [rung_leaf[0], rung_leaf[1], ..., rung_leaf[N-1], coil_leaf]
 ```
 
-**Leaf computation:**
+**Leaf computation (BIP-341-style tagged hashes):**
 
 ```
-rung_leaf[i] = SHA256(SerializeRung(rung[i]))
-coil_leaf    = SHA256(SerializeCoil(coil))
+TaggedHash(tag, data) = SHA256(SHA256(tag) || SHA256(tag) || data)
+
+rung_leaf[i] = TaggedHash("LadderLeaf", SerializeRung(rung[i]))
+coil_leaf    = TaggedHash("LadderLeaf", SerializeCoil(coil))
 ```
 
 Each rung is serialized using the standard wire format:
@@ -133,17 +135,17 @@ Given M leaves (N rungs + 1 coil): L[0], L[1], ..., L[M-1]
 
 1. If M == 1: conditions_root = L[0]
 2. If M > 1:
-   a. Pad to next power of 2 with EMPTY_LEAF = SHA256("LADDER_EMPTY_LEAF")
+   a. Pad to next power of 2 with EMPTY_LEAF = TaggedHash("LadderLeaf", "")
    b. Build tree bottom-up:
       For each pair (A, B):
-        if A <= B:  parent = SHA256(0x01 || A || B)
-        else:       parent = SHA256(0x01 || B || A)
+        if A <= B:  parent = TaggedHash("LadderInternal", A || B)
+        else:       parent = TaggedHash("LadderInternal", B || A)
    c. conditions_root = tree root
 ```
 
-**Domain separation:** Interior nodes are prefixed with `0x01` to prevent leaf/interior node confusion (second preimage attacks). Leaf nodes are NOT prefixed — they are SHA256 hashes of self-delimiting serialized data.
+**Domain separation (BIP-341 convention):** Leaf nodes use the tag `"LadderLeaf"` and interior nodes use the tag `"LadderInternal"`. The 64-byte tag prefix (`SHA256(tag) || SHA256(tag)`) in each tagged hash ensures cross-domain collisions are computationally infeasible — a valid leaf hash can never be mistaken for a valid interior hash, and vice versa. This follows the same pattern used by BIP-341 (Taproot) for `"TapLeaf"` vs `"TapBranch"`.
 
-**Empty leaf constant:** `EMPTY_LEAF = SHA256("LADDER_EMPTY_LEAF")` is a nothing-up-my-sleeve constant used for power-of-2 padding. It cannot collide with any valid rung or coil leaf because valid serialized rungs/coils have minimum length requirements.
+**Empty leaf constant:** `EMPTY_LEAF = TaggedHash("LadderLeaf", "")` is a nothing-up-my-sleeve constant used for power-of-2 padding. It uses the same "LadderLeaf" tag as real leaves but with empty data. It cannot collide with any valid rung or coil leaf because valid serialized rungs/coils have minimum length requirements.
 
 **Sorted interior hashing:** Children are sorted lexicographically before hashing. This ensures canonical tree construction consistent with the existing ACCUMULATOR block convention.
 
@@ -200,9 +202,9 @@ VerifyMLSCSpend(utxo, witness):
        in condition fields)
 
   3. Compute leaves:
-     a. rung_leaf = SHA256(SerializeRung(revealed_rung))
-     b. coil_leaf = SHA256(SerializeCoil(revealed_coil))
-     c. relay_leaf[j] = SHA256(SerializeRelay(revealed_relay[j]))  (for each)
+     a. rung_leaf = TaggedHash("LadderLeaf", SerializeRung(revealed_rung))
+     b. coil_leaf = TaggedHash("LadderLeaf", SerializeCoil(revealed_coil))
+     c. relay_leaf[j] = TaggedHash("LadderLeaf", SerializeRelay(revealed_relay[j]))  (for each)
 
   4. Verify Merkle proof:
      a. Using computed leaves + proof sibling hashes, reconstruct Merkle root
@@ -430,8 +432,8 @@ MLSC is cheaper across the full lifecycle for every transaction type. The saving
 
 ### 6.2 Merkle Tree Security
 
-- **Second preimage resistance:** Interior nodes use `0x01` domain separator prefix; leaves are SHA256 hashes of self-delimiting serialized data
-- **Empty leaf attacks:** `EMPTY_LEAF = SHA256("LADDER_EMPTY_LEAF")` cannot collide with valid serialized rungs/coils (minimum length constraints)
+- **Second preimage resistance:** Leaf nodes use `TaggedHash("LadderLeaf", ...)` and interior nodes use `TaggedHash("LadderInternal", ...)`. The 64-byte domain prefix in each tagged hash (BIP-341 convention) makes cross-domain collisions computationally infeasible — a valid leaf hash can never be interpreted as a valid interior node, and vice versa
+- **Empty leaf attacks:** `EMPTY_LEAF = TaggedHash("LadderLeaf", "")` cannot collide with valid serialized rungs/coils (minimum length constraints, plus the tagged hash domain prefix prevents any raw-data collision)
 - **Proof soundness:** Sorted interior hashing ensures canonical tree construction — no ambiguity in proof verification
 - **Consistency with ACCUMULATOR:** Uses the same sorted binary tree convention already implemented for the ACCUMULATOR block evaluator
 
@@ -583,12 +585,12 @@ Coil:
   coil_type=UNLOCK, attestation=INLINE, scheme=SCHNORR, address=[], conditions=[]
 ```
 
-**Compute leaves:**
+**Compute leaves (using BIP-341-style tagged hashes):**
 
 ```
-rung_leaf[0] = SHA256(SerializeRung(rung_0))  = 0xR0R0...
-rung_leaf[1] = SHA256(SerializeRung(rung_1))  = 0xR1R1...
-coil_leaf    = SHA256(SerializeCoil(coil))     = 0xCOIL...
+rung_leaf[0] = TaggedHash("LadderLeaf", SerializeRung(rung_0))  = 0xR0R0...
+rung_leaf[1] = TaggedHash("LadderLeaf", SerializeRung(rung_1))  = 0xR1R1...
+coil_leaf    = TaggedHash("LadderLeaf", SerializeCoil(coil))     = 0xCOIL...
 ```
 
 **Build Merkle tree (3 leaves → pad to 4):**
@@ -641,8 +643,8 @@ Merkle proof: 1 sibling hash
 
 ```
 1. Deserialize revealed rung 0, coil, and witness data
-2. Compute rung_leaf[0] = SHA256(SerializeRung(revealed_rung_0))  = 0xR0R0...
-3. Compute coil_leaf = SHA256(SerializeCoil(revealed_coil))  = 0xCOIL...
+2. Compute rung_leaf[0] = TaggedHash("LadderLeaf", SerializeRung(revealed_rung_0))  = 0xR0R0...
+3. Compute coil_leaf = TaggedHash("LadderLeaf", SerializeCoil(revealed_coil))  = 0xCOIL...
 4. Reconstruct Merkle root:
    H(R0,R1) using R0R0... and proof hash R1R1...
    H(COIL,EMPTY) using COIL... and known EMPTY_LEAF
