@@ -96,30 +96,47 @@ are defined:
 ## Evaluation Model
 
 ```
-Transaction Input
+  UTXO Output
+       |
+       |  0xC1 (Inline): conditions deserialised from scriptPubKey
+       |  0xC2 (MLSC):   Merkle root in UTXO, conditions + proof in witness
        |
        v
+  +-----------+
+  |  Relay 0  |--[ Block R ]--[ Block S ]-->  ◇ RELAY_A     (shared sub-condition)
+  +-----------+
+  |  Relay 1  |--[ Block T ]-->  ◇ RELAY_B                  (shared sub-condition)
+  +-----------+
+       |
+       |  Relays evaluated first; results available to all rungs via relay_refs
+       v
   +---------+
-  | Rung 0  |--[ Block A ]--[ Block B ]--[ Block C ]-->  (Coil)   --> SATISFIED
-  +---------+                                              |
-       | (if any block fails)                              |
-       v                                                   |
-  +---------+                                              |
-  | Rung 1  |--[ Block D ]--[ Block E ]-->  (Coil)   -----+-------> SATISFIED
-  +---------+                                              |
-       | (if any block fails)                              |
-       v                                                   |
-  +---------+                                              |
-  | Rung N  |--[ Block F ]-->  (Coil)   ------------------+-------> SATISFIED
-  +---------+                                              |
-       |                                                   |
-       v                                                   v
-  UNSATISFIED                                     (first match wins)
+  | Rung 0  |--[ Block A ]--[ Block B ]--[ ◇ RELAY_A ]-->  ( ) Coil  --> SATISFIED
+  +---------+                                                   |
+       | (if any block fails)                                   |
+       v                                                        |
+  +---------+                                                   |
+  | Rung 1  |--[ Block C ]--[ ◇ RELAY_B ]-->  ( ) Coil  ------+------> SATISFIED
+  +---------+                                                   |
+       | (if any block fails)                                   |
+       v                                                        |
+  +---------+                                                   |
+  | Rung N  |--[ Block D ]-->  ( ) Coil  ---------------------+------> SATISFIED
+  +---------+                                                   |
+       |                                                        |
+       v                                                        v
+  UNSATISFIED                                          (first match wins)
+
+  Coil types:  ( ) UNLOCK   (L) LATCH   (U) UNLATCH   (M) RETENTIVE   (/) NEGATED
+  Attestation: INLINE (0xC1) or MLSC (0xC2)
+  Scheme:      SCHNORR | ECDSA | FALCON512 | FALCON1024 | DILITHIUM3 | SPHINCS_SHA
 ```
 
 - **AND** within a rung: all blocks must be SATISFIED.
 - **OR** across rungs: first satisfied rung wins.
+- **Relays**: shared sub-condition rungs referenced by other rungs via `relay_refs`. Evaluated first; their results cascade into referencing rungs.
 - **Inversion**: per-block flag that flips SATISFIED/UNSATISFIED.
+- **MLSC**: for `0xC2` outputs, only the exercised rung, coil, referenced relays, and Merkle proof are revealed. Unused paths stay hidden.
 - **Fail-closed**: unknown block types return UNSATISFIED.
 
 ---

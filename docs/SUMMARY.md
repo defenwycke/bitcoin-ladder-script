@@ -1,40 +1,50 @@
-# Ladder Script Executive Summary
+# Ladder Script — Executive Summary
 
-Ladder Script is a typed, structured transaction format for Bitcoin that replaces opcode-based scripting with a declarative block model. Introduced as transaction version 4, it organizes spending conditions as named function blocks within rungs: all blocks in a rung must be satisfied (AND logic), and the first satisfied rung among alternatives wins (OR logic). Every byte in a Ladder Script witness is typed, every condition is a named block with validated fields, and evaluation is deterministic with bounded execution time. The design draws directly from industrial Programmable Logic Controller ladder diagrams, which solved analogous reliability problems in safety-critical control systems.
+## The Problem
 
-## Key Innovations
+Bitcoin Script is a stack-based interpreter designed in 2009. It has served Bitcoin well, but its untyped data model creates fundamental limitations: arbitrary data can be embedded in transactions, complex spending policies require fragile opcode sequences that resist static analysis, and adding new capabilities (post-quantum signatures, covenants, stateful contracts) means bolting more opcodes onto an already opaque execution model. The result is a scripting system where composability is difficult, auditability requires execution simulation, and the attack surface grows with every new opcode.
 
-- **Typed data model.** Nine declared data types (PUBKEY, HASH256, SIGNATURE, NUMERIC, SCHEME, etc.) with enforced size bounds replace untyped stack elements. No arbitrary data pushes are possible.
-- **Named block architecture.** 52 block types across nine families replace opcode sequences. New capabilities are added as block types, not opcodes, using the same wire format.
-- **Declarative evaluation.** Conditions are stated, not computed. Static analysis requires only parsing, not execution simulation.
-- **Native post-quantum support.** The SCHEME field routes SIG blocks to FALCON-512/1024, Dilithium3, or SPHINCS+ verification. PUBKEY_COMMIT reduces 897-byte PQ keys to 32-byte UTXO commitments.
-- **Covenant recursion.** Six recursion block types (RECURSE_SAME through RECURSE_DECAY) enable perpetual covenants, state machines, countdowns, UTXO tree splitting, and progressive relaxation.
-- **Structural spam resistance.** Mandatory typing, witness-only field restrictions, and size limits make arbitrary data embedding economically prohibitive.
+## The Solution
 
-## Block Type Families
+Ladder Script replaces opcode-based scripting with a declarative, typed block model. Instead of writing programs that compute whether spending is allowed, users declare the conditions that must hold. The system draws from industrial Programmable Logic Controller (PLC) ladder diagrams — a proven model for expressing complex combinatorial logic in safety-critical environments.
 
-| Family | Range | Block Types | Purpose |
-|––––|–––-|––––––-|––––-|
-| Signature | 0x0001–0x00FF | SIG, MULTISIG, ADAPTOR_SIG, MUSIG_THRESHOLD | Identity verification |
-| Timelock | 0x0100–0x01FF | CSV, CSV_TIME, CLTV, CLTV_TIME | Temporal constraints |
-| Hash | 0x0200–0x02FF | HASH_PREIMAGE, HASH160_PREIMAGE, TAGGED_HASH | Knowledge proofs |
-| Covenant | 0x0300–0x03FF | CTV, VAULT_LOCK, AMOUNT_LOCK | Output constraints |
-| Recursion | 0x0400–0x04FF | RECURSE_SAME, RECURSE_MODIFIED, RECURSE_UNTIL, RECURSE_COUNT, RECURSE_SPLIT, RECURSE_DECAY | Self-referential conditions |
-| Anchor | 0x0500–0x05FF | ANCHOR, ANCHOR_CHANNEL, ANCHOR_POOL, ANCHOR_RESERVE, ANCHOR_SEAL, ANCHOR_ORACLE | Typed L2 metadata |
-| PLC | 0x0600–0x06FF | HYSTERESIS, TIMER, LATCH, COUNTER, COMPARE, SEQUENCER, ONE_SHOT, RATE_LIMIT, COSIGN | State machines |
-| Compound | 0x0700–0x07FF | TIMELOCKED_SIG, HTLC, HASH_SIG, PTLC, CLTV_SIG, TIMELOCKED_MULTISIG | Wire-optimised patterns |
-| Governance | 0x0800–0x08FF | EPOCH_GATE, WEIGHT_LIMIT, INPUT_COUNT, OUTPUT_COUNT, RELATIVE_VALUE, ACCUMULATOR | Transaction constraints |
+**Conditions are organised as a ladder:**
 
-## Transaction Format
+- A **rung** contains one or more **blocks**, each expressing a single condition (signature check, timelock, hash preimage, covenant constraint, etc.). All blocks in a rung must be satisfied — AND logic.
+- Multiple rungs provide alternative spending paths. The first satisfied rung wins — OR logic.
+- **Relay rungs** define shared sub-conditions that other rungs can reference, enabling reusable logic without duplication.
+- Any block can be **inverted**, flipping its result. Unknown block types fail closed (UNSATISFIED), ensuring forward compatibility.
 
-A version 4 transaction output uses one of two formats: `0xC1` (inline conditions) stores full serialised rung conditions directly, while `0xC2` (MLSC — Merkelised Ladder Script Conditions) stores only a 32-byte Merkle root, deferring all conditions to the spending witness. MLSC outputs reduce UTXO entries to a fixed 40 bytes regardless of script complexity, eliminate data embedding (fake conditions are never revealed on-chain), and provide MAST privacy (unused spending paths remain hidden). The Merkle tree uses BIP-341-style tagged hashes ("LadderLeaf" / "LadderInternal") for domain separation.
+Every field in every block is typed (PUBKEY, HASH256, NUMERIC, SCHEME, and others) with enforced byte-level size constraints. There are no arbitrary data pushes, no untyped stack elements, and no implicit type coercion.
 
-At verification time, conditions and witness are merged field-by-field — the conditions provide key commitments (PUBKEY_COMMIT), hashes, and parameters; the witness provides public keys, signatures, and preimages. The merged structure is evaluated by the three-level dispatch: `EvalLadder` (OR across rungs), `EvalRung` (AND within a rung), `EvalBlock` (type-specific logic). The sighash uses a tagged hash ("LadderSighash") that commits to the conditions hash (or Merkle root for MLSC), binding signatures to the exact conditions they satisfy.
+## What This Enables
 
-## Post-Quantum Support
+**Post-quantum cryptography, natively.** A single SCHEME field on any signature block routes verification to FALCON-512, FALCON-1024, Dilithium3, or SPHINCS+-SHA2. PUBKEY_COMMIT allows conditions to store a 32-byte hash rather than the full PQ public key (up to 1,793 bytes), reducing UTXO set overhead by up to 96%. The COSIGN block lets one PQ-secured UTXO serve as a co-spending guardian for unlimited classical UTXOs — incremental migration without a flag day.
 
-Ladder Script supports four post-quantum signature schemes (FALCON-512, FALCON-1024, Dilithium3, SPHINCS+-SHA2-256f) through the SCHEME data type and liboqs integration. The PUBKEY_COMMIT field allows conditions to store a 32-byte hash commitment instead of the full PQ public key, reducing UTXO set overhead by up to 96%. The COSIGN block type enables a single PQ-secured UTXO to serve as a guardian for unlimited classical UTXOs through mandatory co-spending.
+**Covenants and stateful contracts.** Six recursion block types (RECURSE_SAME through RECURSE_DECAY) enable perpetual covenants, countdown locks, UTXO tree splitting, and progressive parameter relaxation. PLC-family blocks (latches, counters, timers, comparators, sequencers) bring stateful logic to Bitcoin transactions. Compound blocks (HTLC, PTLC, TIMELOCKED_SIG) fuse common patterns into single wire-efficient units.
 
-## Implementation Status
+**Structural spam resistance.** Because every byte must conform to a declared type with a valid range, embedding arbitrary data in Ladder Script outputs is economically prohibitive. MLSC outputs (see below) take this further — unused conditions are never revealed on-chain, so fake conditions cannot serve as data carriers.
 
-Ladder Script is implemented in the `src/rung/` directory of ghost-core (Bitcoin Ghost's fork of Bitcoin Core). The implementation comprises 10 source files: type definitions, serialisation, conditions, evaluation for all block types, sighash computation, PQ verification, adaptor signatures, aggregate proofs, and policy enforcement. The wire format supports two inheritance mechanisms: template inheritance (conditions-side, §3.5) and diff witness (witness-side, §3.6), which together reduce wire overhead by up to 93% for repeated conditions and 28%+ for repeated witnesses in multi-input transactions. The test suite includes 303 unit tests (`src/test/rung_tests.cpp`) and 190 functional test scenarios (`test/functional/rung_basic.py`) covering serialisation round-trips, field validation, all block evaluators, PQ signature verification, covenant evaluation, diff witness resolution, and full transaction verification through the node's mempool acceptance path.
+**Machine-verifiable composability.** Static analysis requires only parsing, not execution simulation. Wallets, block explorers, and policy engines can inspect and reason about spending conditions without running a script interpreter.
+
+## MLSC — Merkelised Ladder Script Conditions
+
+Ladder Script defines two output formats:
+
+- **Inline (`0xC1`)** stores fully serialised conditions in the output. Useful for debugging and simple cases.
+- **MLSC (`0xC2`)** stores only a 32-byte Merkle root. All conditions are deferred to the spending witness, where the spender reveals only the exercised rung, coil, any referenced relays, and a Merkle proof. Unused spending paths remain permanently hidden.
+
+MLSC reduces every UTXO entry to a fixed 40 bytes regardless of how many conditions or spending paths exist. The Merkle tree uses BIP-341-style tagged hashes ("LadderLeaf" / "LadderInternal") for domain separation. This is the standard output format for production use.
+
+## Wire Efficiency
+
+Two inheritance mechanisms minimise transaction size:
+
+- **Template inheritance** (conditions-side): multiple outputs sharing the same conditions reference a single serialised copy, reducing condition overhead by up to 93%.
+- **Diff witness** (witness-side): when multiple inputs spend outputs with identical conditions, subsequent inputs inherit the first input's rung and relay structure and provide only field-level diffs and a fresh coil, reducing witness overhead by 28% or more.
+
+## Implementation
+
+Ladder Script is fully implemented and consensus-standard in Bitcoin Ghost (ghost-core). The implementation comprises 10 source files under `src/rung/`, covering type definitions, serialisation, condition parsing, block evaluation, sighash computation, PQ verification, adaptor signatures, aggregate proofs, and policy enforcement. The test suite includes 303 unit tests and 190 functional test scenarios covering all block types, serialisation round-trips, PQ signatures, covenant evaluation, diff witness resolution, and full mempool acceptance paths.
+
+The Ladder Script Engine (`tools/ladder-engine/`) provides a browser-based visual programming environment for designing, simulating, and exporting Ladder Script transactions with no build step or server dependency.
