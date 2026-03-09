@@ -198,11 +198,27 @@ sighash commits to:
 - Outputs hash (unless SIGHASH_NONE)
 - Spend type (always 0 for ladder -- no annex or extensions)
 - Input-specific data (prevout or index)
-- Conditions hash (SHA-256 of serialized rung conditions from the spent output)
+- Conditions hash (SHA-256 of serialized rung conditions for `0xC1` outputs, or the
+  conditions root directly for `0xC2` MLSC outputs)
 - Output for SIGHASH_SINGLE
 
 Similar to BIP-341 sighash but without annex, tapscript, or codeseparator extensions.
 Defined in `src/rung/sighash.h`.
+
+### LadderLeaf / LadderInternal
+
+BIP-341-style tagged hash domain tags used in MLSC Merkle tree construction. A tagged
+hash is computed as `SHA256(SHA256(tag) || SHA256(tag) || data)`, where the 64-byte
+prefix of the doubled tag hash provides domain separation.
+
+- **"LadderLeaf"** — Used for leaf nodes: rung leaves, coil leaf, relay leaves, and the
+  empty padding leaf. Pre-computed as `LEAF_HASHER` in `conditions.cpp`.
+- **"LadderInternal"** — Used for interior (branch) nodes. Takes `min(A,B) || max(A,B)`
+  as data for canonical sorted construction. Pre-computed as `INTERNAL_HASHER`.
+
+The domain separation ensures a valid leaf hash can never be mistaken for a valid interior
+hash (and vice versa), preventing second preimage attacks. This follows the same pattern
+as BIP-341's `"TapLeaf"` / `"TapBranch"` tags.
 
 ### LadderWitness
 
@@ -212,9 +228,45 @@ The witness data for a v4 (RUNG_TX) input. Contains:
   (signatures, preimages)
 - `coil`: The output coil (per-output, not per-rung)
 
-The witness is merged with the conditions (from the spent output's scriptPubKey) before
-evaluation. The merge combines condition fields (locks) with witness fields (keys) into
-a unified structure that the evaluator processes.
+For `0xC1` (inline) outputs, the witness is merged with the conditions from the spent
+output's scriptPubKey. For `0xC2` (MLSC) outputs, the witness additionally contains the
+revealed rung conditions, Merkle proof, and coil data. In both cases, the merge combines
+condition fields (locks) with witness fields (keys) into a unified structure that the
+evaluator processes.
+
+### Merkle Proof (MLSC)
+
+The set of sibling hashes needed to reconstruct the conditions root from a revealed leaf.
+For a tree with M leaves (padded to the next power of 2), the proof contains at most
+`ceil(log2(M))` hashes — e.g., 0 hashes for a single-rung condition, 1 hash for 2 rungs,
+4 hashes for 16 rungs. Each proof hash is 32 bytes. The verifier reconstructs the root
+bottom-up using `TaggedHash("LadderInternal", min(A,B) || max(A,B))` at each level and
+checks the result against the UTXO's conditions root.
+
+### MLSC (Merkelized Ladder Script Conditions)
+
+An output format (`0xC2` prefix) that stores only a 32-byte Merkle root instead of full
+inline conditions. The complete conditions are revealed at spend time in the witness,
+along with a Merkle proof. Key properties:
+
+- **Fixed UTXO size:** 40 bytes per entry (value + root) regardless of script complexity
+- **Data embedding resistance:** Fake conditions produce unspendable outputs; since they
+  are never spent, the fake data is never published on-chain
+- **MAST privacy:** Only the exercised spending path (one rung) is revealed; unused paths
+  remain hidden behind opaque proof hashes
+- **Tagged hash security:** Leaf nodes use `TaggedHash("LadderLeaf", ...)` and interior
+  nodes use `TaggedHash("LadderInternal", ...)` following BIP-341 convention, preventing
+  second preimage attacks between tree layers
+
+Specified in `MERKLE-UTXO-SPEC.md`. Implemented in `src/rung/conditions.cpp`.
+
+### Conditions Root
+
+The 32-byte Merkle root stored in an MLSC (`0xC2`) output. Computed as a binary Merkle
+tree over tagged leaf hashes of all rungs, relays, and the coil. Uses sorted interior
+hashing for canonical construction. The root transitively commits to every field of every
+block in every rung — changing any byte in any condition changes the root and invalidates
+all signatures. Defined in `ComputeConditionsRoot()` in `src/rung/conditions.cpp`.
 
 ### MUSIG_THRESHOLD
 
