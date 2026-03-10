@@ -694,9 +694,14 @@ static RungConditions ParseConditionsSpec(const UniValue& rungs_arr,
                 CompactRungData compact;
                 compact.type = CompactRungType::COMPACT_SIG;
                 compact.pubkey_commit = ParseHex(rung_obj["pubkey_commit"].get_str());
-                if (compact.pubkey_commit.size() != 32) {
+                if (compact.pubkey_commit.size() == 33) {
+                    // Auto-hash compressed pubkey → 32-byte commitment
+                    std::vector<unsigned char> commit(CSHA256::OUTPUT_SIZE);
+                    CSHA256().Write(compact.pubkey_commit.data(), compact.pubkey_commit.size()).Finalize(commit.data());
+                    compact.pubkey_commit = std::move(commit);
+                } else if (compact.pubkey_commit.size() != 32) {
                     throw JSONRPCError(RPC_INVALID_PARAMETER,
-                        "compact_type COMPACT_SIG requires 32-byte pubkey_commit");
+                        "compact_type COMPACT_SIG requires 32-byte pubkey_commit or 33-byte compressed pubkey");
                 }
                 if (rung_obj.exists("scheme")) {
                     std::string scheme_str = rung_obj["scheme"].get_str();

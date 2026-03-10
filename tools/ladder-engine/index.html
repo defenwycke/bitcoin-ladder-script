@@ -4643,7 +4643,7 @@ function RungView({ rung, rungIndex, rungCount, selectedBlock, selectedCoil, sel
   );
 }
 
-function LadderView({ rungs, selectedBlock, selectedCoil, selectedInput, mode, simState, onSelectBlock, onSelectCoil, onSelectInput, onDeleteBlock, onDeleteRung, onDropBlock, onAddRung, onAddRungWithBlock, onRungLabelChange, onReorderBlock, onMoveRung, onMoveBlockCrossRung, txOutputs, txInputs, fullscreen, onToggleFullscreen, scanPhase, scanStep, scanResults, scanSpeed, onScanStart, onScanPause, onScanResume, onScanStepFwd, onScanStepBack, onScanReset, onScanSpeedChange, scanIdx, scanTotal, spentRungs, forcedBlocks, onForceBlock, onExecuteRung, onResetSim, onStartScanFrom, simActiveRungId, simActiveStep, simStepResults, onStepBlock, tips, onNameChange, onExpandBlock, onBlockContextMenu, renamingBlockId, onClearRenaming, onClear, onInputContextMenu, onRungChange, renamingInputId, onClearRenamingInput, onDeselect, onOutputContextMenu, onJustifyLeft }) {
+function LadderView({ rungs, selectedBlock, selectedCoil, selectedInput, mode, simState, onSelectBlock, onSelectCoil, onSelectInput, onDeleteBlock, onDeleteRung, onDropBlock, onAddRung, onAddRungWithBlock, onAddChangeRung, onRungLabelChange, onReorderBlock, onMoveRung, onMoveBlockCrossRung, txOutputs, txInputs, fullscreen, onToggleFullscreen, scanPhase, scanStep, scanResults, scanSpeed, onScanStart, onScanPause, onScanResume, onScanStepFwd, onScanStepBack, onScanReset, onScanSpeedChange, scanIdx, scanTotal, spentRungs, forcedBlocks, onForceBlock, onExecuteRung, onResetSim, onStartScanFrom, simActiveRungId, simActiveStep, simStepResults, onStepBlock, tips, onNameChange, onExpandBlock, onBlockContextMenu, renamingBlockId, onClearRenaming, onClear, onInputContextMenu, onRungChange, renamingInputId, onClearRenamingInput, onDeselect, onOutputContextMenu, onJustifyLeft }) {
   const simMode = mode === 'simulate' || mode === 'watch';
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -4754,6 +4754,7 @@ function LadderView({ rungs, selectedBlock, selectedCoil, selectedInput, mode, s
         </div>
         <div style={{ flex: 1 }} />
         {!simMode && <button className="ladder-toolbar-btn" onClick={onAddRung}>+ RUNG</button>}
+        {!simMode && <button className="ladder-toolbar-btn" onClick={onAddChangeRung} style={{ color: 'var(--green-bright)', borderColor: 'var(--green-dim)' }} title="Add a compact SIG change output rung">+ CHANGE</button>}
         {!simMode && <button className="ladder-toolbar-btn" onClick={onClear} style={{ color: 'var(--red)', borderColor: 'var(--red-dim)' }} title="Clear all rungs and start fresh">CLEAR</button>}
         <button className="ladder-toolbar-btn" onClick={onToggleFullscreen} title={fullscreen ? 'Exit fullscreen (F11)' : 'Fullscreen (F11)'}>{fullscreen ? '⊡' : '⊞'}</button>
       </div>
@@ -6998,6 +6999,16 @@ function SignetPanel({ rungs, setRungs, txOutputs, txInputs, locktime, onViewAsL
     if (data) { addToHistory('faucet', data.txid, 'Faucet: ' + data.amount + ' tBTC'); setTimeout(refreshWallet, 2000); }
   };
   const handleCreate = async () => {
+    // Warn if inputs >> outputs (likely missing change output)
+    if (signingData?.selectedUtxos) {
+      const inputTotal = signingData.selectedUtxos.reduce((s, u) => s + Math.round(u.amount * 100000000), 0);
+      const outputTotal = txOutputs.reduce((s, o) => s + (parseInt(o.amount) || 0), 0);
+      const impliedFee = inputTotal - outputTotal;
+      if (impliedFee > 10000 && impliedFee > outputTotal * 0.1) {
+        const ok = confirm(`Implied fee is ${impliedFee.toLocaleString()} sats (${(impliedFee / 100000000).toFixed(8)} BTC). Missing a change output? Click OK to proceed anyway, or Cancel to go back and add one.`);
+        if (!ok) return;
+      }
+    }
     const txData = exportCreateRungtx(rungs, txOutputs, txInputs, locktime);
     const data = await apiCall('/api/ladder/create', txData);
     if (data) { setTxHex(data.hex); setSignedHex(''); setTxid(''); setMined(false); }
@@ -7176,28 +7187,8 @@ function SignetPanel({ rungs, setRungs, txOutputs, txInputs, locktime, onViewAsL
       totalNewOutputSats = newOutputs.reduce((s, o) => s + o.amount, 0);
     }
 
-    // Add change output if there's significant excess (> 1000 sats beyond fee)
-    const changeSats = selectedTotal - totalNewOutputSats - feeSats;
-    let changeRung = null;
-    if (changeSats > 1000) {
-      const changeAddr = await apiCall('/api/ladder/wallet/address');
-      if (changeAddr) {
-        const changeId = uid();
-        newOutputs.push({
-          id: changeId,
-          address: changeAddr.address,
-          amount: changeSats,
-        });
-        // Create a SIG rung for the change output so createrungtx has valid conditions
-        changeRung = {
-          id: uid(),
-          label: 'CHANGE',
-          blocks: [{ id: uid(), type: 'SIG', values: { pubkey: keypairs[0].pubkey } }],
-          output: { name: 'CHANGE', type: 'standard', txOutputId: changeId },
-          outputRefs: [],
-        };
-      }
-    }
+    // Note: no auto-change rung — user manages change outputs explicitly via + CHANGE button
+    // CREATERUNGTX will warn if implied fee is suspiciously large
 
     // 8. Build spent outputs for signing (amount + scriptPubKey from each UTXO)
     const spentOutputs = selected.map(u => ({
@@ -7221,9 +7212,6 @@ function SignetPanel({ rungs, setRungs, txOutputs, txInputs, locktime, onViewAsL
       sequence: '',
     })));
     setTxOutputs(newOutputs);
-    if (changeRung) {
-      setRungs(prev => [...prev, changeRung]);
-    }
     setTxHex('');
     setSignedHex('');
     setTxid('');
@@ -7555,6 +7543,7 @@ function SignetPanel({ rungs, setRungs, txOutputs, txInputs, locktime, onViewAsL
             <button style={{ ...sty.btn, ...sty.btnPrimary, opacity: online ? 1 : 0.3 }} onClick={handleDecode} disabled={!online || loading === '/api/ladder/decode'}>{loading === '/api/ladder/decode' ? 'DECODING...' : 'DECODE LADDER'}</button>
             <button style={{ ...sty.btn, ...sty.btnDefault, opacity: online ? 1 : 0.3 }} onClick={handleDecodeTx} disabled={!online || loading === '/api/ladder/decode-tx'}>{loading === '/api/ladder/decode-tx' ? 'DECODING...' : 'DECODE RAW TX'}</button>
             {(signedHex || txHex) && <button style={{ ...sty.btn, ...sty.btnDefault }} onClick={() => setDecodeHex(signedHex || txHex)}>USE CURRENT TX</button>}
+            {decodeHex && <button style={{ ...sty.btn, ...sty.btnDefault, ...(copiedKey === 'decode-input' ? { color: 'var(--green-bright)', borderColor: 'var(--green-bright)' } : {}) }} onClick={() => copyWithFeedback(decodeHex, 'decode-input')}>{copiedKey === 'decode-input' ? '✓ COPIED' : 'COPY HEX'}</button>}
           </div>
           {decodeResult && (<div style={{ ...sty.result, maxHeight: 260 }}>
             <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
@@ -7573,6 +7562,7 @@ function SignetPanel({ rungs, setRungs, txOutputs, txInputs, locktime, onViewAsL
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             <button style={{ ...sty.btn, ...sty.btnPrimary, opacity: online ? 1 : 0.3 }} onClick={handleValidate} disabled={!online || loading === '/api/ladder/validate'}>{loading === '/api/ladder/validate' ? 'VALIDATING...' : 'VALIDATE'}</button>
             {(signedHex || txHex) && <button style={{ ...sty.btn, ...sty.btnDefault }} onClick={() => setValidateHex(signedHex || txHex)}>USE CURRENT TX</button>}
+            {validateHex && <button style={{ ...sty.btn, ...sty.btnDefault, ...(copiedKey === 'validate-input' ? { color: 'var(--green-bright)', borderColor: 'var(--green-bright)' } : {}) }} onClick={() => copyWithFeedback(validateHex, 'validate-input')}>{copiedKey === 'validate-input' ? '✓ COPIED' : 'COPY HEX'}</button>}
           </div>
           {validateResult && (
             <div style={{ ...sty.result, maxHeight: 220 }}>
@@ -7604,14 +7594,17 @@ function SignetPanel({ rungs, setRungs, txOutputs, txInputs, locktime, onViewAsL
                 <div><span style={{ color: 'var(--text-dim)' }}>VSIZE: </span>{lookupResult.vsize} vbytes</div>
                 {lookupResult.version && <div><span style={{ color: 'var(--text-dim)' }}>VERSION: </span>{lookupResult.version}</div>}
               </div>
-              <button style={{ ...sty.btn, ...sty.btnDefault, padding: '2px 8px', fontSize: 9, ...(copiedKey === 'lookup' ? { color: 'var(--green-bright)', borderColor: 'var(--green-bright)' } : {}) }} onClick={() => copyWithFeedback(JSON.stringify(lookupResult, null, 2), 'lookup')}>{copiedKey === 'lookup' ? '✓ COPIED' : 'COPY'}</button>
+              <div style={{ display: 'flex', gap: 4 }}>
+                {lookupResult.hex && <button style={{ ...sty.btn, ...sty.btnDefault, padding: '2px 8px', fontSize: 9, ...(copiedKey === 'lookup-hex' ? { color: 'var(--green-bright)', borderColor: 'var(--green-bright)' } : {}) }} onClick={() => copyWithFeedback(lookupResult.hex, 'lookup-hex')}>{copiedKey === 'lookup-hex' ? '✓ COPIED' : 'COPY HEX'}</button>}
+                <button style={{ ...sty.btn, ...sty.btnDefault, padding: '2px 8px', fontSize: 9, ...(copiedKey === 'lookup' ? { color: 'var(--green-bright)', borderColor: 'var(--green-bright)' } : {}) }} onClick={() => copyWithFeedback(JSON.stringify(lookupResult, null, 2), 'lookup')}>{copiedKey === 'lookup' ? '✓ COPIED' : 'COPY JSON'}</button>
+              </div>
             </div>
             {lookupResult.vin && (<div style={{ marginBottom: 6 }}><div style={{ color: 'var(--text-dim)', fontSize: 9, letterSpacing: 1, marginBottom: 2 }}>INPUTS ({lookupResult.vin.length})</div>{lookupResult.vin.map((vin, i) => <div key={i} style={{ fontSize: 10, color: 'var(--text-secondary)', padding: '2px 0' }}>{vin.coinbase ? 'coinbase' : `${(vin.txid || '').substring(0, 16)}...:${vin.vout}`}</div>)}</div>)}
             {lookupResult.vout && (<div><div style={{ color: 'var(--text-dim)', fontSize: 9, letterSpacing: 1, marginBottom: 2 }}>OUTPUTS ({lookupResult.vout.length})</div>{lookupResult.vout.map((vout, i) => <div key={i} style={{ fontSize: 10, color: 'var(--text-secondary)', padding: '2px 0', display: 'flex', justifyContent: 'space-between' }}><span>#{vout.n} {vout.scriptPubKey?.type || ''}</span><span style={{ color: 'var(--amber)' }}>{formatSats(vout.value)}</span></div>)}</div>)}
             {decodedToBuilderRungs(lookupResult) && (
               <button style={{ ...sty.btn, ...sty.btnPrimary, marginTop: 8, display: 'block' }} onClick={() => onViewAsLadder(lookupResult)}>VIEW AS LADDER</button>
             )}
-            <details style={{ marginTop: 8 }}><summary style={{ cursor: 'pointer', color: 'var(--text-dim)', fontSize: 10 }}>RAW JSON</summary><pre style={{ whiteSpace: 'pre-wrap', margin: '4px 0 0', fontSize: 10 }}>{JSON.stringify(lookupResult, null, 2)}</pre></details>
+            <details style={{ marginTop: 8 }}><summary style={{ cursor: 'pointer', color: 'var(--text-dim)', fontSize: 10 }}>RAW JSON</summary><div style={{ display: 'flex', justifyContent: 'flex-end', margin: '4px 0' }}><button style={{ ...sty.btn, ...sty.btnDefault, padding: '2px 8px', fontSize: 9, ...(copiedKey === 'lookup-raw' ? { color: 'var(--green-bright)', borderColor: 'var(--green-bright)' } : {}) }} onClick={() => copyWithFeedback(JSON.stringify(lookupResult, null, 2), 'lookup-raw')}>{copiedKey === 'lookup-raw' ? '✓ COPIED' : 'COPY JSON'}</button></div><pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 10 }}>{JSON.stringify(lookupResult, null, 2)}</pre></details>
           </div>
         )}
       </div>
@@ -7797,6 +7790,21 @@ function App() {
       setRightTab('simulate');
     } else if (!isSimMode && rightTab === 'simulate') {
       setRightTab('properties');
+    }
+  }, [isSimMode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-populate available keys from diagram when entering sim mode with empty keys
+  useEffect(() => {
+    if (isSimMode && simState.availableKeys.size === 0) {
+      const keys = new Set();
+      rungs.forEach(r => r.blocks.forEach(b => {
+        if (b.values.pubkey) keys.add(b.values.pubkey);
+        if (b.values.signing_key) keys.add(b.values.signing_key);
+        if (b.values.pubkeys) b.values.pubkeys.split(',').map(k => k.trim()).filter(Boolean).forEach(k => keys.add(k));
+      }));
+      if (keys.size > 0) {
+        setSimState(prev => ({ ...prev, availableKeys: keys, _keysRaw: [...keys].join('\n') }));
+      }
     }
   }, [isSimMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -8031,6 +8039,20 @@ function App() {
     });
   }, []);
 
+  const handleAddChangeRung = useCallback(() => {
+    const outputId = uid();
+    setTxOutputs(prev => [...prev, { id: outputId, address: '', amount: 0 }]);
+    setRungs(prev => {
+      if (prev.length >= 16) return prev;
+      const rung = createRung();
+      rung.label = 'CHANGE';
+      rung.blocks = [createBlock('SIG')];
+      rung.compact = true;
+      rung.output = { ...rung.output, name: 'CHANGE', txOutputId: outputId };
+      return [...prev, rung];
+    });
+  }, []);
+
   const handleDropBlock = useCallback((rungId, blockType, slotIdx) => {
     setRungs(prev => prev.map(r => {
       if (r.id !== rungId) return r;
@@ -8203,7 +8225,8 @@ function App() {
     });
   }, []);
 
-  // Execute a rung (spend it) — also cascade-block rungs sharing the same TX inputs
+  // Execute a rung (spend it) — also cascade-block rungs on the SAME output sharing the same TX inputs
+  // Rungs on different outputs (e.g. spend + change) are independent and should not block each other
   const handleExecuteRung = useCallback((rungId) => {
     setSpentRungs(prev => {
       const next = new Map(prev);
@@ -8211,8 +8234,9 @@ function App() {
       const executedRung = rungs.find(r => r.id === rungId);
       if (executedRung?.txInputIds?.length > 0) {
         const spentInputs = new Set(executedRung.txInputIds);
+        const sameOutput = executedRung.output?.txOutputId;
         rungs.forEach(r => {
-          if (r.id !== rungId && !next.has(r.id) && r.txInputIds?.some(id => spentInputs.has(id))) {
+          if (r.id !== rungId && !next.has(r.id) && r.txInputIds?.some(id => spentInputs.has(id)) && r.output?.txOutputId === sameOutput) {
             next.set(r.id, 'blocked');
           }
         });
@@ -8802,6 +8826,7 @@ ${ladderRows.map(r => `
           onDropBlock={handleDropBlock}
           onAddRung={handleAddRung}
           onAddRungWithBlock={handleAddRungWithBlock}
+          onAddChangeRung={handleAddChangeRung}
           onRungLabelChange={handleRungLabelChange}
           onReorderBlock={handleReorderBlock}
           onMoveRung={handleMoveRung}
