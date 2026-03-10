@@ -138,6 +138,7 @@
     .family-plc { color: #98c379; }
     .family-compound { color: #f59e0b; }
     .family-governance { color: #8b5cf6; }
+    .family-compact { color: #98c379; }
 
     .badge-signature { color: #e6a817; background: rgba(230, 168, 23, 0.1); }
     .badge-timelock { color: #39a5b7; background: rgba(57, 165, 183, 0.1); }
@@ -417,6 +418,13 @@
           { code: '0x0804', name: 'OUTPUT_COUNT', file: 'output-count', desc: 'Bounds on number of outputs in the spending transaction.' },
           { code: '0x0805', name: 'RELATIVE_VALUE', file: 'relative-value', desc: 'Anti-siphon ratio enforcement between input and output values.' },
           { code: '0x0806', name: 'ACCUMULATOR', file: 'accumulator', desc: 'Merkle set membership proof using sorted-pair Merkle proofs.' },
+        ]
+      },
+      {
+        name: 'Compact Encodings', range: 'Wire Optimisations', cls: 'compact',
+        intro: 'Compact encodings replace an entire rung with a fixed-size inline payload using the n_blocks == 0 sentinel. They resolve to standard blocks at evaluation time and are not counted as separate block types.',
+        blocks: [
+          { code: '0x01', name: 'COMPACT_SIG', file: 'compact-sig', desc: 'Compact single-key signature rung. Stores PUBKEY_COMMIT (32B) and SCHEME (1B) inline. Resolves to SIG.' },
         ]
       }
     ];

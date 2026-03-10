@@ -136,7 +136,11 @@ for each coil condition rung:
   (same block format as input rungs)
 ```
 
-### 3.3 Evaluation Model
+### 3.3 Compact Rung Encoding
+
+For the most common single-block patterns, the wire format supports a compact encoding signalled by `n_blocks == 0` within a rung. A COMPACT_SIG rung stores only a 32-byte `pubkey_commit` and a 1-byte `scheme` selector, and is expanded into a standard SIG block at deserialisation. This reduces per-rung overhead for the dominant single-signer case without adding new block types or evaluation paths.
+
+### 3.4 Evaluation Model
 
 Evaluation follows a three-level dispatch:
 
@@ -148,7 +152,7 @@ Evaluation follows a three-level dispatch:
 
 If a block has the `inverted` flag set, the result is flipped: SATISFIED becomes UNSATISFIED and vice versa. ERROR is never inverted. UNKNOWN_BLOCK_TYPE inverted becomes SATISFIED.
 
-### 3.4 Coil Types
+### 3.5 Coil Types
 
 Each output carries a `RungCoil` that determines unlock semantics:
 
@@ -158,7 +162,7 @@ Each output carries a `RungCoil` that determines unlock semantics:
 | UNLOCK_TO | 0x02 | Spend to a specific destination address |
 | COVENANT | 0x03 | Constrains the structure of the spending transaction |
 
-### 3.5 Attestation Modes
+### 3.6 Attestation Modes
 
 Each coil specifies an attestation mode that determines how signatures are provided:
 

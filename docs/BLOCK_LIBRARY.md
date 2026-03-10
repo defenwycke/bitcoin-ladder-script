@@ -2993,6 +2993,23 @@ Commitment set proofs. Accumulator-based spending authorisation.
 
 ---
 
+## Compact Encodings
+
+Compact encodings are not block types — they are space-optimised wire representations that resolve to standard blocks at deserialisation time. The block count remains 52.
+
+### COMPACT_SIG
+
+A compact rung encoding for the common case of a single-signer key commitment. Uses the `n_blocks == 0` sentinel within a rung to signal compact mode. The rung body contains only:
+
+- `pubkey_commit` (32 bytes) — SHA-256 commitment to the signing public key
+- `scheme` (1 byte) — signature scheme selector
+
+At deserialisation, a COMPACT_SIG rung is expanded into a standard rung containing a single SIG block with PUBKEY_COMMIT and SCHEME fields. The evaluator never sees the compact form; it evaluates the resolved SIG block using the normal code path.
+
+Wire savings: a COMPACT_SIG rung is 34 bytes versus 36+ bytes for an explicitly encoded SIG block with micro-header and implicit fields.
+
+---
+
 ## Appendix: Data Type Reference
 
 | Type Code | Name | Min Size | Max Size | Description |

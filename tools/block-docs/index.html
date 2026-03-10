@@ -74,6 +74,7 @@
   .family-plc { color: #98c379; }
   .family-compound { color: #f59e0b; }
   .family-governance { color: #8b5cf6; }
+  .family-compact { color: #98c379; }
 
   .intro-text {
     color: var(--text-secondary);
@@ -535,6 +536,21 @@
       <div class="block-card-name">ACCUMULATOR</div>
       <div class="block-card-desc">Merkle set membership proof. Verifies that a value belongs to a committed set using sorted-pair Merkle proofs.</div>
       <div class="block-card-badge badge-governance">Governance</div>
+    </a>
+  </div>
+</div>
+
+<!-- Compact Encodings -->
+<div class="family-section">
+  <h2 class="family-title family-compact">Compact Encodings</h2>
+  <p class="intro-text">Compact encodings are wire format optimisations that replace an entire rung (one or more blocks) with a fixed-size inline payload. They use the <code>n_blocks == 0</code> sentinel within a rung to signal compact data. Compact rungs resolve to equivalent standard blocks at evaluation time. They are not counted as separate block types.</p>
+
+  <div class="index-grid">
+    <a href="compact-sig.html" class="block-card">
+      <div class="block-card-code">COMPACT 0x01</div>
+      <div class="block-card-name">COMPACT_SIG</div>
+      <div class="block-card-desc">Compact single-key signature rung. Stores PUBKEY_COMMIT (32B) and SCHEME (1B) inline with no block overhead. Resolves to a SIG block at evaluation. Used for change outputs and simple single-key spending.</div>
+      <div class="block-card-badge" style="color:#98c379;border-color:#98c37940">Compact</div>
     </a>
   </div>
 </div>

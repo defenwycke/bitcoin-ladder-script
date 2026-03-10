@@ -176,7 +176,23 @@ CLTV_SIG WITNESS:    [PUBKEY(var), SIGNATURE(var), NUMERIC(varint)]
 
 Blocks with variable field counts (e.g. MULTISIG with N pubkeys) use escape headers with explicit field encoding.
 
-### 3.5 Template Inheritance
+### 3.5 Compact Rung Encoding
+
+When `n_blocks = 0` within a rung, the rung uses **compact encoding** rather than the standard block-level format. The compact payload is type-specific:
+
+```
+COMPACT_SIG (n_blocks = 0 in a rung):
+
+[n_blocks: varint = 0]                    // Signals compact rung mode
+[pubkey_commit: 32 bytes]                 // SHA-256 commitment to signing public key
+[scheme: uint8_t]                         // Signature scheme selector
+```
+
+At deserialisation, a compact rung is expanded into a standard rung containing the appropriate block (e.g., a SIG block with PUBKEY_COMMIT and SCHEME fields). The evaluator operates on the expanded form; compact encoding is purely a wire-level optimisation.
+
+Currently only COMPACT_SIG is defined. The `n_blocks == 0` sentinel is reserved for future compact encodings of other common single-block patterns.
+
+### 3.6 Template Inheritance
 
 When `n_rungs = 0` in a conditions output, the output inherits conditions from another input via template reference:
 
@@ -197,7 +213,7 @@ Template resolution rules:
 - Diff type must match the field being replaced
 - Resolution produces fully expanded conditions for sighash computation
 
-### 3.6 Diff Witness (Witness Inheritance)
+### 3.7 Diff Witness (Witness Inheritance)
 
 When `n_rungs = 0` in a ladder witness (input witness stack element), the witness inherits its rungs and relays from another input's witness with optional field-level diffs. This is the witness-side counterpart to template inheritance (§3.5).
 

@@ -316,6 +316,50 @@ body {
   letter-spacing: 0.5px;
 }
 
+.compact-toggle {
+  position: absolute;
+  left: 0;
+  top: -14px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+  z-index: 2;
+  user-select: none;
+}
+.compact-toggle input[type="checkbox"] {
+  width: 10px;
+  height: 10px;
+  accent-color: var(--green);
+  cursor: pointer;
+  margin: 0;
+}
+.compact-toggle-label {
+  font-size: 8px;
+  font-family: var(--font-display);
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.compact-toggle:hover .compact-toggle-label {
+  color: var(--green);
+}
+.compact-badge {
+  position: absolute;
+  right: 12px;
+  top: -12px;
+  font-size: 8px;
+  font-family: var(--font-display);
+  color: #000;
+  background: var(--green-bright);
+  padding: 1px 5px;
+  border-radius: 2px;
+  letter-spacing: 1px;
+  font-weight: 700;
+  z-index: 2;
+  line-height: 12px;
+}
+
 .rung-content {
   display: flex;
   align-items: center;
@@ -2665,7 +2709,7 @@ function createBlock(type) {
 }
 
 function createRung() {
-  return { id: uid(), label: '', blocks: [], output: { name: '', type: 'standard', txOutputId: null, wireType: 'UNLOCK', attestation: 'INLINE', scheme: 'SCHNORR' }, txInputIds: [], outputRefs: [], inputName: '' };
+  return { id: uid(), label: '', blocks: [], output: { name: '', type: 'standard', txOutputId: null, wireType: 'UNLOCK', attestation: 'INLINE', scheme: 'SCHNORR' }, txInputIds: [], outputRefs: [], inputName: '', compact: false };
 }
 
 function rungDisplayName(rung, index) {
@@ -3416,6 +3460,20 @@ function toNumericHex(val) {
 }
 
 // Export a single block to wire format (shared by both export functions)
+function isCompactSigEligible(rung) {
+  const nonRefBlocks = rung.blocks.filter(b => b.type !== 'OUTPUT_REF');
+  return nonRefBlocks.length === 1 && nonRefBlocks[0].type === 'SIG';
+}
+
+function exportCompactSig(rung) {
+  const sigBlock = rung.blocks.find(b => b.type === 'SIG');
+  return {
+    compact_type: 'COMPACT_SIG',
+    pubkey_commit: sigBlock.values.pubkey || '',
+    scheme: sigBlock.values.scheme || 'SCHNORR'
+  };
+}
+
 function exportBlockFields(block) {
   const def = getBlockDef(block.type);
   const fields = [];
@@ -3468,6 +3526,10 @@ function exportCreateRungtx(rungs, txOutputs, txInputs, locktime) {
 
   // Build relays array for wire format
   const relays = relayRungs.map(r => {
+    // Compact rung encoding: single SIG block → COMPACT_SIG
+    if (r.compact && isCompactSigEligible(r)) {
+      return exportCompactSig(r);
+    }
     const relay = {
       blocks: r.blocks
         .filter(b => b.type !== 'OUTPUT_REF')
@@ -3503,6 +3565,10 @@ function exportCreateRungtx(rungs, txOutputs, txInputs, locktime) {
 
       // Build conditions: each rung becomes an entry in the conditions array
       const conditions = assignedRungs.map(rung => {
+        // Compact rung encoding: single SIG block → COMPACT_SIG
+        if (rung.compact && isCompactSigEligible(rung)) {
+          return exportCompactSig(rung);
+        }
         const cond = {
           blocks: rung.blocks
             .filter(b => b.type !== 'OUTPUT_REF')
@@ -3556,10 +3622,15 @@ function exportCreateRungtx(rungs, txOutputs, txInputs, locktime) {
 
 // Export UI-friendly format (for debugging / display)
 function exportConditions(rungs, txOutputs, txInputs) {
-  return rungs.map((rung, ri) => ({
-    ...(rung.label ? { label: rung.label } : {}),
-    blocks: rung.blocks.map(exportBlockFields)
-  }));
+  return rungs.map((rung, ri) => {
+    if (rung.compact && isCompactSigEligible(rung)) {
+      return { ...(rung.label ? { label: rung.label } : {}), ...exportCompactSig(rung) };
+    }
+    return {
+      ...(rung.label ? { label: rung.label } : {}),
+      blocks: rung.blocks.map(exportBlockFields)
+    };
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -4419,6 +4490,15 @@ function RungView({ rung, rungIndex, rungCount, selectedBlock, selectedCoil, sel
           onClick={() => { if (simMode && !isSpent && onStartScanFrom) onStartScanFrom(rungIndex); }}
           title={tips ? (simMode ? (isSpent ? 'SPENT — cannot simulate' : 'Click to start step-through for this rung') : 'Drag to reorder · Double-click to rename') : undefined}
         >{displayName}</span>
+      )}
+      {isCompactSigEligible(rung) && !simMode && (
+        <label className="compact-toggle" title="Encode as COMPACT_SIG — single SIG rung uses compact wire format" onClick={(e) => e.stopPropagation()}>
+          <input type="checkbox" checked={!!rung.compact} onChange={(e) => onRungChange?.(rung.id, 'compact', e.target.checked)} />
+          <span className="compact-toggle-label">Compact</span>
+        </label>
+      )}
+      {rung.compact && isCompactSigEligible(rung) && (
+        <span className="compact-badge">COMPACT</span>
       )}
       <div className="rung-content">
         <div className="rail-left" />
@@ -6668,8 +6748,17 @@ function decodedToBuilderRungs(data) {
 
   const convertRung = (rd) => {
     const rung = createRung();
-    const blocksData = rd.blocks || rd.contacts || [];
-    rung.blocks = blocksData.map(convertBlock);
+    // Handle COMPACT_SIG import
+    if (rd.compact_type === 'COMPACT_SIG') {
+      const block = createBlock('SIG');
+      block.values.pubkey = rd.pubkey_commit || '';
+      block.values.scheme = rd.scheme || 'SCHNORR';
+      rung.blocks = [block];
+      rung.compact = true;
+    } else {
+      const blocksData = rd.blocks || rd.contacts || [];
+      rung.blocks = blocksData.map(convertBlock);
+    }
     const coil = rd.coil || {};
     rung.output.wireType = coil.coil_type || coil.type || 'UNLOCK';
     rung.output.attestation = coil.attestation || 'INLINE';
@@ -8587,7 +8676,16 @@ ${ladderRows.map(r => `
               rung.output.attestation = out.coil.attestation || 'INLINE';
               rung.output.scheme = out.coil.scheme || 'SCHNORR';
             }
-            rung.blocks = importBlocksFromFields(cond.blocks);
+            // Handle COMPACT_SIG import
+            if (cond.compact_type === 'COMPACT_SIG') {
+              const block = createBlock('SIG');
+              block.values.pubkey = cond.pubkey_commit || '';
+              block.values.scheme = cond.scheme || 'SCHNORR';
+              rung.blocks = [block];
+              rung.compact = true;
+            } else {
+              rung.blocks = importBlocksFromFields(cond.blocks);
+            }
             // Assign all inputs to the rung by default
             rung.txInputIds = newTxInputs.map(i => i.id);
             newRungs.push(rung);

@@ -544,6 +544,16 @@ forbidden. In WITNESS context, condition-only types may be omitted if they
 can be inferred from the corresponding conditions. This eliminates redundant
 data in the witness without ambiguity.
 
+### 37a. What is COMPACT_SIG?
+
+COMPACT_SIG is a compact rung encoding, not a new block type. When a rung's
+`n_blocks` field is 0, the rung body contains only a 32-byte `pubkey_commit`
+and a 1-byte `scheme` selector. At deserialisation this is expanded into a
+standard rung with a single SIG block. The evaluator never sees the compact
+form — it processes the resolved SIG block normally. COMPACT_SIG saves a few
+wire bytes for the dominant single-signer pattern. The total block type count
+remains 52.
+
 ---
 
 ## Compound Blocks

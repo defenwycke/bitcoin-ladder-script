@@ -245,6 +245,20 @@ Diff witness resolution rules:
 - Resolution copies source rungs/relays, applies diffs, then proceeds through normal evaluation.
 - The sighash is per-input (includes input index), so SIGNATURE fields almost always require a diff.
 
+#### Compact Rung Encoding
+
+When `n_blocks = 0` within a rung, the rung uses a compact encoding instead of the standard block-level format. The only currently defined compact form is **COMPACT_SIG**:
+
+```
+COMPACT_SIG (n_blocks = 0 in a rung):
+
+[n_blocks: varint = 0]                  — sentinel for compact mode
+[pubkey_commit: 32 bytes]               — SHA-256 commitment to signing public key
+[scheme: uint8_t]                       — signature scheme selector
+```
+
+At deserialisation the compact rung is expanded into a standard rung containing a single SIG block with PUBKEY_COMMIT and SCHEME fields. Evaluation proceeds on the expanded form; compact encoding is a wire-level optimisation only. The `n_blocks == 0` sentinel is reserved for future compact forms.
+
 #### Wire Size Comparison (per block, v2 → v3)
 
 | Scenario | V2 | V3 | Saved |
