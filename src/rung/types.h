@@ -16,14 +16,16 @@ namespace rung {
  *  Each block evaluates a single spending condition within a rung.
  *  Encoded as uint16_t in the wire format (little-endian 2 bytes).
  *
- *  Ranges:
- *    0x0001-0x00FF  Signature family
- *    0x0100-0x01FF  Timelock family
- *    0x0200-0x02FF  Hash family
- *    0x0300-0x03FF  Covenant family
- *    0x0400-0x04FF  Recursion family
- *    0x0500-0x05FF  Anchor/L2 family
- *    0x0600-0x06FF  PLC family */
+ *  Ranges (9 families, 53 block types):
+ *    0x0001-0x00FF  Signature family (SIG, MULTISIG, ADAPTOR_SIG, MUSIG_THRESHOLD, KEY_REF_SIG)
+ *    0x0100-0x01FF  Timelock family (CSV, CSV_TIME, CLTV, CLTV_TIME)
+ *    0x0200-0x02FF  Hash family (HASH_PREIMAGE, HASH160_PREIMAGE, TAGGED_HASH)
+ *    0x0300-0x03FF  Covenant family (CTV, VAULT_LOCK, AMOUNT_LOCK)
+ *    0x0400-0x04FF  Recursion family (RECURSE_SAME, _MODIFIED, _UNTIL, _COUNT, _SPLIT, _DECAY)
+ *    0x0500-0x05FF  Anchor family (ANCHOR, _CHANNEL, _POOL, _RESERVE, _SEAL, _ORACLE)
+ *    0x0600-0x06FF  PLC family (HYSTERESIS_*, TIMER_*, LATCH_*, COUNTER_*, COMPARE, SEQUENCER, ONE_SHOT, RATE_LIMIT, COSIGN)
+ *    0x0700-0x07FF  Compound family (TIMELOCKED_SIG, HTLC, HASH_SIG, PTLC, CLTV_SIG, TIMELOCKED_MULTISIG)
+ *    0x0800-0x08FF  Governance family (EPOCH_GATE, WEIGHT_LIMIT, INPUT_COUNT, OUTPUT_COUNT, RELATIVE_VALUE, ACCUMULATOR) */
 enum class RungBlockType : uint16_t {
     // Signature family
     SIG              = 0x0001, //!< Single signature verification
@@ -94,7 +96,7 @@ enum class RungBlockType : uint16_t {
     SEQUENCER        = 0x0651, //!< Step sequencer
     ONE_SHOT         = 0x0661, //!< One-shot activation window
     RATE_LIMIT       = 0x0671, //!< Rate limiter
-    COSIGN           = 0x0681, //!< Co-spend contact: requires another input with matching conditions hash
+    COSIGN           = 0x0681, //!< Co-spend constraint: requires another input with matching conditions hash
 };
 
 /** Data types for typed parameters within blocks.

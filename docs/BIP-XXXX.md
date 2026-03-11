@@ -52,7 +52,7 @@ MLSC outputs store no condition data in the UTXO set. All conditions are reveale
 
 The Merkle tree uses BIP-341-style tagged hashes for domain separation: leaf nodes are computed as `TaggedHash("LadderLeaf", SerializeRung(rung))` and interior nodes as `TaggedHash("LadderInternal", min(A,B) || max(A,B))`. See MERKLE-UTXO-SPEC.md for the complete specification.
 
-The prefix bytes `0xc1` and `0xc2` were chosen after rigorous collision analysis (see Security Considerations). They do not collide with any existing standard scriptPubKey first byte (P2PKH `0x76`, P2SH `0xa9`, witness v0 `0x00`, witness v1 `0x51`, OP_RETURN `0x6a`), any witness version opcode (`0x00`-`0x60`), or any data push prefix (`0x01`-`0x4e`). While `0xc1` is the opcode for `OP_CHECKLOCKTIMEVERIFY` (BIP-65) and `0xc2` for `OP_CHECKSEQUENCEVERIFY` (BIP-112), neither appears as the first byte of a standard scriptPubKey. Condition data types (PUBKEY, PUBKEY_COMMIT, HASH256, HASH160, NUMERIC, SCHEME, SPEND_INDEX) are enforced; witness-only types SIGNATURE and PREIMAGE are forbidden in conditions.
+The prefix bytes `0xc1` and `0xc2` were chosen after rigorous collision analysis (see Security Considerations). They do not collide with any existing standard scriptPubKey first byte (P2PKH `0x76`, P2SH `0xa9`, witness v0 `0x00`, witness v1 `0x51`, OP_RETURN `0x6a`), any witness version opcode (`0x00`-`0x60`), or any data push prefix (`0x01`-`0x4e`). While `0xc1` is the opcode for `OP_CHECKLOCKTIMEVERIFY` (BIP-65) and `0xc2` for `OP_CHECKSEQUENCEVERIFY` (BIP-112), neither appears as the first byte of a standard scriptPubKey. Condition data types (PUBKEY_COMMIT, HASH256, HASH160, NUMERIC, SCHEME, SPEND_INDEX) are enforced; witness-only types PUBKEY, SIGNATURE, and PREIMAGE are forbidden in conditions — raw public keys are revealed only at spend time in the witness.
 
 **Input (unlocking side):**
 
@@ -281,7 +281,7 @@ Every field in a Ladder Script witness or conditions structure has one of the fo
 
 | Code | Name | Min Size | Max Size | Context | Description |
 |------|------|----------|----------|---------|-------------|
-| `0x01` | PUBKEY | 1 | 2,048 | Both | Public key (compressed 33B, x-only 32B, or post-quantum up to 1,793B) |
+| `0x01` | PUBKEY | 1 | 2,048 | Witness only | Public key (compressed 33B, x-only 32B, or post-quantum up to 1,793B). Forbidden in conditions; use PUBKEY_COMMIT instead. |
 | `0x02` | PUBKEY_COMMIT | 32 | 32 | Both | SHA-256 commitment to a public key (for commit-reveal PQ migration) |
 | `0x03` | HASH256 | 32 | 32 | Both | SHA-256 hash digest |
 | `0x04` | HASH160 | 20 | 20 | Both | RIPEMD160(SHA256()) hash digest |
@@ -387,7 +387,7 @@ The Programmable Logic Controller family brings industrial automation concepts t
 | `0x0651` | SEQUENCER | NUMERIC(current_step) + NUMERIC(total_steps) | Step sequencer. SATISFIED when current_step < total_steps. Total must be non-zero. |
 | `0x0661` | ONE_SHOT | HASH256(id) + NUMERIC(window) [+ NUMERIC(state)] | One-shot activation window. SATISFIED when state is zero (not yet fired) or absent. Once fired, permanently unsatisfied. |
 | `0x0671` | RATE_LIMIT | NUMERIC(max_per_window) + NUMERIC(window_blocks) + NUMERIC(current_count) | Rate limiter. SATISFIED when current_count < max_per_window. |
-| `0x0681` | COSIGN | HASH256(conditions_hash) | Co-spend contact. SATISFIED when another input in the same transaction has rung conditions whose serialised hash matches conditions_hash. The evaluator skips the current input index when scanning. |
+| `0x0681` | COSIGN | HASH256(conditions_hash) | Co-spend constraint. SATISFIED when another input in the same transaction has rung conditions whose serialised hash matches conditions_hash. The evaluator skips the current input index when scanning. |
 
 ### Coil Types
 

@@ -56,7 +56,7 @@ Every byte in a Ladder Script witness belongs to one of nine declared data types
 
 | Data Type | Code | Size (bytes) | Purpose |
 |-----------|------|-------------|---------|
-| PUBKEY | 0x01 | 1--2048 | Public key (compressed, x-only, or post-quantum) |
+| PUBKEY | 0x01 | 1--2048 | Public key (witness only; conditions use PUBKEY_COMMIT) |
 | PUBKEY_COMMIT | 0x02 | 32 | SHA-256 commitment to a public key |
 | HASH256 | 0x03 | 32 | SHA-256 hash |
 | HASH160 | 0x04 | 20 | RIPEMD160(SHA-256) hash |
@@ -82,13 +82,17 @@ This makes Ladder Script programs amenable to static analysis. The set of condit
 
 ### 2.4 Block Type Families
 
-Block types are organised into nine families:
+Block types are organised into nine families, each occupying a dedicated range in the `uint16_t` block type space:
 
-- **Signature, Timelock, and Hash** (0x0001--0x02FF): Core spending primitives covering the functionality of existing Bitcoin Script.
-- **Covenant and Anchor** (0x0300--0x05FF): Output constraints, L2 integration, and protocol-specific UTXO tagging.
-- **Recursion and PLC** (0x0400--0x06FF): State machines, self-referential covenants, and advanced flow control.
-- **Compound** (0x0700--0x07FF): Multi-condition blocks combining signature, timelock, and hash checks in a single block (HTLC, PTLC, TIMELOCKED_SIG, CLTV_SIG, HASH_SIG, TIMELOCKED_MULTISIG).
-- **Governance** (0x0800--0x08FF): Transaction-level constraints (epoch gates, weight limits, input/output count bounds, relative value ratios, Merkle accumulator proofs).
+- **Signature** (0x0001--0x00FF): Identity verification — SIG, MULTISIG, ADAPTOR_SIG, MUSIG_THRESHOLD, KEY_REF_SIG.
+- **Timelock** (0x0100--0x01FF): Temporal constraints — CSV, CSV_TIME, CLTV, CLTV_TIME.
+- **Hash** (0x0200--0x02FF): Knowledge proofs — HASH_PREIMAGE, HASH160_PREIMAGE, TAGGED_HASH.
+- **Covenant** (0x0300--0x03FF): Output constraints — CTV, VAULT_LOCK, AMOUNT_LOCK.
+- **Recursion** (0x0400--0x04FF): Self-referential covenants — RECURSE_SAME, RECURSE_MODIFIED, RECURSE_UNTIL, RECURSE_COUNT, RECURSE_SPLIT, RECURSE_DECAY.
+- **Anchor** (0x0500--0x05FF): L2 integration and protocol-specific UTXO tagging — ANCHOR, ANCHOR_CHANNEL, ANCHOR_POOL, ANCHOR_RESERVE, ANCHOR_SEAL, ANCHOR_ORACLE.
+- **PLC** (0x0600--0x06FF): State machines and flow control — hysteresis, timers, latches, counters, comparators, sequencers, rate limiters, co-spend.
+- **Compound** (0x0700--0x07FF): Multi-condition blocks combining signature, timelock, and hash checks in a single block — HTLC, PTLC, TIMELOCKED_SIG, CLTV_SIG, HASH_SIG, TIMELOCKED_MULTISIG.
+- **Governance** (0x0800--0x08FF): Transaction-level constraints — epoch gates, weight limits, input/output count bounds, relative value ratios, Merkle accumulator proofs.
 
 All block types are activated as a single deployment and are standard upon activation.
 
@@ -104,7 +108,7 @@ Unknown block types return `UNKNOWN_BLOCK_TYPE` during evaluation, which is trea
 
 Ladder Script transactions use **transaction version 4** (`RUNG_TX_VERSION = 4`). This cleanly separates Ladder Script transactions from legacy (version 1) and SegWit/Taproot (version 2) transactions at the protocol level.
 
-**Output (locking side):** The scriptPubKey of a version 4 output begins with the prefix byte `0xc1`, followed by the serialised `RungConditions` structure. Conditions contain only the "lock" data types (PUBKEY, PUBKEY_COMMIT, HASH256, HASH160, NUMERIC, SCHEME, SPEND_INDEX). Witness-only types (SIGNATURE, PREIMAGE) are prohibited in conditions.
+**Output (locking side):** The scriptPubKey of a version 4 output begins with the prefix byte `0xc1`, followed by the serialised `RungConditions` structure. Conditions contain only the "lock" data types (PUBKEY_COMMIT, HASH256, HASH160, NUMERIC, SCHEME, SPEND_INDEX). Witness-only types (PUBKEY, SIGNATURE, PREIMAGE) are prohibited in conditions — raw public keys are revealed only at spend time in the witness, where they are verified against their PUBKEY_COMMIT.
 
 **Witness (unlocking side):** The witness for a version 4 input contains a serialised `LadderWitness` structure. This provides the "key" data (signatures, preimages) that satisfies the conditions in the spent output.
 
@@ -112,7 +116,7 @@ Ladder Script transactions use **transaction version 4** (`RUNG_TX_VERSION = 4`)
 
 ### 3.2 Wire Format
 
-The witness wire format (v3) is:
+The witness wire format (serialization encoding version 3) is:
 
 ```
 [n_rungs: varint]
@@ -170,9 +174,9 @@ Each coil specifies an attestation mode that determines how signatures are provi
 |------|------|----------|
 | INLINE | 0x01 | Signatures are provided inline in the witness fields |
 | AGGREGATE | 0x02 | A single block-level aggregate signature covers multiple spends |
-| DEFERRED | 0x03 | Template hash attestation (fail-closed; not yet active) |
+| DEFERRED | 0x03 | Template hash attestation (fail-closed; not yet active — verification always returns false) |
 
-The AGGREGATE mode uses an `AggregateProof` structure containing pubkey commitments and a single aggregate signature. The DEFERRED mode always returns false, following the fail-closed principle for features not yet activated.
+The AGGREGATE mode uses an `AggregateProof` structure containing pubkey commitments and a single aggregate signature. The DEFERRED mode always returns false (any output using DEFERRED attestation is unspendable), following the fail-closed principle for features not yet activated.
 
 ---
 
@@ -184,7 +188,7 @@ Ladder Script defines 53 block types across nine families. Each family occupies 
 
 Identity verification blocks.
 
-**SIG (0x0001):** Single signature verification. Fields: PUBKEY (or PUBKEY_COMMIT + PUBKEY), SIGNATURE, optional SCHEME. Routes to Schnorr (64--65 byte sig), ECDSA (8--72 byte sig), or post-quantum verification based on the SCHEME field or signature size.
+**SIG (0x0001):** Single signature verification. Conditions: PUBKEY_COMMIT (32-byte SHA-256 commitment), optional SCHEME. Witness: PUBKEY, SIGNATURE. Routes to Schnorr (64--65 byte sig), ECDSA (8--72 byte sig), or post-quantum verification based on the SCHEME field or signature size.
 
 **MULTISIG (0x0002):** M-of-N threshold signature. Fields: NUMERIC (threshold M), N PUBKEY fields, M SIGNATURE fields. All M signatures must verify against distinct pubkeys from the set.
 
@@ -264,7 +268,7 @@ State machine blocks inspired directly by PLC programming elements. These blocks
 
 **RATE_LIMIT (0x0671):** Spend rate limiter. Enforces a minimum interval between spends of the UTXO chain.
 
-**COSIGN (0x0681):** Co-spend contact. Requires that another input in the same transaction has a matching conditions hash, enabling multi-UTXO coordination without pre-signed transactions.
+**COSIGN (0x0681):** Co-spend constraint. Requires that another input in the same transaction has a matching conditions hash, enabling multi-UTXO coordination without pre-signed transactions.
 
 ### 4.7 Anchor Family (0x0500--0x05FF)
 
@@ -286,7 +290,7 @@ Anchor blocks always evaluate to SATISFIED. They serve as typed, validated metad
 
 ### 4.8 Compound Family (0x0700--0x07FF)
 
-Multi-condition blocks that combine signature, timelock, and hash checks into a single block with a single header. Compound blocks save 8--16 wire bytes compared to using separate blocks.
+Multi-condition blocks that combine signature, timelock, and hash checks into a single block with a single header. Compound blocks eliminate per-block headers and field counts for the merged conditions.
 
 **TIMELOCKED_SIG (0x0701):** Signature plus relative timelock in a single block. Replaces SIG + CSV.
 
@@ -322,7 +326,7 @@ Transaction-level constraint blocks that enforce structural properties of the sp
 
 ### 5.1 Scheme-Based Routing
 
-Ladder Script's SCHEME data type enables transparent routing to post-quantum signature verification without any changes to the block type system. A SIG block containing a SCHEME field set to FALCON512 (0x10), FALCON1024 (0x11), DILITHIUM3 (0x12), or SPHINCS_SHA (0x13) is automatically routed to the post-quantum verifier.
+Ladder Script's SCHEME data type (code `0x09`, 1 byte) enables transparent routing to post-quantum signature verification without any changes to the block type system. A SIG block containing a SCHEME field set to FALCON512 (`0x10`), FALCON1024 (`0x11`), DILITHIUM3 (`0x12`), or SPHINCS_SHA (`0x13`) is automatically routed to the post-quantum verifier. When the SCHEME field is omitted, the scheme is inferred from the signature size (64--65 bytes → Schnorr, 8--72 bytes → ECDSA).
 
 Supported schemes:
 
@@ -469,7 +473,7 @@ The inclusion of the conditions hash in the sighash means that a signature is bo
 
 ### 9.4 Inversion Safety
 
-The `ApplyInversion` function preserves ERROR status: inverting an ERROR still returns ERROR. This prevents an attacker from using the inversion flag to bypass error detection. The `UNKNOWN_BLOCK_TYPE` result, when inverted, becomes SATISFIED. This is intentional, as it allows conditions to express "NOT (some future condition)" patterns while maintaining forward compatibility.
+The `ApplyInversion` function preserves ERROR status: inverting an ERROR still returns ERROR. This prevents an attacker from using the inversion flag to bypass error detection. The `UNKNOWN_BLOCK_TYPE` result, when inverted, becomes SATISFIED. This is intentional: it enables conditions to express "NOT (some future condition)" patterns while maintaining forward compatibility. The rationale is that "the absence of an unknown condition" is a reasonable thing to assert, and conditions containing unknown block types are policy-non-standard (not relayed or mined by default), preventing exploitation before the block type is activated via soft fork.
 
 ### 9.5 Merge Validation
 

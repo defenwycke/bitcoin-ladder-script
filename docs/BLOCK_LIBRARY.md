@@ -2319,7 +2319,7 @@ protection on hot wallets.
 
 **Family:** PLC
 
-**Purpose:** Co-spend contact. Requires that another input in the same transaction
+**Purpose:** Co-spend constraint. Requires that another input in the same transaction
 has a spent output whose scriptPubKey hashes to the committed value. This creates a
 dependency between inputs, ensuring two specific UTXOs are spent atomically together.
 

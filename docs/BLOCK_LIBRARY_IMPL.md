@@ -746,7 +746,7 @@ All block type enum values. Unrecognised blocks return `UNSATISFIED` — forward
 | `0x0651` | `SEQUENCER` | PLC | Ordered multi-stage execution |
 | `0x0661` | `ONE_SHOT` | PLC | Single-activation monoflop |
 | `0x0671` | `RATE_LIMIT` | PLC | Per-block spending rate limiter |
-| `0x0681` | `COSIGN` | PLC | Co-spend contact (cross-input scriptPubKey hash) |
+| `0x0681` | `COSIGN` | PLC | Co-spend constraint (cross-input scriptPubKey hash) |
 | `0x0701` | `TIMELOCKED_SIG` | Compound | SIG + CSV combined |
 | `0x0702` | `HTLC` | Compound | Hash + Timelock + Sig (Lightning HTLC) |
 | `0x0703` | `HASH_SIG` | Compound | HASH_PREIMAGE + SIG combined |

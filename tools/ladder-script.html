@@ -841,7 +841,7 @@
             <div class="family-name">Compound</div>
             <div class="family-range">0x0700-0x07FF</div>
           </div>
-          <div class="family-desc">Multi-block patterns collapsed into single blocks. Eliminates duplicate block headers, saving 8-16 bytes per compound block on the wire.</div>
+          <div class="family-desc">Multi-block patterns collapsed into single blocks. Eliminates per-block headers and field counts for merged conditions.</div>
           <div class="family-blocks">
             <span class="family-block">TIMELOCKED_SIG</span>
             <span class="family-block">HTLC</span>
@@ -1006,7 +1006,7 @@
         </div>
         <div class="use-case">
           <div class="use-case-title">Post-Quantum Migration</div>
-          <div class="use-case-desc">PUBKEY_COMMIT reduces PQ keys (897–2,420 bytes) to 32-byte UTXO commitments. COSIGN lets a single PQ anchor guard unlimited classical UTXOs. Four PQ schemes: FALCON-512, FALCON-1024, Dilithium3, SPHINCS+.</div>
+          <div class="use-case-desc">PUBKEY_COMMIT reduces PQ keys (897–1,952 bytes) to 32-byte UTXO commitments. COSIGN lets a single PQ anchor guard unlimited classical UTXOs. Four PQ schemes: FALCON-512, FALCON-1024, Dilithium3, SPHINCS+.</div>
           <div class="use-case-tag">Signature Family</div>
         </div>
         <div class="use-case">
@@ -1041,7 +1041,7 @@
         </div>
         <div class="use-case">
           <div class="use-case-title">Compound Wire Savings</div>
-          <div class="use-case-desc">HTLC collapses hash + timelock + signature into one block, saving 16 bytes per instance. TIMELOCKED_SIG, HASH_SIG, CLTV_SIG each save 8 bytes. PTLC collapses adaptor sig + CSV for payment channels. TIMELOCKED_MULTISIG collapses M-of-N + CSV for penalty branches and vault recovery.</div>
+          <div class="use-case-desc">HTLC collapses hash + timelock + signature into one block, eliminating redundant headers. TIMELOCKED_SIG, HASH_SIG, CLTV_SIG each merge two blocks into one. PTLC collapses adaptor sig + CSV for payment channels. TIMELOCKED_MULTISIG collapses M-of-N + CSV for penalty branches and vault recovery.</div>
           <div class="use-case-tag">Compound Family</div>
         </div>
         <div class="use-case">
