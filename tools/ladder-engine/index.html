@@ -7070,7 +7070,36 @@ function SignetPanel({ rungs, setRungs, txOutputs, txInputs, locktime, onViewAsL
     const hex = signedHex || txHex;
     if (!hex) { setError('No transaction to broadcast.'); return; }
     const data = await apiCall('/api/ladder/broadcast', { hex });
-    if (data) { setTxid(data.txid); addToHistory('broadcast', data.txid, rungs.length + ' rungs'); setTimeout(refreshWallet, 2000); refreshMempool(); }
+    if (data) {
+      setTxid(data.txid);
+      addToHistory('broadcast', data.txid, rungs.length + ' rungs');
+      setTimeout(refreshWallet, 2000);
+      refreshMempool();
+      // Save to localStorage so SPEND tab can find this output
+      if (signingData) {
+        const totalSats = txOutputs.reduce((s, o) => s + (parseInt(o.amount) || 0), 0);
+        const record = {
+          txid: data.txid, vout: 0, timestamp: Date.now(),
+          scheme: signingData.scheme || fundScheme || 'SCHNORR',
+          amount: totalSats,
+          walletKey: signingData.walletKey ? { pubkey: signingData.walletKey.pubkey, privkey: signingData.walletKey.privkey } : null,
+          conditionKeys: (signingData.keypairs || []).map(kp => ({
+            pubkey: kp.pubkey, privkey: kp.privkey,
+            pubkey_commit: kp.pubkey_commit || '',
+            scheme: signingData.scheme || 'SCHNORR',
+          })),
+          changeKey: null,
+          preimages: [],
+          rungs: rungs.map(r => ({ label: r.label, blocks: r.blocks.map(b => ({ type: b.type, values: { ...b.values } })) })),
+        };
+        try {
+          const existing = JSON.parse(localStorage.getItem('ghost_rung_keys') || '[]');
+          existing.push(record);
+          if (existing.length > 50) existing.splice(0, existing.length - 50);
+          localStorage.setItem('ghost_rung_keys', JSON.stringify(existing));
+        } catch (e) { /* localStorage full or unavailable */ }
+      }
+    }
   };
   const handleDecode = async () => {
     if (!decodeHex.trim()) { setError('Enter hex to decode.'); return; }
@@ -7807,6 +7836,432 @@ function SignetPanel({ rungs, setRungs, txOutputs, txInputs, locktime, onViewAsL
           </table>
         ) : <div style={{ color: 'var(--text-dim)', fontSize: 11 }}>{online ? 'Loading...' : 'Unavailable'}</div>}
       </div>
+
+      {/* ERROR */}
+      {error && (
+        <div style={{ ...sty.section, borderColor: 'var(--red)', background: 'var(--red-dim)', position: 'sticky', bottom: 0 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ color: 'var(--red-bright)', fontSize: 11 }}>{error}</div>
+            <button style={{ ...sty.btn, ...sty.btnDefault, padding: '2px 8px', fontSize: 9, marginRight: 0 }} onClick={() => setError(null)}>DISMISS</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SPEND PANEL — spend existing RUNG outputs
+// ═══════════════════════════════════════════════════════════════
+
+function SpendPanel({ onViewAsLadder }) {
+  const [status, setStatus] = useState(null);
+  const [loading, setLoading] = useState('');
+  const [error, setError] = useState(null);
+  const [records, setRecords] = useState([]);
+  const [selectedRecord, setSelectedRecord] = useState(null);
+  const [lookupTxid, setLookupTxid] = useState('');
+  const [lookupVout, setLookupVout] = useState(0);
+  const [destAddress, setDestAddress] = useState('');
+  const [spendLog, setSpendLog] = useState([]);
+  const [spending, setSpending] = useState(false);
+  const [spendResult, setSpendResult] = useState(null);
+  const [copiedKey, setCopiedKey] = useState(null);
+
+  const copyWithFeedback = (text, key) => {
+    navigator.clipboard.writeText(text);
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey(prev => prev === key ? null : prev), 1500);
+  };
+
+  const apiCall = async (endpoint, body, silent) => {
+    if (!silent) setError(null);
+    setLoading(endpoint);
+    try {
+      const opts = body !== undefined
+        ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+        : {};
+      const r = await fetch(SIGNET_API + endpoint, opts);
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.detail?.rpc_error || data.detail || `HTTP ${r.status}`);
+      return data;
+    } catch (e) {
+      const msg = e.message === 'Failed to fetch'
+        ? 'Signet proxy unreachable — check that the ladder-script proxy is running on ' + SIGNET_API
+        : e.message;
+      if (!silent) setError(msg);
+      return null;
+    } finally {
+      setLoading('');
+    }
+  };
+
+  useEffect(() => {
+    fetch(SIGNET_API + '/api/ladder/status')
+      .then(r => r.json())
+      .then(d => setStatus(d))
+      .catch(() => setStatus({ status: 'offline' }));
+    loadRecords();
+  }, []);
+
+  // URL param support
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const txid = params.get('spend_txid');
+    if (txid) {
+      setLookupTxid(txid);
+      setLookupVout(parseInt(params.get('spend_vout')) || 0);
+    }
+  }, []);
+
+  const loadRecords = () => {
+    try {
+      const recs = JSON.parse(localStorage.getItem('ghost_rung_keys') || '[]');
+      setRecords(recs.reverse()); // newest first
+    } catch { setRecords([]); }
+  };
+
+  const selectRecord = (rec) => {
+    setSelectedRecord(rec);
+    setSpendResult(null);
+    setSpendLog([]);
+    setError(null);
+  };
+
+  const handleLookupTxid = () => {
+    const txid = lookupTxid.trim();
+    if (!txid || txid.length !== 64) { setError('Enter a valid 64-character TXID.'); return; }
+    // Check localStorage first
+    const stored = records.find(r => r.txid === txid);
+    if (stored) {
+      selectRecord(stored);
+    } else {
+      selectRecord({
+        txid, vout: lookupVout, conditionKeys: [], preimages: [], rungs: [],
+        scheme: 'SCHNORR', walletKey: null, amount: 0,
+      });
+    }
+  };
+
+  const handleSpend = async () => {
+    if (spending || !selectedRecord) return;
+    setSpending(true);
+    setSpendResult(null);
+    const log = [];
+    const addLog = (msg, cls) => { log.push({ msg, cls: cls || 'info', time: new Date().toLocaleTimeString() }); setSpendLog([...log]); };
+
+    try {
+      const rec = selectedRecord;
+      const txid = rec.txid;
+      const vout = rec.vout || 0;
+      const scheme = rec.scheme || 'SCHNORR';
+      const isPQ = scheme !== 'SCHNORR' && scheme !== 'ECDSA';
+
+      // 1. Check proxy
+      addLog('Connecting to proxy...');
+      const st = await apiCall('/api/ladder/status', undefined, true);
+      if (!st || st.status !== 'ok') throw new Error('Signet proxy is offline.');
+      addLog('Connected. Height: ' + st.blocks, 'ok');
+
+      // 2. Look up the UTXO
+      addLog('Looking up UTXO ' + txid.substring(0, 16) + ':' + vout + '...');
+      const txData = await apiCall('/api/ladder/tx/' + txid, undefined, true);
+      if (!txData) throw new Error('Transaction not found on chain.');
+      const utxoOutput = txData.vout[vout];
+      if (!utxoOutput) throw new Error('Output index ' + vout + ' not found in transaction.');
+      const utxoAmountSats = Math.round(utxoOutput.value * 1e8);
+      addLog('Found UTXO: ' + utxoAmountSats.toLocaleString() + ' sats', 'ok');
+
+      // 3. Get destination address
+      let dest = destAddress.trim();
+      if (!dest) {
+        addLog('Generating destination address...');
+        const addrData = await apiCall('/api/ladder/wallet/address', undefined, true);
+        if (!addrData) throw new Error('Failed to generate address.');
+        dest = addrData.address;
+        setDestAddress(dest);
+        addLog('Destination: ' + dest, 'ok');
+      }
+
+      // 4. Build the spending transaction
+      const feeSats = isPQ ? 3000 : 1000;
+      const sendSats = utxoAmountSats - feeSats;
+      if (sendSats < 546) throw new Error('UTXO too small to spend after fees (' + utxoAmountSats + ' sats, fee ' + feeSats + ')');
+
+      addLog('Building spending tx (' + sendSats.toLocaleString() + ' sats after ' + feeSats + ' fee)...');
+
+      const conditionKey = rec.conditionKeys && rec.conditionKeys[0];
+      if (!conditionKey) throw new Error('No signing key found. This record has no stored keys.');
+
+      // Get a wallet key for the output condition
+      const walletKey = rec.walletKey || await apiCall('/api/ladder/wallet/keypair', undefined, true);
+      if (!walletKey) throw new Error('Failed to generate wallet keypair.');
+
+      const spendInputs = [{ txid, vout }];
+      const spendAmount = sendSats / 1e8;
+
+      // Create the spending tx (output gets a simple SIG condition)
+      const createPayload = {
+        inputs: spendInputs,
+        outputs: [{
+          amount: spendAmount,
+          conditions: [{ blocks: [{ type: 'SIG', fields: [{ type: 'PUBKEY', hex: walletKey.pubkey }] }] }],
+        }],
+      };
+      const createResult = await apiCall('/api/ladder/create', createPayload, true);
+      if (!createResult || !createResult.hex) throw new Error('Failed to create spending tx.');
+      addLog('Unsigned tx created (' + (createResult.hex.length / 2) + ' bytes)', 'ok');
+
+      // 5. Sign
+      addLog('Signing with ' + scheme + ' key...');
+      const signPayload = isPQ ? {
+        hex: createResult.hex,
+        signers: [{ input: 0, pq_privkey: conditionKey.privkey, pq_pubkey: conditionKey.pubkey, scheme }],
+        spent_outputs: [{ amount: utxoOutput.value, scriptPubKey: utxoOutput.scriptPubKey?.hex || '' }],
+      } : {
+        hex: createResult.hex,
+        signers: [{ input: 0, privkey: conditionKey.privkey }],
+        spent_outputs: [{ amount: utxoOutput.value, scriptPubKey: utxoOutput.scriptPubKey?.hex || '' }],
+      };
+      const signResult = await apiCall('/api/ladder/sign', signPayload, true);
+      if (!signResult || !signResult.hex) throw new Error('Signing failed.' + (signResult?.error ? ' ' + signResult.error : ''));
+      addLog('Signature applied (' + scheme + ')', 'ok');
+
+      // 6. Broadcast
+      addLog('Broadcasting...');
+      const bcResult = await apiCall('/api/ladder/broadcast', { hex: signResult.hex }, true);
+      if (!bcResult || !bcResult.txid) throw new Error('Broadcast failed.' + (bcResult?.error ? ' ' + bcResult.error : ''));
+      addLog('Broadcast! TXID: ' + bcResult.txid, 'ok');
+
+      // 7. Mine confirmation
+      addLog('Mining confirmation block...');
+      await apiCall('/api/ladder/mine', { blocks: 1 }, true);
+      addLog('Confirmed!', 'ok');
+
+      setSpendResult({ txid: bcResult.txid, amount: sendSats, scheme, destAddress: dest });
+
+    } catch (e) {
+      addLog('ERROR: ' + e.message, 'err');
+    } finally {
+      setSpending(false);
+    }
+  };
+
+  const handleClearRecord = (txid) => {
+    try {
+      const recs = JSON.parse(localStorage.getItem('ghost_rung_keys') || '[]');
+      const filtered = recs.filter(r => r.txid !== txid);
+      localStorage.setItem('ghost_rung_keys', JSON.stringify(filtered));
+      loadRecords();
+      if (selectedRecord && selectedRecord.txid === txid) setSelectedRecord(null);
+    } catch {}
+  };
+
+  const online = status && status.status === 'ok';
+
+  const sty = {
+    section: { marginBottom: 12, padding: '12px 16px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', fontSize: 12 },
+    label: { fontSize: 10, fontWeight: 600, letterSpacing: 1.5, color: 'var(--text-dim)', textTransform: 'uppercase', marginBottom: 6 },
+    input: { width: '100%', padding: '6px 8px', background: 'var(--bg-primary)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontSize: 12, outline: 'none', marginBottom: 8 },
+    btn: { padding: '6px 12px', fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 600, letterSpacing: 0.5, cursor: 'pointer', border: '1px solid', transition: 'all 0.15s', marginRight: 6 },
+    btnPrimary: { color: 'var(--amber)', background: 'var(--amber-glow)', borderColor: 'var(--amber-dim)' },
+    btnCyan: { color: 'var(--cyan)', background: 'rgba(0,200,255,0.08)', borderColor: 'rgba(0,200,255,0.3)' },
+    btnGreen: { color: 'var(--green-bright)', background: 'var(--green-dim)', borderColor: 'var(--green)' },
+    btnDefault: { color: 'var(--text-secondary)', background: 'var(--bg-tertiary)', borderColor: 'var(--border)' },
+    btnDanger: { color: 'var(--red-bright)', background: 'var(--red-dim)', borderColor: 'var(--red)' },
+    divider: { borderTop: '1px solid var(--border)', margin: '20px 0', opacity: 0.5 },
+    sectionTitle: { fontSize: 11, fontWeight: 700, letterSpacing: 2, color: 'var(--cyan)', textTransform: 'uppercase', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 },
+    dot: (color) => ({ width: 8, height: 8, borderRadius: '50%', background: color, display: 'inline-block', marginRight: 8, boxShadow: `0 0 6px ${color}` }),
+  };
+
+  const formatSats = (sats) => { if (sats == null) return '—'; return parseInt(sats).toLocaleString() + ' sats'; };
+
+  return (
+    <div style={{ padding: '20px 32px', overflow: 'auto', flex: 1, maxWidth: 1008, margin: '0 auto', width: '100%' }}>
+      {/* STATUS BAR */}
+      <div style={{ ...sty.section, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={sty.dot(online ? '#00d4ff' : '#c43030')} />
+          <span style={{ color: online ? 'var(--cyan)' : 'var(--red-bright)', fontSize: 13, fontWeight: 600, letterSpacing: 1 }}>
+            {online ? 'SPEND RUNG OUTPUTS' : 'SIGNET OFFLINE'}
+          </span>
+          {online && status.blocks && <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>Block {status.blocks}</span>}
+        </div>
+        <button style={{ ...sty.btn, ...sty.btnDefault }} onClick={loadRecords}>REFRESH RECORDS</button>
+      </div>
+
+      {!online && (
+        <div style={{ ...sty.section, borderColor: 'var(--amber-dim)', background: 'var(--amber-glow)' }}>
+          <div style={{ color: 'var(--amber)', fontSize: 11, lineHeight: 1.6 }}>
+            Signet proxy is not available. Spending RUNG outputs requires a ghost-core node. Create and send RUNG outputs first using the SEND tab.
+          </div>
+        </div>
+      )}
+
+      {/* SAVED RECORDS */}
+      <div style={sty.divider} />
+      <div style={sty.sectionTitle}>SAVED RUNG OUTPUTS</div>
+      <div style={{ ...sty.section, maxHeight: 300, overflow: 'auto' }}>
+        {records.length === 0 ? (
+          <div style={{ color: 'var(--text-dim)', fontSize: 11, lineHeight: 1.6 }}>
+            No saved RUNG outputs. Use the <strong style={{ color: 'var(--green-bright)' }}>SEND</strong> tab to create and fund a Ladder Script output first. After broadcasting, the output and its signing keys will appear here.
+          </div>
+        ) : records.map((rec, i) => {
+          const isSelected = selectedRecord && selectedRecord.txid === rec.txid;
+          const scheme = rec.scheme || 'SCHNORR';
+          const isPQ = scheme !== 'SCHNORR' && scheme !== 'ECDSA';
+          return (
+            <div key={rec.txid + '-' + i} onClick={() => selectRecord(rec)} style={{
+              padding: '10px 14px', marginBottom: 6, cursor: 'pointer', border: '1px solid',
+              borderColor: isSelected ? 'var(--cyan)' : 'var(--border)',
+              background: isSelected ? 'rgba(0,212,255,0.05)' : 'var(--bg-primary)',
+              transition: 'all 0.15s', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8,
+            }}>
+              <div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--amber)', marginBottom: 2 }}>
+                  {rec.txid.substring(0, 16)}...{rec.txid.substring(rec.txid.length - 8)}
+                </div>
+                <div style={{ display: 'flex', gap: 12, fontSize: 10, color: 'var(--text-dim)' }}>
+                  <span style={{ color: isPQ ? 'var(--cyan)' : 'var(--text-secondary)' }}>{scheme}</span>
+                  <span style={{ color: 'var(--green-bright)' }}>{formatSats(rec.amount)}</span>
+                  <span>{new Date(rec.timestamp).toLocaleDateString()}</span>
+                  <span>{(rec.rungs || []).length} rung(s)</span>
+                  <span>{(rec.conditionKeys || []).length} key(s)</span>
+                </div>
+              </div>
+              <button style={{ ...sty.btn, ...sty.btnDanger, padding: '2px 8px', fontSize: 9, marginRight: 0 }} onClick={(e) => { e.stopPropagation(); handleClearRecord(rec.txid); }} title="Remove from saved records">DEL</button>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* MANUAL TXID LOOKUP */}
+      <div style={sty.section}>
+        <div style={sty.label}>MANUAL TXID LOOKUP</div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+          <input style={{ ...sty.input, flex: 1, marginBottom: 0 }} placeholder="64-hex txid of RUNG output" value={lookupTxid} onChange={e => setLookupTxid(e.target.value)} />
+          <input style={{ ...sty.input, width: 60, marginBottom: 0, textAlign: 'center' }} type="number" placeholder="vout" value={lookupVout} onChange={e => setLookupVout(parseInt(e.target.value) || 0)} min={0} />
+          <button style={{ ...sty.btn, ...sty.btnCyan, whiteSpace: 'nowrap' }} onClick={handleLookupTxid} disabled={!online}>LOAD</button>
+        </div>
+        <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 4 }}>If the TXID exists in saved records, keys will be auto-loaded. Otherwise you can enter keys manually.</div>
+      </div>
+
+      {/* SELECTED OUTPUT — SPEND PANEL */}
+      {selectedRecord && (<>
+        <div style={sty.divider} />
+        <div style={sty.sectionTitle}>SPEND: {selectedRecord.txid.substring(0, 20)}...</div>
+
+        {/* Conditions */}
+        <div style={sty.section}>
+          <div style={sty.label}>CONDITIONS</div>
+          {selectedRecord.rungs && selectedRecord.rungs.length > 0 ? (
+            selectedRecord.rungs.map((rung, ri) => (
+              <div key={ri} style={{ marginBottom: 8, padding: '8px 10px', background: 'var(--bg-primary)', border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--amber)', letterSpacing: 1, marginBottom: 4 }}>
+                  RUNG {ri}{rung.label ? ': ' + rung.label : ''}
+                </div>
+                {(rung.blocks || []).map((b, bi) => (
+                  <div key={bi} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)', padding: '2px 0' }}>
+                    <span style={{ fontSize: 9, fontWeight: 600, color: 'var(--white)', background: 'var(--bg-tertiary)', padding: '1px 6px', letterSpacing: 0.5 }}>{b.type}</span>
+                    {Object.entries(b.values || {}).filter(([k, v]) => v && k !== 'scheme').map(([k, v]) => (
+                      <span key={k}><span style={{ color: 'var(--text-dim)' }}>{k}:</span> {typeof v === 'string' && v.length > 24 ? v.substring(0, 10) + '...' + v.substring(v.length - 6) : String(v)}</span>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            ))
+          ) : (
+            <div style={{ fontSize: 10, color: 'var(--text-dim)' }}>No condition data stored. The proxy will decode the UTXO on spend.</div>
+          )}
+        </div>
+
+        {/* Signing keys */}
+        <div style={sty.section}>
+          <div style={sty.label}>SIGNING KEYS</div>
+          {selectedRecord.conditionKeys && selectedRecord.conditionKeys.length > 0 ? (
+            selectedRecord.conditionKeys.map((kp, i) => (
+              <div key={i} style={{ padding: '6px 10px', marginBottom: 4, background: 'var(--bg-primary)', border: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-dim)' }}>KEY {i + 1} — {kp.scheme || selectedRecord.scheme || 'SCHNORR'}</div>
+                  <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={kp.pubkey}>
+                    PUB: {kp.pubkey ? kp.pubkey.substring(0, 24) + '...' : '(none)'}
+                  </div>
+                  <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--green-bright)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={kp.privkey}>
+                    PRIV: {kp.privkey ? kp.privkey.substring(0, 20) + '...' : '(none)'}
+                  </div>
+                </div>
+                <button style={{ ...sty.btn, ...sty.btnDefault, padding: '3px 8px', fontSize: 9, marginRight: 0, ...(copiedKey === 'key-'+i ? { color: 'var(--green-bright)', borderColor: 'var(--green-bright)' } : {}) }} onClick={() => copyWithFeedback(kp.privkey, 'key-'+i)}>{copiedKey === 'key-'+i ? '✓' : 'COPY'}</button>
+              </div>
+            ))
+          ) : (
+            <div style={{ fontSize: 10, color: 'var(--amber)' }}>No stored keys. This output cannot be spent without the signing keys.</div>
+          )}
+        </div>
+
+        {/* Destination */}
+        <div style={sty.section}>
+          <div style={sty.label}>DESTINATION ADDRESS</div>
+          <input style={sty.input} placeholder="Leave blank to auto-generate a new wallet address" value={destAddress} onChange={e => setDestAddress(e.target.value)} />
+          <div style={{ fontSize: 10, color: 'var(--text-dim)' }}>The spent funds will be sent to this address. If left blank, a new wallet address is generated automatically.</div>
+        </div>
+
+        {/* SPEND BUTTON */}
+        <div style={{ ...sty.section, padding: '16px 20px', textAlign: 'center' }}>
+          <button style={{
+            padding: '12px 32px', fontSize: 14, fontFamily: 'var(--font-mono)', fontWeight: 700, letterSpacing: 1,
+            cursor: spending ? 'wait' : 'pointer', border: '2px solid',
+            borderColor: spending ? 'var(--border)' : 'var(--cyan)',
+            color: spending ? 'var(--text-dim)' : 'var(--cyan)',
+            background: spending ? 'var(--bg-tertiary)' : 'rgba(0,212,255,0.08)',
+            transition: 'all 0.2s', width: '100%',
+          }} onClick={handleSpend} disabled={spending || !online || !selectedRecord.conditionKeys?.length}>
+            {spending ? 'SPENDING...' : 'SIGN & SPEND'}
+          </button>
+          {!selectedRecord.conditionKeys?.length && (
+            <div style={{ marginTop: 8, fontSize: 10, color: 'var(--amber)' }}>Cannot spend — no signing keys available for this output.</div>
+          )}
+        </div>
+
+        {/* LOG */}
+        {spendLog.length > 0 && (
+          <div style={{ ...sty.section, maxHeight: 260, overflow: 'auto', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+            <div style={sty.label}>SPEND LOG</div>
+            {spendLog.map((entry, i) => (
+              <div key={i} style={{
+                padding: '3px 0', borderBottom: '1px solid var(--border)',
+                color: entry.cls === 'ok' ? 'var(--green-bright)' : entry.cls === 'err' ? 'var(--red-bright)' : 'var(--text-secondary)',
+              }}>
+                <span style={{ color: 'var(--text-dim)', fontSize: 9, marginRight: 8 }}>{entry.time}</span>
+                {entry.msg}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* RESULT */}
+        {spendResult && (
+          <div style={{ ...sty.section, borderColor: 'var(--green)', background: 'var(--green-dim)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <span style={{ color: 'var(--green-bright)', fontSize: 18 }}>&#x2713;</span>
+              <span style={{ color: 'var(--green-bright)', fontSize: 13, fontWeight: 700, letterSpacing: 1 }}>SPEND CONFIRMED</span>
+            </div>
+            <div style={{ display: 'grid', gap: 6 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontSize: 10, color: 'var(--text-dim)' }}>TXID</div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--amber)', wordBreak: 'break-all' }}>{spendResult.txid}</div>
+                </div>
+                <button style={{ ...sty.btn, ...sty.btnDefault, padding: '3px 8px', fontSize: 9, marginRight: 0, ...(copiedKey === 'spend-txid' ? { color: 'var(--green-bright)', borderColor: 'var(--green-bright)' } : {}) }} onClick={() => copyWithFeedback(spendResult.txid, 'spend-txid')}>{copiedKey === 'spend-txid' ? '✓ COPIED' : 'COPY'}</button>
+              </div>
+              <div style={{ display: 'flex', gap: 24, fontSize: 11 }}>
+                <div><span style={{ color: 'var(--text-dim)' }}>Amount: </span><span style={{ color: 'var(--green-bright)' }}>{spendResult.amount.toLocaleString()} sats</span></div>
+                <div><span style={{ color: 'var(--text-dim)' }}>Scheme: </span><span style={{ color: 'var(--cyan)' }}>{spendResult.scheme}</span></div>
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text-dim)' }}>Destination: <span style={{ color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>{spendResult.destAddress}</span></div>
+            </div>
+          </div>
+        )}
+      </>)}
 
       {/* ERROR */}
       {error && (
@@ -8952,7 +9407,8 @@ ${ladderRows.map(r => `
           <button className={`mode-tab ${mode === 'build' ? 'active' : ''}`} onClick={() => setMode('build')} title={showTooltips ? 'Construct ladder rungs — drag blocks from palette' : undefined}>BUILD</button>
           <button className={`mode-tab ${mode === 'simulate' ? 'active' : ''}`} onClick={() => setMode('simulate')} title={showTooltips ? 'Test rungs — click rung labels to step through, Alt+click blocks to force' : undefined}>SIMULATE</button>
           <button className={`mode-tab ${mode === 'convert' ? 'active' : ''}`} onClick={() => setMode('convert')} title={showTooltips ? 'Paste RPC JSON output to convert back to ladder diagram' : undefined}>CONVERT</button>
-          <button className={`mode-tab ${mode === 'signet' ? 'active' : ''}`} onClick={() => setMode('signet')} title={showTooltips ? 'Submit transactions to Ghost signet via RPC proxy' : undefined} style={mode === 'signet' ? { color: 'var(--green-bright)', borderBottomColor: 'var(--green-bright)' } : {}}>SIGNET</button>
+          <button className={`mode-tab ${mode === 'send' ? 'active' : ''}`} onClick={() => setMode('send')} title={showTooltips ? 'Create and fund Ladder Script outputs on signet' : undefined} style={mode === 'send' ? { color: 'var(--green-bright)', borderBottomColor: 'var(--green-bright)' } : {}}>SEND</button>
+          <button className={`mode-tab ${mode === 'spend' ? 'active' : ''}`} onClick={() => setMode('spend')} title={showTooltips ? 'Spend existing RUNG outputs on signet' : undefined} style={mode === 'spend' ? { color: 'var(--cyan)', borderBottomColor: 'var(--cyan)' } : {}}>SPEND</button>
           <button className={`mode-tab ${mode === 'watch' ? 'active' : ''}`} onClick={() => setMode('watch')} title={showTooltips ? 'Live mode — block height auto-increments' : undefined}>WATCH</button>
         </div>
         <div className="header-actions">
@@ -8969,9 +9425,13 @@ ${ladderRows.map(r => `
           <div style={{ gridColumn: '1 / -1', overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
             <ConvertPanel onViewAsLadder={handleViewAsLadder} />
           </div>
-        ) : mode === 'signet' ? (
+        ) : mode === 'send' ? (
           <div style={{ gridColumn: '1 / -1', overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
             <SignetPanel rungs={rungs} setRungs={setRungs} txOutputs={txOutputs} txInputs={txInputs} locktime={locktime} onViewAsLadder={handleViewAsLadder} setTxInputs={setTxInputs} setTxOutputs={setTxOutputs} />
+          </div>
+        ) : mode === 'spend' ? (
+          <div style={{ gridColumn: '1 / -1', overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
+            <SpendPanel onViewAsLadder={handleViewAsLadder} />
           </div>
         ) : <>
         {isSimMode ? (
@@ -9175,7 +9635,7 @@ ${ladderRows.map(r => `
       </div>
 
       {/* Register Table — hidden in signet and watch modes for more space */}
-      {mode !== 'signet' && mode !== 'watch' && <RegisterTable rungs={rungs} simMode={isSimMode} simState={fullSimState} />}
+      {mode !== 'send' && mode !== 'spend' && mode !== 'watch' && <RegisterTable rungs={rungs} simMode={isSimMode} simState={fullSimState} />}
 
       {/* Status Bar */}
       <div className="status-bar">
