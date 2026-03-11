@@ -5,139 +5,104 @@
 
 ---
 
-## CRITICAL FIXES (Must fix before BIP submission)
+## FIXED (commit `6c98ba6`)
 
-### C-1: PUBKEY incorrectly listed as allowed in conditions
-- **File:** `docs/whitepaper.md` section 3.1, line 107
-- **Problem:** Claims conditions allow "PUBKEY, PUBKEY_COMMIT, HASH256, HASH160, NUMERIC, SCHEME, SPEND_INDEX"
-- **Reality:** `conditions.cpp` `IsConditionDataType()` returns FALSE for PUBKEY. Only PUBKEY_COMMIT is allowed.
-- **Fix:** Remove PUBKEY from the list. Conditions allow 6 types, not 7.
-- **Why it matters:** A reviewer checking code against spec will immediately see the contradiction.
-
-### C-2: BIP document missing required sections
-- **File:** `docs/bip-ladder-script.md`
-- **Missing sections:**
-  - **Backwards Compatibility** — how do non-upgraded nodes handle v4 txs? (mentioned in passing as "anyone-can-spend" but needs explicit section)
-  - **Activation Mechanism** — BIP-9? BIP-341? New mechanism? Completely unspecified.
-  - **Reference Implementation** — must point to the C++ code
-  - **References** — needs to cite BIP-68, BIP-65/112, BIP-341, IEC 61131-3, NIST PQ standards
-  - **Authors/Copyright** — standard BIP requirement
-- **Why it matters:** BIP-1/BIP-2 template compliance is expected. Without these sections the BIP won't be taken seriously.
-
-### C-3: Block count error — "54 Blocks" should be "53 Blocks"
-- **File:** `tools/docs/index.html` line 299
-- **Problem:** States "All 54 Blocks" — actual count is 53
-- **Fix:** Change to "All 53 Blocks"
-
-### C-4: HTLC type code wrong in adaptor-sig-swap doc
-- **File:** `tools/docs/txs/adaptor-sig-swap.html` line 265
-- **Problem:** States `HTLC (0x0030)` — actual code is `0x0702`
-- **Fix:** Change to `HTLC (0x0702)`
-
-### C-5: 12 block types have ZERO test coverage
-- **Compound family (6 blocks):** TIMELOCKED_SIG, HTLC, HASH_SIG, PTLC, CLTV_SIG, TIMELOCKED_MULTISIG
-- **Governance family (6 blocks):** EPOCH_GATE, WEIGHT_LIMIT, INPUT_COUNT, OUTPUT_COUNT, RELATIVE_VALUE, ACCUMULATOR
-- **Why it matters:** A reviewer will ask "where is the test for HTLC?" and there is none. Every block type needs at least one positive and one negative test.
+- **C-1** FIXED: PUBKEY removed from allowed condition types in whitepaper + BIP (only PUBKEY_COMMIT)
+- **C-3** FIXED: "54 Blocks" → "53 Blocks" in docs index
+- **C-4** FIXED: HTLC type code 0x0030 → 0x0702 in adaptor-sig-swap doc
+- **M-1** FIXED: Whitepaper section 2.4 now lists all 9 families with correct ranges
+- **M-3** FIXED: Wire format "(v3)" clarified as "serialization encoding version 3"
+- **M-4** FIXED: SIG block now clearly separates conditions (PUBKEY_COMMIT, SCHEME) vs witness (PUBKEY, SIGNATURE)
+- **m-1** FIXED: "Co-spend contact" → "constraint" in types.h, BIP, whitepaper, block-docs, docs index (all instances)
+- **m-2** FIXED: types.h header comment now lists all 9 families with block type names
+- **m-4** FIXED: SCHEME field codes documented in whitepaper section 5.1
+- **m-9** FIXED: DEFERRED attestation explicitly documented as always-false
+- **m-10** FIXED: UNKNOWN_BLOCK_TYPE inversion rationale explained
+- **Extra** FIXED: PQ key size range 2,420 → 1,952 bytes on info page
+- **Extra** FIXED: Compound block "8-16 bytes savings" claims replaced with precise description
+- **Extra** FIXED: BIP data types table PUBKEY context corrected to "Witness only"
+- **Extra** FIXED: PUBKEY marked "(witness only; conditions use PUBKEY_COMMIT)" in whitepaper data types table
 
 ---
 
-## MAJOR FIXES (Should fix before BIP submission)
+## REMAINING — BEFORE BIP SUBMISSION
 
-### M-1: Block family organization contradicts itself
-- **File:** `docs/whitepaper.md` section 2.4 vs section 4
-- **Problem:** Section 2.4 groups into "5 logical groups" with overlapping ranges; section 4 correctly lists 9 distinct families with separate ranges. Section 2.4 is wrong/confusing.
-- **Fix:** Rewrite section 2.4 to align with section 4's structure.
+### Critical
 
-### M-2: Activation mechanism completely unspecified
-- Both BIP and whitepaper say "all block types activated as a single deployment" but never specify HOW.
-- Need: activation rule, how non-upgraded nodes behave, deployment parameters.
+#### C-2: BIP missing activation mechanism
+- The BIP has Backwards Compatibility, Rationale, Reference Implementation, Security Considerations, and Copyright sections (agent initially reported these missing — they exist).
+- **Still missing:** Explicit activation mechanism. "All block types activate as a single deployment" but doesn't specify BIP-9 signaling, height-locked, flag day, or other mechanism.
+- **Action:** Add a "Deployment" subsection to the BIP specifying the soft fork activation method.
 
-### M-3: Wire format "v3" label is confusing
-- **File:** `docs/whitepaper.md` section 3.2, line 115
-- **Problem:** "The witness wire format (v3)" could be confused with SegWit v3 or tx version 3.
-- **Fix:** Clarify: "The internal serialization format (encoding version 3)"
+#### C-5: 12 block types have ZERO functional test coverage
+- **Compound family (6):** TIMELOCKED_SIG, HTLC, HASH_SIG, PTLC, CLTV_SIG, TIMELOCKED_MULTISIG
+- **Governance family (6):** EPOCH_GATE, WEIGHT_LIMIT, INPUT_COUNT, OUTPUT_COUNT, RELATIVE_VALUE, ACCUMULATOR
+- **Action:** Write at least 1 positive + 1 negative test per block type in `rung_basic.py`.
 
-### M-4: SIG block field documentation unclear
-- **File:** `docs/whitepaper.md` section 4.1
-- **Problem:** "Fields: PUBKEY (or PUBKEY_COMMIT + PUBKEY), SIGNATURE, optional SCHEME" doesn't distinguish conditions vs witness.
-- **Fix:** Split clearly: "Conditions: PUBKEY_COMMIT, optional SCHEME. Witness: PUBKEY, SIGNATURE."
+### Major
 
-### M-5: 31 field naming mismatches between Engine and Builder
-- The Engine and Builder use different JSON field names for the same blocks. Examples:
+#### M-5: 31 field naming mismatches between Engine and Builder
+- Engine and Builder use different JSON field names for the same blocks:
   - VAULT_LOCK: Engine=`delay`, Builder=`hot_delay`
   - RECURSE_MODIFIED: Engine=`block_idx`, Builder=`mutation_block_idx`
   - HTLC: Engine=`hash,pubkey,blocks`, Builder=`sender_key,receiver_key,hash_lock,csv_delay`
   - AMOUNT_LOCK: Engine=`min,max`, Builder=`min_sats,max_sats`
 - **Impact:** JSON exported from Builder won't work in Engine and vice versa.
-- **Fix:** Unify on one naming scheme. The Engine names should be canonical since they match createrungtx RPC.
+- **Action:** Unify on Engine names (they match createrungtx RPC).
 
-### M-6: Missing serialization round-trip tests
-- No tests verify serialize -> deserialize -> equals original for any block type.
-- A reviewer will expect this as basic infrastructure.
+#### M-6: Missing serialization round-trip tests
+- No tests verify serialize → deserialize → equals original for any block type.
+- **Action:** Add round-trip tests for all 53 block types.
 
-### M-7: No tests for consensus-critical size limits
+#### M-7: No tests for consensus-critical size limits
 - MAX_LADDER_WITNESS_SIZE, MAX_RUNGS, MAX_BLOCKS_PER_RUNG, MAX_FIELDS_PER_BLOCK — none tested at boundaries.
+- **Action:** Add boundary tests.
 
-### M-8: Post-quantum schemes undertested
+#### M-8: Post-quantum schemes undertested
 - Only FALCON-512 has a round-trip test.
 - FALCON-1024, DILITHIUM3, SPHINCS_SHA have zero tests.
+- **Action:** Add round-trip tests for each PQ scheme.
 
-### M-9: RECURSE_SAME carry-forward bug was found and fixed but has no regression test
-- The scheme-field mismatch in `snapshotApplyKeys` was a real consensus bug.
-- Need a dedicated test that verifies carry-forward with all field types present.
+#### M-9: RECURSE_SAME carry-forward needs regression test
+- The scheme-field mismatch in `snapshotApplyKeys` was a real consensus bug (fixed this session).
+- **Action:** Add a dedicated test verifying carry-forward with all field types present.
 
----
+### Minor
 
-## MINOR FIXES (Nice to have before submission)
+#### m-3: Whitepaper security section lacks explicit threat model
+- Section 9 doesn't explicitly name the attack classes defended against.
 
-### m-1: "Co-spend contact" typo in types.h and propagated docs
-- COSIGN comment says "contact" — should be "constraint"
-- **Files:** `src/rung/types.h` line 97, docs/index.html
+#### m-5: Micro-header table not fully specified in whitepaper
+- Readers must consult serialize.cpp. The BIP has the full table but the whitepaper doesn't.
 
-### m-2: types.h header comment lists 7 families, code has 9
-- Missing: Compound (0x0700-0x07FF) and Governance (0x0800-0x08FF) from the header comment.
-
-### m-3: Whitepaper security section lacks explicit threat model
-- Section 9 is strong but doesn't state what attacks Ladder Script defends against.
-
-### m-4: SCHEME field codes not documented in spec
-- SCHNORR=0x01, ECDSA=0x02, FALCON512=0x10, etc. are in types.h but not in the BIP/whitepaper.
-
-### m-5: Micro-header table and implicit field layouts not fully specified in BIP
-- Readers must consult serialize.cpp. The BIP should be self-contained.
-
-### m-6: Whitepaper references section is sparse
+#### m-6: Whitepaper references section is sparse
 - Should cite: BIP-68, BIP-65/112, BIP-341, IEC 61131-3, NIST FIPS PQ standards.
+- (The BIP already cites these — whitepaper could reference the BIP.)
 
-### m-7: No worked examples in BIP or whitepaper
-- Neither document includes actual serialized transaction examples. Reviewers expect these.
+#### m-7: No worked examples in whitepaper
+- Neither doc includes actual serialized transaction hex examples.
+- (The tx example docs on the website serve this purpose but aren't in the BIP.)
 
-### m-8: Post-quantum key size claims unverified in codebase
-- 1,793B FALCON-1024, 1,952B DILITHIUM3, 64B SPHINCS+ claimed but not documented in repo.
-- May be correct per NIST but should have source citations.
-
-### m-9: DEFERRED attestation mode behavior unclear
-- Described as "fail-closed; not yet active" — should explicitly state it always returns false.
-
-### m-10: Inversion of UNKNOWN_BLOCK_TYPE rationale not explained
-- Inverting unknown -> SATISFIED is correct for forward compatibility but the reasoning should be stated.
+#### m-8: Post-quantum key size claims lack source citations
+- 1,793B FALCON-1024, 1,952B DILITHIUM3, 32B SPHINCS+ — correct per NIST FIPS 204/206 but should cite standards.
 
 ---
 
 ## WHAT PASSED CLEAN
 
-- **All 53 block-docs pages** — type codes, field definitions, evaluation logic, wire format all verified correct against C++ source. Zero discrepancies.
-- **All 6 transaction example docs** — block types, witness structures, scriptPubKey prefixes, byte counts, verification grids, dates, and navigation links all accurate (except C-4 above).
+- **All 53 block-docs pages** — type codes, field definitions, evaluation logic, wire format all verified correct. Zero discrepancies.
+- **All 6 transaction example docs** — block types, witness structures, scriptPubKey prefixes, byte counts, verification grids, dates, nav links all accurate.
 - **Engine block type coverage** — all 53 types present with correct type codes.
 - **Engine signature scheme mapping** — SCHNORR=0x01 through SPHINCS_SHA=0x13 correct.
 - **Engine data type size constraints** — match types.h field specifications.
-- **Engine preset examples** — valid block combinations (fee-gated covenant preset fixed this session).
+- **Ladder-script info page** — 53 block types verified, all families correct, all codes correct. Only 1 error found (PQ key size, now fixed).
+- **BIP document** — has Rationale, Backwards Compatibility, Reference Implementation, Security Considerations, Test Vectors, Copyright sections. Wire format fully specified with micro-header table. Much more complete than initially reported.
 
 ---
 
 ## TEST COVERAGE GAPS — FULL LIST
 
-### Blocks with zero coverage (12):
+### Blocks with zero functional test coverage (12):
 TIMELOCKED_SIG, HTLC, HASH_SIG, PTLC, CLTV_SIG, TIMELOCKED_MULTISIG,
 EPOCH_GATE, WEIGHT_LIMIT, INPUT_COUNT, OUTPUT_COUNT, RELATIVE_VALUE, ACCUMULATOR
 
@@ -159,16 +124,17 @@ EPOCH_GATE, WEIGHT_LIMIT, INPUT_COUNT, OUTPUT_COUNT, RELATIVE_VALUE, ACCUMULATOR
 ### Missing infrastructure tests:
 - Serialization round-trips for all 53 block types
 - 0xC1 prefix and tx version 4 identification
-- v3 vs v4 witness format differentiation
 - MAX_RUNGS, MAX_BLOCKS_PER_RUNG boundary enforcement
 
 ---
 
 ## PRIORITY ORDER FOR BIP SUBMISSION
 
-1. Fix C-1 through C-5 (spec errors + zero-coverage blocks)
-2. Fix M-1 through M-4 (spec structure + clarity)
-3. Fix M-5 (field naming unification)
-4. Write tests for M-6 through M-9 (serialization, limits, PQ, regression)
-5. Add BIP template sections (C-2)
-6. Address minor items as time permits
+1. Write tests for C-5 (12 untested block types — ~24 tests minimum)
+2. Add activation mechanism to BIP (C-2)
+3. Unify Engine/Builder field names (M-5)
+4. Write round-trip serialization tests (M-6)
+5. Write size limit boundary tests (M-7)
+6. Write PQ scheme tests (M-8)
+7. Add RECURSE_SAME regression test (M-9)
+8. Address minor items as time permits
