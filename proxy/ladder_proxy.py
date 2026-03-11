@@ -358,7 +358,8 @@ async def broadcast(request: Request):
     if not tx_hex:
         raise HTTPException(400, "Missing 'hex' field.")
 
-    txid = await rpc_call("sendrawtransaction", [tx_hex])
+    # maxfeerate=0 disables fee-rate check — this is signet/regtest, not mainnet
+    txid = await rpc_call("sendrawtransaction", [tx_hex, 0])
     return {"txid": txid}
 
 
