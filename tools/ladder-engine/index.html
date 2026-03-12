@@ -6733,18 +6733,15 @@ const EXAMPLES = [
   },
   {
     title: 'QUANTUM VAULT + CHILDREN',
-    desc: 'PQ-secured parent vault that splits into child UTXOs via RECURSE_SPLIT. Each child inherits Falcon-512 protection. Counter tracks remaining splits.',
-    tags: [['FALCON', 'sig'], ['REC_SPLIT', 'rec'], ['REC_MOD', 'rec'], ['CTR_DN', 'plc'], ['CTV', 'cov']],
+    desc: 'PQ-secured parent vault that splits into child UTXOs via RECURSE_SPLIT. Each child inherits Falcon-512 protection. Emergency multisig and CSV timeout sweep.',
+    tags: [['FALCON', 'sig'], ['REC_SPLIT', 'rec'], ['AMT_LOCK', 'cov'], ['MULTISIG', 'sig']],
     rungs: [
       { label: 'PQ_SPLIT', blocks: [
         { type: 'SIG', values: { pubkey: FAKE_PQ.falcon1, scheme: 'FALCON512' } },
-        { type: 'COUNTER_DOWN', values: { pubkey: FAKE_PQ.falcon2, count: '8' } },
-        { type: 'RECURSE_SPLIT', values: { max_splits: '2', min_sats: '10000' } },
-        { type: 'RECURSE_MODIFIED', values: { max_depth: '10', block_idx: '1', param_idx: '1', delta: '-1' } },
+        { type: 'RECURSE_SPLIT', values: { max_splits: '3', min_sats: '10000' } },
       ], output: { name: 'PARENT', type: 'standard' } },
       { label: 'PQ_CHILD', blocks: [
         { type: 'SIG', values: { pubkey: FAKE_PQ.falcon1, scheme: 'FALCON512' } },
-        { type: 'COUNTER_DOWN', values: { pubkey: FAKE_PQ.falcon2, count: '0' } },
         { type: 'AMOUNT_LOCK', values: { min: '5000', max: '1000000' } },
       ], output: { name: 'CHILD_LEAF', type: 'standard' } },
       { label: 'PQ_EMERG', blocks: [
