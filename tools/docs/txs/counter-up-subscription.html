@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Counter-Up Subscription — Transaction Examples</title>
+<link rel="stylesheet" href="../blocks/style.css">
+<style>
+  .tx-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 20px 0; }
+  .tx-box { background: #0a0a0a; border: 1px solid #242424; border-radius: 10px; padding: 18px; }
+  .tx-box-label { font-size: 10px; font-family: 'Geist Mono', 'IBM Plex Mono', monospace; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 12px; color: #888; }
+  .tx-box-label .arrow-right { color: #f7931a; }
+  .tx-box-label .arrow-left { color: #00d4ff; }
+  .tx-field { margin-bottom: 10px; }
+  .tx-field:last-child { margin-bottom: 0; }
+  .tx-field-name { font-size: 11px; font-family: 'Geist Mono', 'IBM Plex Mono', monospace; color: #666; margin-bottom: 2px; }
+  .tx-field-value { font-size: 13px; font-family: 'Geist Mono', 'IBM Plex Mono', monospace; color: #ccc; word-break: break-all; }
+  .tx-field-value.txid { font-size: 11px; color: #f7931a; }
+  .tx-field-value.highlight { color: #00ff88; }
+
+  .witness-bar { display: flex; height: 28px; border-radius: 6px; overflow: hidden; margin: 16px 0 8px; }
+  .witness-seg { display: flex; align-items: center; justify-content: center; font-size: 9px; font-family: 'Geist Mono', 'IBM Plex Mono', monospace; font-weight: 600; color: #050505; }
+  .witness-seg.w-scheme { background: #00d4ff; }
+  .witness-seg.w-pubkey { background: #f7931a; }
+  .witness-seg.w-sig { background: #00ff88; }
+  .witness-seg.w-overhead { background: #4a4a4a; }
+  .witness-seg.w-counter { background: #a855f7; }
+  .witness-legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 4px; }
+  .witness-legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; font-family: 'Geist Mono', 'IBM Plex Mono', monospace; color: #888; }
+  .witness-legend-dot { width: 9px; height: 9px; border-radius: 3px; }
+
+  .verify-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 16px 0; }
+  .verify-item { background: #0a0a0a; border: 1px solid rgba(0, 255, 136, 0.25); border-radius: 8px; padding: 14px; text-align: center; }
+  .verify-label { font-size: 10px; font-family: 'Geist Mono', 'IBM Plex Mono', monospace; color: #666; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px; }
+  .verify-value { font-size: 16px; font-family: 'Geist Mono', 'IBM Plex Mono', monospace; font-weight: 600; color: #00ff88; }
+  .verify-check { font-size: 11px; font-family: 'Geist Mono', 'IBM Plex Mono', monospace; color: #00ff88; margin-top: 4px; }
+
+  .scheme-badge { display: inline-block; font-size: 10px; font-family: 'Geist Mono', 'IBM Plex Mono', monospace; font-weight: 600; padding: 3px 10px; border-radius: 5px; letter-spacing: 0.5px; }
+  .scheme-badge.plc { background: rgba(168, 85, 247, 0.1); color: #a855f7; border: 1px solid rgba(168, 85, 247, 0.25); }
+
+  .counter-diagram { display: flex; flex-direction: column; align-items: center; gap: 8px; margin: 20px 0; font-family: 'Geist Mono', 'IBM Plex Mono', monospace; font-size: 11px; }
+  .counter-bar { display: flex; gap: 3px; align-items: center; }
+  .counter-cell { width: 28px; height: 28px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; }
+  .counter-cell.filled { background: rgba(168, 85, 247, 0.3); border: 1px solid #a855f7; color: #a855f7; }
+  .counter-cell.current { background: #a855f7; border: 1px solid #a855f7; color: #050505; }
+  .counter-cell.empty { background: #0a0a0a; border: 1px solid #242424; color: #444; }
+  .counter-label { font-size: 9px; color: #666; letter-spacing: 1px; text-transform: uppercase; margin-top: 4px; }
+  .counter-arrow { color: #a855f7; font-size: 18px; margin: 4px 0; }
+
+  .rung-diagram { display: flex; flex-direction: column; gap: 10px; margin: 16px 0; }
+  .rung-row-diagram { display: flex; align-items: center; gap: 8px; }
+  .rung-label { font-size: 10px; color: #666; letter-spacing: 1px; text-transform: uppercase; min-width: 60px; text-align: right; font-family: 'Geist Mono', 'IBM Plex Mono', monospace; }
+  .rung-blocks { display: flex; gap: 4px; }
+  .rung-block { font-size: 10px; font-family: 'Geist Mono', 'IBM Plex Mono', monospace; font-weight: 600; padding: 5px 10px; border-radius: 5px; }
+  .rung-block.sig { background: rgba(230, 168, 23, 0.15); color: #e6a817; border: 1px solid rgba(230, 168, 23, 0.3); }
+  .rung-block.plc { background: rgba(168, 85, 247, 0.15); color: #a855f7; border: 1px solid rgba(168, 85, 247, 0.3); }
+  .rung-block.cov { background: rgba(0, 212, 255, 0.15); color: #00d4ff; border: 1px solid rgba(0, 212, 255, 0.3); }
+  .rung-block.rec { background: rgba(230, 168, 23, 0.15); color: #e6a817; border: 1px solid rgba(230, 168, 23, 0.3); }
+  .rung-output { font-size: 10px; font-family: 'Geist Mono', 'IBM Plex Mono', monospace; color: #888; margin-left: 4px; }
+
+  .json-block { background: #141414; border: 1px solid #1a1a1a; border-radius: 10px; padding: 18px 22px; margin: 16px 0; overflow-x: auto; font-size: 12px; line-height: 1.6; }
+  .json-block pre { margin: 0; font-family: 'Geist Mono', 'IBM Plex Mono', monospace; color: #ccc; white-space: pre-wrap; word-break: break-all; }
+  .json-key { color: #00d4ff; }
+  .json-str { color: #00ff88; }
+  .json-num { color: #f7931a; }
+
+  @media (max-width: 640px) {
+    .tx-pair { grid-template-columns: 1fr; }
+    .verify-grid { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="doc-content">
+
+<div class="block-title-section">
+  <div class="block-type-code">TRANSACTION EXAMPLE &middot; PLC + RECURSION</div>
+  <h1 class="block-title">Counter-Up Subscription</h1>
+  <p class="block-subtitle">Recurring subscription covenant: a counter increments on each payment (max 24). The UTXO is amount-locked to a fixed payment size and auto-renews via <code>RECURSE_MODIFIED</code>. Three spend paths: PAY (increment counter), CANCEL (2-of-2 multisig), or EXPIRE (counter reaches target).</p>
+  <span class="scheme-badge plc" style="margin-top: 14px;">CTR_UP &middot; AMT_LOCK &middot; REC_MOD &middot; SIG</span>
+</div>
+
+<!-- Rung Diagram -->
+<div class="doc-section">
+  <div class="section-label">Rung Structure</div>
+  <p class="section-text">Three rungs provide three spend paths. The PAY rung enforces the subscription logic: a signature, a counter check, an amount lock, and a recursive mutation that increments the counter on each spend.</p>
+
+  <div class="rung-diagram">
+    <div class="rung-row-diagram">
+      <div class="rung-label">PAY</div>
+      <div class="rung-blocks">
+        <div class="rung-block sig">SIG</div>
+        <div class="rung-block plc">CTR_UP (0/24)</div>
+        <div class="rung-block cov">AMT_LOCK</div>
+        <div class="rung-block rec">REC_MOD (+1)</div>
+      </div>
+      <div class="rung-output">&rarr; PAYMENT</div>
+    </div>
+    <div class="rung-row-diagram">
+      <div class="rung-label">CANCEL</div>
+      <div class="rung-blocks">
+        <div class="rung-block sig">SIG (payer)</div>
+        <div class="rung-block sig">SIG (payee)</div>
+      </div>
+      <div class="rung-output">&rarr; CANCEL_SUB</div>
+    </div>
+    <div class="rung-row-diagram">
+      <div class="rung-label">EXPIRE</div>
+      <div class="rung-blocks">
+        <div class="rung-block plc">CTR_UP (24/24)</div>
+        <div class="rung-block sig">SIG</div>
+      </div>
+      <div class="rung-output">&rarr; SUB_END</div>
+    </div>
+  </div>
+</div>
+
+<!-- Counter Diagram -->
+<div class="doc-section">
+  <div class="section-label">Counter Progression</div>
+  <p class="section-text">Each PAY spend increments the counter by 1. The <code>COUNTER_UP</code> block is <span style="color: #00ff88;">SATISFIED</span> while <code>current &lt; target</code>. When the counter reaches the target (24), the PAY rung locks and the EXPIRE rung becomes active.</p>
+
+  <div class="counter-diagram">
+    <div class="counter-label">After funding (spend 0)</div>
+    <div class="counter-bar">
+      <div class="counter-cell current">0</div>
+      <div class="counter-cell empty">1</div>
+      <div class="counter-cell empty">2</div>
+      <div class="counter-cell empty">3</div>
+      <div class="counter-cell empty">&hellip;</div>
+      <div class="counter-cell empty">23</div>
+      <div class="counter-cell empty">24</div>
+    </div>
+    <div class="counter-arrow">&darr;</div>
+    <div class="counter-label">After first spend</div>
+    <div class="counter-bar">
+      <div class="counter-cell filled">0</div>
+      <div class="counter-cell current">1</div>
+      <div class="counter-cell empty">2</div>
+      <div class="counter-cell empty">3</div>
+      <div class="counter-cell empty">&hellip;</div>
+      <div class="counter-cell empty">23</div>
+      <div class="counter-cell empty">24</div>
+    </div>
+    <div class="counter-arrow">&darr;</div>
+    <div class="counter-label">After 24th spend (expired)</div>
+    <div class="counter-bar">
+      <div class="counter-cell filled">0</div>
+      <div class="counter-cell filled">1</div>
+      <div class="counter-cell filled">2</div>
+      <div class="counter-cell filled">3</div>
+      <div class="counter-cell filled">&hellip;</div>
+      <div class="counter-cell filled">23</div>
+      <div class="counter-cell current">24</div>
+    </div>
+    <div style="font-size: 10px; color: #a855f7; margin-top: 4px;">current = target &rarr; CTR_UP UNSATISFIED &rarr; PAY rung locked, EXPIRE rung active</div>
+  </div>
+</div>
+
+<!-- Transaction Pair -->
+<div class="doc-section">
+  <div class="section-label">Transactions</div>
+
+  <div class="tx-pair">
+    <div class="tx-box">
+      <div class="tx-box-label"><span class="arrow-right">&#9654;</span> Funding Transaction</div>
+      <div class="tx-field">
+        <div class="tx-field-name">TXID</div>
+        <div class="tx-field-value txid">d8b1e3c2a835ba90cfd8980ed8f96f3dde94de541d3b2c0a4bfbc630af951a0e</div>
+      </div>
+      <div class="tx-field">
+        <div class="tx-field-name">Version</div>
+        <div class="tx-field-value">4 (RUNG_TX)</div>
+      </div>
+      <div class="tx-field">
+        <div class="tx-field-name">Size</div>
+        <div class="tx-field-value">497 bytes &middot; 414 vB</div>
+      </div>
+      <div class="tx-field">
+        <div class="tx-field-name">Outputs</div>
+        <div class="tx-field-value">4 &mdash; PAY rung (26,000 sats), CANCEL (6,000), EXPIRE (5,750), change</div>
+      </div>
+      <div class="tx-field">
+        <div class="tx-field-name">PAY Rung</div>
+        <div class="tx-field-value">SIG + COUNTER_UP (0/24) + AMOUNT_LOCK (25k&ndash;25k) + RECURSE_MODIFIED</div>
+      </div>
+      <div class="tx-field">
+        <div class="tx-field-name">Confirmations</div>
+        <div class="tx-field-value highlight">1</div>
+      </div>
+    </div>
+
+    <div class="tx-box">
+      <div class="tx-box-label"><span class="arrow-left">&#9664;</span> Spending Transaction (Pay #1)</div>
+      <div class="tx-field">
+        <div class="tx-field-name">TXID</div>
+        <div class="tx-field-value txid">b1630b06dc2c618deeeab129163fc31a0edecc9b948558181afb4a157cf1bf63</div>
+      </div>
+      <div class="tx-field">
+        <div class="tx-field-name">Version</div>
+        <div class="tx-field-value">4 (RUNG_TX)</div>
+      </div>
+      <div class="tx-field">
+        <div class="tx-field-name">Size</div>
+        <div class="tx-field-value">276 bytes &middot; 189 vB</div>
+      </div>
+      <div class="tx-field">
+        <div class="tx-field-name">Outputs</div>
+        <div class="tx-field-value">1 carry-forward &mdash; 25,000 sats</div>
+      </div>
+      <div class="tx-field">
+        <div class="tx-field-name">Mutation</div>
+        <div class="tx-field-value">COUNTER_UP current: 0 &rarr; 1 (delta +1)</div>
+      </div>
+      <div class="tx-field">
+        <div class="tx-field-name">Confirmations</div>
+        <div class="tx-field-value highlight">1</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Verification -->
+<div class="doc-section">
+  <div class="section-label">Covenant Verification</div>
+  <p class="section-text">The spend transaction was verified against the PAY rung's conditions. The carry-forward output inherits all conditions with only the COUNTER_UP <code>current</code> field mutated.</p>
+
+  <div class="verify-grid">
+    <div class="verify-item">
+      <div class="verify-label">Input Amount</div>
+      <div class="verify-value">26,000 sats</div>
+      <div class="verify-check">PAY rung vout[0]</div>
+    </div>
+    <div class="verify-item">
+      <div class="verify-label">Output Amount</div>
+      <div class="verify-value">25,000 sats</div>
+      <div class="verify-check">AMOUNT_LOCK [25k, 25k] &check;</div>
+    </div>
+    <div class="verify-item">
+      <div class="verify-label">Fee</div>
+      <div class="verify-value">1,000 sats</div>
+      <div class="verify-check">26,000 &minus; 25,000</div>
+    </div>
+    <div class="verify-item">
+      <div class="verify-label">Counter</div>
+      <div class="verify-value">0 &rarr; 1</div>
+      <div class="verify-check">Incremented +1 &check;</div>
+    </div>
+    <div class="verify-item">
+      <div class="verify-label">Conditions</div>
+      <div class="verify-value">Inherited</div>
+      <div class="verify-check">Same pubkey commit</div>
+    </div>
+    <div class="verify-item">
+      <div class="verify-label">Recursion</div>
+      <div class="verify-value">RECURSE_MODIFIED</div>
+      <div class="verify-check">Only param_idx=1 mutated</div>
+    </div>
+  </div>
+</div>
+
+<!-- How It Works -->
+<div class="doc-section">
+  <div class="section-label">How Counter-Up Subscriptions Work</div>
+
+  <div class="eval-box">
+    <div class="eval-step">
+      <div class="eval-step-num">1.</div>
+      <div class="eval-step-text">Funding transaction creates 3 rung outputs. The PAY rung contains <span class="eval-keyword">SIG</span> + <span class="eval-keyword">COUNTER_UP</span> + <span class="eval-keyword">AMOUNT_LOCK</span> + <span class="eval-keyword">RECURSE_MODIFIED</span>. The counter starts at <code>current=0, target=24</code>.</div>
+    </div>
+    <div class="eval-step">
+      <div class="eval-step-num">2.</div>
+      <div class="eval-step-text">To make a payment, the PAY rung is spent. The evaluator verifies: (a) valid signature, (b) <code>current &lt; target</code> (counter not exhausted), (c) output amount within [min, max] range, and (d) carry-forward conditions match with <code>current</code> incremented by delta.</div>
+    </div>
+    <div class="eval-step">
+      <div class="eval-step-num">3.</div>
+      <div class="eval-step-text"><span class="eval-keyword">RECURSE_MODIFIED</span> enforces that the output conditions are identical to the input, except condition field at <code>param_idx=1</code> in <code>block_idx=1</code> (the counter's <code>current</code> value) is incremented by <code>delta=1</code>. This is verified at consensus.</div>
+    </div>
+    <div class="eval-step">
+      <div class="eval-step-num">4.</div>
+      <div class="eval-step-text"><span class="eval-keyword">AMOUNT_LOCK</span> constrains the output to exactly 25,000 sats (min=max=25000), ensuring each payment is a fixed amount. The fee comes from the 1,000 sat surplus funded above the lock.</div>
+    </div>
+    <div class="eval-step">
+      <div class="eval-step-num">5.</div>
+      <div class="eval-step-text">After 24 payments, <code>current = target = 24</code>. The COUNTER_UP block becomes <span class="eval-result-unsat">UNSATISFIED</span>, locking the PAY rung. The EXPIRE rung (which requires <code>current = 24</code>) becomes spendable. The CANCEL rung requires both parties' signatures and is always available.</div>
+    </div>
+  </div>
+</div>
+
+<!-- Use Cases -->
+<div class="doc-section">
+  <div class="section-label">Use Cases</div>
+  <table class="field-table">
+    <thead>
+      <tr><th>Application</th><th>Description</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="field-name">Streaming Payments</td>
+        <td>Fixed-amount recurring payments with a hard cap. Each spend releases exactly one payment's worth and re-encumbers the remainder with an incremented counter.</td>
+      </tr>
+      <tr>
+        <td class="field-name">Service Subscriptions</td>
+        <td>Pre-funded subscription where each period's payment requires only a signature. The counter tracks how many periods have been paid. Automatic expiry after the term.</td>
+      </tr>
+      <tr>
+        <td class="field-name">Rate-Limited Withdrawals</td>
+        <td>Treasury UTXO that allows one fixed-size withdrawal per period. The counter caps the total number of withdrawals.</td>
+      </tr>
+      <tr>
+        <td class="field-name">Milestone Payments</td>
+        <td>Contract that releases payments upon milestone completion (each counter increment). Both parties can cancel early via the 2-of-2 CANCEL rung.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Key Parameters -->
+<div class="doc-section">
+  <div class="section-label">Key Parameters</div>
+  <table class="field-table">
+    <thead>
+      <tr><th>Parameter</th><th>Value</th><th>Effect</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="field-name">current</td>
+        <td>0</td>
+        <td>Starting counter value &mdash; incremented by 1 on each PAY spend</td>
+      </tr>
+      <tr>
+        <td class="field-name">target</td>
+        <td>24</td>
+        <td>Maximum payments &mdash; PAY rung locks when current reaches target</td>
+      </tr>
+      <tr>
+        <td class="field-name">AMOUNT_LOCK</td>
+        <td>25,000 / 25,000</td>
+        <td>Fixed payment size &mdash; min = max enforces exact amount per spend</td>
+      </tr>
+      <tr>
+        <td class="field-name">delta</td>
+        <td>+1</td>
+        <td>RECURSE_MODIFIED mutation applied to counter on each spend</td>
+      </tr>
+      <tr>
+        <td class="field-name">block_idx / param_idx</td>
+        <td>1 / 1</td>
+        <td>Mutation target: COUNTER_UP block, <code>current</code> field (condition-field index)</td>
+      </tr>
+      <tr>
+        <td class="field-name">max_depth</td>
+        <td>10</td>
+        <td>Recursion depth limit (redundant here &mdash; counter reaches target at 24)</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Full JSON -->
+<div class="doc-section">
+  <div class="section-label">Funding Transaction JSON</div>
+  <div class="json-block">
+    <pre>{
+  <span class="json-key">"txid"</span>: <span class="json-str">"d8b1e3c2a835ba90cfd8980ed8f96f3dde94de541d3b2c0a4bfbc630af951a0e"</span>,
+  <span class="json-key">"hash"</span>: <span class="json-str">"8bd03224814de7c7e7f562465246464fc2d0677be762a62c1b7bb0944f0518db"</span>,
+  <span class="json-key">"version"</span>: <span class="json-num">4</span>,
+  <span class="json-key">"size"</span>: <span class="json-num">497</span>,
+  <span class="json-key">"vsize"</span>: <span class="json-num">414</span>,
+  <span class="json-key">"weight"</span>: <span class="json-num">1655</span>,
+  <span class="json-key">"locktime"</span>: <span class="json-num">0</span>,
+  <span class="json-key">"vin"</span>: [
+    {
+      <span class="json-key">"txid"</span>: <span class="json-str">"e9eb592de43879c2d21fbc13ce64dafed6db50667d02292a32006e9abb31885f"</span>,
+      <span class="json-key">"vout"</span>: <span class="json-num">0</span>,
+      <span class="json-key">"scriptSig"</span>: { <span class="json-key">"asm"</span>: <span class="json-str">""</span>, <span class="json-key">"hex"</span>: <span class="json-str">""</span> },
+      <span class="json-key">"txinwitness"</span>: [
+        <span class="json-str">"01010021033fdf80600cdf5009f3990e4c4c2a4af32f33ef3a1ab7fb18591203c665de9a4540b50c49222a0d6c1bc93328f300911217823703f66855e8576c9a373202ba1e51bfd6e00a0dd20c1633ca87114eb4626302701e3c16054050a1619218fe83750b0101010000"</span>
+      ],
+      <span class="json-key">"sequence"</span>: <span class="json-num">4294967294</span>
+    }
+  ],
+  <span class="json-key">"vout"</span>: [
+    {
+      <span class="json-key">"value"</span>: <span class="json-num">0.00026000</span>,
+      <span class="json-key">"n"</span>: <span class="json-num">0</span>,
+      <span class="json-key">"scriptPubKey"</span>: {
+        <span class="json-key">"type"</span>: <span class="json-str">"rung_conditions"</span>,
+        <span class="json-key">"desc"</span>: <span class="json-str">"PAY rung — SIG + COUNTER_UP(0/24) + AMOUNT_LOCK(25k) + RECURSE_MODIFIED"</span>
+      }
+    },
+    {
+      <span class="json-key">"value"</span>: <span class="json-num">0.00006000</span>,
+      <span class="json-key">"n"</span>: <span class="json-num">1</span>,
+      <span class="json-key">"scriptPubKey"</span>: {
+        <span class="json-key">"type"</span>: <span class="json-str">"rung_conditions"</span>,
+        <span class="json-key">"desc"</span>: <span class="json-str">"CANCEL rung — 2-of-2 SIG (payer + payee)"</span>
+      }
+    },
+    {
+      <span class="json-key">"value"</span>: <span class="json-num">0.00005750</span>,
+      <span class="json-key">"n"</span>: <span class="json-num">2</span>,
+      <span class="json-key">"scriptPubKey"</span>: {
+        <span class="json-key">"type"</span>: <span class="json-str">"rung_conditions"</span>,
+        <span class="json-key">"desc"</span>: <span class="json-str">"EXPIRE rung — COUNTER_UP(24/24) + SIG"</span>
+      }
+    },
+    {
+      <span class="json-key">"value"</span>: <span class="json-num">49.99960650</span>,
+      <span class="json-key">"n"</span>: <span class="json-num">3</span>,
+      <span class="json-key">"scriptPubKey"</span>: {
+        <span class="json-key">"type"</span>: <span class="json-str">"rung_conditions"</span>,
+        <span class="json-key">"desc"</span>: <span class="json-str">"Change output (SIG only)"</span>
+      }
+    }
+  ],
+  <span class="json-key">"blockhash"</span>: <span class="json-str">"09179df042fa8865b93803f50201c6631692c1c6ef948c1f98e84ad72d6c7123"</span>,
+  <span class="json-key">"confirmations"</span>: <span class="json-num">1</span>,
+  <span class="json-key">"time"</span>: <span class="json-num">1773354296</span>,
+  <span class="json-key">"blocktime"</span>: <span class="json-num">1773354296</span>
+}</pre>
+  </div>
+</div>
+
+<div class="doc-section">
+  <div class="section-label">Spending Transaction JSON (Payment #1)</div>
+  <div class="json-block">
+    <pre>{
+  <span class="json-key">"txid"</span>: <span class="json-str">"b1630b06dc2c618deeeab129163fc31a0edecc9b948558181afb4a157cf1bf63"</span>,
+  <span class="json-key">"hash"</span>: <span class="json-str">"c57942227baa32fc9fae2226270113aa4160e7eb33c86865444b28d59989cf03"</span>,
+  <span class="json-key">"version"</span>: <span class="json-num">4</span>,
+  <span class="json-key">"size"</span>: <span class="json-num">276</span>,
+  <span class="json-key">"vsize"</span>: <span class="json-num">189</span>,
+  <span class="json-key">"weight"</span>: <span class="json-num">753</span>,
+  <span class="json-key">"locktime"</span>: <span class="json-num">0</span>,
+  <span class="json-key">"vin"</span>: [
+    {
+      <span class="json-key">"txid"</span>: <span class="json-str">"d8b1e3c2a835ba90cfd8980ed8f96f3dde94de541d3b2c0a4bfbc630af951a0e"</span>,
+      <span class="json-key">"vout"</span>: <span class="json-num">0</span>,
+      <span class="json-key">"scriptSig"</span>: { <span class="json-key">"asm"</span>: <span class="json-str">""</span>, <span class="json-key">"hex"</span>: <span class="json-str">""</span> },
+      <span class="json-key">"txinwitness"</span>: [
+        <span class="json-str">"01040021033fdf80600cdf5009f3990e4c4c2a4af32f33ef3a1ab7fb18591203c665de9a454026f136af11beff7fa21c91329064bc673d2c573fae0c09433439f2fd35d5f122bce02835431029ece0e78e56b48ea6bd95b49ce8877bb120b96a0f9b51064d8c21000c000e000101010000"</span>
+      ],
+      <span class="json-key">"sequence"</span>: <span class="json-num">4294967294</span>
+    }
+  ],
+  <span class="json-key">"vout"</span>: [
+    {
+      <span class="json-key">"value"</span>: <span class="json-num">0.00025000</span>,
+      <span class="json-key">"n"</span>: <span class="json-num">0</span>,
+      <span class="json-key">"scriptPubKey"</span>: {
+        <span class="json-key">"type"</span>: <span class="json-str">"rung_conditions"</span>,
+        <span class="json-key">"desc"</span>: <span class="json-str">"Carry-forward — same conditions, counter incremented 0 → 1"</span>,
+        <span class="json-key">"address"</span>: <span class="json-str">"rung1qyzqpvnn3ttsl6lewrvuf5sgjvtu6cwjezu3zmlud7es29equ8yp2v4rqyssxq3q96x6d4945885cplz6vmtep4d3x6j5880pz9fhx44qw0s9sert98qsqggrqx0m2rplk5xzrsypq9qsqggqyyqzqgpqyqqq0fm22c"</span>
+      }
+    }
+  ],
+  <span class="json-key">"blockhash"</span>: <span class="json-str">"5a6ef88b03bc74064a806a17738251980d6a1df179ac4f29f1c283014a92e2ce"</span>,
+  <span class="json-key">"confirmations"</span>: <span class="json-num">1</span>,
+  <span class="json-key">"time"</span>: <span class="json-num">1773354328</span>,
+  <span class="json-key">"blocktime"</span>: <span class="json-num">1773354328</span>
+}</pre>
+  </div>
+</div>
+
+<!-- Nav -->
+<div class="doc-nav">
+  <span onclick="if(window.parent !== window) window.parent.location.hash='TX_INDEX'; else window.location.href='../index.html#TX_INDEX';">&#8592; All Transaction Examples</span>
+  <span></span>
+</div>
+
+</div>
+
+</body>
+</html>
