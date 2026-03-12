@@ -34,57 +34,67 @@
 - **Still missing:** Explicit activation mechanism. "All block types activate as a single deployment" but doesn't specify BIP-9 signaling, height-locked, flag day, or other mechanism.
 - **Action:** Add a "Deployment" subsection to the BIP specifying the soft fork activation method.
 
-#### C-5: 12 block types have ZERO functional test coverage
-- **Compound family (6):** TIMELOCKED_SIG, HTLC, HASH_SIG, PTLC, CLTV_SIG, TIMELOCKED_MULTISIG
-- **Governance family (6):** EPOCH_GATE, WEIGHT_LIMIT, INPUT_COUNT, OUTPUT_COUNT, RELATIVE_VALUE, ACCUMULATOR
-- **Action:** Write at least 1 positive + 1 negative test per block type in `rung_basic.py`.
+#### C-5: FIXED — 12 block types now have full test coverage
+- **C++ unit tests:** 16 new eval tests for compound family (TIMELOCKED_SIG, HTLC, HASH_SIG, PTLC, CLTV_SIG, TIMELOCKED_MULTISIG) — positive, negative (bad sig/preimage), and CSV/CLTV failure cases.
+- **Python functional tests (`rung_basic.py`):** 24 new tests — 1 positive + 1 negative per block type for all 6 compound and 6 governance types. PTLC covered via C++ eval tests (adaptor sig requires special test setup).
+- **Governance C++ eval tests:** Already existed (EPOCH_GATE, WEIGHT_LIMIT, INPUT_COUNT, OUTPUT_COUNT, RELATIVE_VALUE, ACCUMULATOR with positive + negative cases).
 
 ### Major
 
-#### M-5: 31 field naming mismatches between Engine and Builder
-- Engine and Builder use different JSON field names for the same blocks:
-  - VAULT_LOCK: Engine=`delay`, Builder=`hot_delay`
-  - RECURSE_MODIFIED: Engine=`block_idx`, Builder=`mutation_block_idx`
-  - HTLC: Engine=`hash,pubkey,blocks`, Builder=`sender_key,receiver_key,hash_lock,csv_delay`
-  - AMOUNT_LOCK: Engine=`min,max`, Builder=`min_sats,max_sats`
-- **Impact:** JSON exported from Builder won't work in Engine and vice versa.
-- **Action:** Unify on Engine names (they match createrungtx RPC).
+#### M-5: FIXED — Builder field names unified with Engine (commit `b41b28c`)
+- 34 field name changes across 19 block types in `ladder-script-builder.html`
+- Builder JSON now uses canonical Engine/RPC names throughout
 
 #### M-6: Missing serialization round-trip tests
 - No tests verify serialize → deserialize → equals original for any block type.
 - **Action:** Add round-trip tests for all 53 block types.
 
-#### M-7: No tests for consensus-critical size limits
-- MAX_LADDER_WITNESS_SIZE, MAX_RUNGS, MAX_BLOCKS_PER_RUNG, MAX_FIELDS_PER_BLOCK — none tested at boundaries.
-- **Action:** Add boundary tests.
+#### M-7: FIXED — Consensus-critical size limit boundary tests added
+- 13 new tests covering all 5 limits at exact boundary (pass) and boundary+1 (reject):
+  - MAX_RUNGS (16): at-limit roundtrip + policy pass, exceeded deserialization reject, exceeded policy reject
+  - MAX_BLOCKS_PER_RUNG (8): at-limit roundtrip + policy pass, exceeded deserialization reject, exceeded policy reject
+  - MAX_FIELDS_PER_BLOCK (16): at-limit roundtrip, exceeded deserialization reject
+  - MAX_LADDER_WITNESS_SIZE (100000): at-limit roundtrip, exceeded reject
+  - MAX_RELAYS (8): at-limit roundtrip + policy pass, exceeded policy reject
+  - Combined: all limits simultaneously at maximum (16 rungs × 8 blocks) roundtrip + policy pass
 
-#### M-8: Post-quantum schemes undertested
-- Only FALCON-512 has a round-trip test.
-- FALCON-1024, DILITHIUM3, SPHINCS_SHA have zero tests.
-- **Action:** Add round-trip tests for each PQ scheme.
+#### M-8: FIXED — Post-quantum scheme tests added for all 4 algorithms
+- 12 new C++ unit tests:
+  - Keygen → sign → verify → tamper round-trips for FALCON1024, DILITHIUM3, SPHINCS_SHA (3 tests)
+  - Cross-scheme rejection (FALCON512 sig verified under DILITHIUM3 → fail)
+  - Wrong-key rejection (same scheme, different keypair → fail)
+  - Wrong-message rejection (sign msg A, verify msg B → fail)
+  - PUBKEY_COMMIT with real keys for FALCON1024, DILITHIUM3, SPHINCS_SHA (3 tests)
+  - PUBKEY_COMMIT mismatch with DILITHIUM3 (wrong key → UNSATISFIED)
+- All tests guarded by `HasPQSupport()` (skip gracefully without liboqs)
 
-#### M-9: RECURSE_SAME carry-forward needs regression test
-- The scheme-field mismatch in `snapshotApplyKeys` was a real consensus bug (fixed this session).
-- **Action:** Add a dedicated test verifying carry-forward with all field types present.
+#### M-9: FIXED — RECURSE_SAME carry-forward regression tests added
+- 7 new C++ unit tests covering the `FullConditionsEqual` → `BlockConditionsEqual` → `IsConditionDataType` pipeline:
+  - All condition field types (PUBKEY_COMMIT, SCHEME, NUMERIC, HASH256) carry-forward verified
+  - SCHEME mismatch detection (SCHNORR vs ECDSA)
+  - PUBKEY_COMMIT mismatch detection
+  - NUMERIC value change detection
+  - Structural mismatch (extra block in output rung) detection
+  - Depth-zero termination (max_depth=0 → UNSATISFIED)
+  - Compound block (TIMELOCKED_SIG) carry-forward verified
 
 ### Minor
 
-#### m-3: Whitepaper security section lacks explicit threat model
-- Section 9 doesn't explicitly name the attack classes defended against.
+#### m-3: FIXED — Whitepaper Section 9.1 now includes explicit threat model
+- 8 attack classes enumerated: type confusion, data smuggling, witness bloat/DoS, signature replay, quantum key extraction, recursive non-termination, inversion-masked errors, forward-compatibility exploitation.
 
-#### m-5: Micro-header table not fully specified in whitepaper
-- Readers must consult serialize.cpp. The BIP has the full table but the whitepaper doesn't.
+#### m-5: FIXED — Micro-header table added to whitepaper Section 3.2
+- Full 53-slot lookup table added with encoding modes (micro-header, escape, escape+inverted).
+- Implicit field layout behavior described; references BIP for per-type encoding details.
 
-#### m-6: Whitepaper references section is sparse
-- Should cite: BIP-68, BIP-65/112, BIP-341, IEC 61131-3, NIST FIPS PQ standards.
-- (The BIP already cites these — whitepaper could reference the BIP.)
+#### m-6: FIXED — Whitepaper references expanded to 14 entries
+- Now cites: BIP-65, BIP-68, BIP-112, BIP-119, BIP-141, BIP-340, BIP-341, BIP-350, IEC 61131-3, NIST FIPS 204 (Dilithium), NIST FIPS 206 (SPHINCS+), FALCON spec, OQS project.
 
-#### m-7: No worked examples in whitepaper
-- Neither doc includes actual serialized transaction hex examples.
-- (The tx example docs on the website serve this purpose but aren't in the BIP.)
+#### m-7: FIXED — Worked hex example added as whitepaper Section 10
+- SIG + CSV (sign with key K after 10 blocks) fully annotated: conditions scriptPubKey (45 bytes) and witness (75 bytes) with byte-by-byte breakdown, micro-header encoding, and evaluation walkthrough.
 
-#### m-8: Post-quantum key size claims lack source citations
-- 1,793B FALCON-1024, 1,952B DILITHIUM3, 32B SPHINCS+ — correct per NIST FIPS 204/206 but should cite standards.
+#### m-8: FIXED — PQ key/signature sizes now cite NIST standards
+- References 11-13 cite FIPS 204 (Dilithium3: 1,952B keys, 3,293B sigs), FIPS 206 (SPHINCS+-SHA2-256f: 32B keys, ~7,856B sigs), and FALCON spec (512: 897B keys; 1024: 1,793B keys).
 
 ---
 

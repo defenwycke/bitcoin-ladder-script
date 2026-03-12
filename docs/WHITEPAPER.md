@@ -140,6 +140,41 @@ for each coil condition rung:
   (same block format as input rungs)
 ```
 
+#### Micro-Header Encoding
+
+Each block begins with a single byte that determines the encoding mode:
+
+| First Byte | Mode | Encoding |
+|------------|------|----------|
+| `0x00`–`0x7F` | Micro-header | Lookup table maps byte to block type; inverted = false |
+| `0x80` | Escape | Followed by `type(uint16_t LE)`; inverted = false |
+| `0x81` | Escape + inverted | Followed by `type(uint16_t LE)`; inverted = true |
+
+The micro-header lookup table assigns 1-byte slots to all 53 block types:
+
+| Slot | Block Type | Slot | Block Type | Slot | Block Type |
+|------|------------|------|------------|------|------------|
+| 0x00 | SIG | 0x12 | RECURSE_DECAY | 0x24 | ONE_SHOT |
+| 0x01 | MULTISIG | 0x13 | ANCHOR | 0x25 | RATE_LIMIT |
+| 0x02 | ADAPTOR_SIG | 0x14 | ANCHOR_CHANNEL | 0x26 | COSIGN |
+| 0x03 | CSV | 0x15 | ANCHOR_POOL | 0x27 | TIMELOCKED_SIG |
+| 0x04 | CSV_TIME | 0x16 | ANCHOR_RESERVE | 0x28 | HTLC |
+| 0x05 | CLTV | 0x17 | ANCHOR_SEAL | 0x29 | HASH_SIG |
+| 0x06 | CLTV_TIME | 0x18 | ANCHOR_ORACLE | 0x2A | PTLC |
+| 0x07 | HASH_PREIMAGE | 0x19 | HYSTERESIS_FEE | 0x2B | CLTV_SIG |
+| 0x08 | HASH160_PREIMAGE | 0x1A | HYSTERESIS_VALUE | 0x2C | TIMELOCKED_MULTISIG |
+| 0x09 | TAGGED_HASH | 0x1B | TIMER_CONTINUOUS | 0x2D | EPOCH_GATE |
+| 0x0A | CTV | 0x1C | TIMER_OFF_DELAY | 0x2E | WEIGHT_LIMIT |
+| 0x0B | VAULT_LOCK | 0x1D | LATCH_SET | 0x2F | INPUT_COUNT |
+| 0x0C | AMOUNT_LOCK | 0x1E | LATCH_RESET | 0x30 | OUTPUT_COUNT |
+| 0x0D | RECURSE_SAME | 0x1F | COUNTER_DOWN | 0x31 | RELATIVE_VALUE |
+| 0x0E | RECURSE_MODIFIED | 0x20 | COUNTER_PRESET | 0x32 | ACCUMULATOR |
+| 0x0F | RECURSE_UNTIL | 0x21 | COUNTER_UP | 0x33 | MUSIG_THRESHOLD |
+| 0x10 | RECURSE_COUNT | 0x22 | COMPARE | 0x34 | KEY_REF_SIG |
+| 0x11 | RECURSE_SPLIT | 0x23 | SEQUENCER | | |
+
+Slots `0x35`–`0x7F` are reserved for future block types. When a block type has an implicit field layout for the current serialization context, field count and data type bytes are omitted (the layout defines them). Variable-size fields still carry a length prefix. The full per-type field encoding rules and implicit layouts are specified in the BIP (see Section 12, Wire Format).
+
 ### 3.3 Compact Rung Encoding
 
 For the most common single-block patterns, the wire format supports a compact encoding signalled by `n_blocks == 0` within a rung. A COMPACT_SIG rung stores only a 32-byte `pubkey_commit` and a 1-byte `scheme` selector, and is expanded into a standard SIG block at deserialisation. This reduces per-rung overhead for the dominant single-signer case without adding new block types or evaluation paths.
@@ -445,11 +480,24 @@ Simplicity and Ladder Script share the goal of replacing Bitcoin Script with a m
 
 ## 9. Security Analysis
 
-### 9.1 Deterministic Evaluation
+### 9.1 Threat Model
+
+Ladder Script defends against the following attack classes:
+
+- **Type confusion attacks.** Script's untyped stack allows a 32-byte value to be interpreted as a public key, hash, or arbitrary data depending on context. Ladder Script eliminates this by requiring every field to declare its type, with size constraints enforced at deserialization.
+- **Data smuggling / spam embedding.** Attackers embed arbitrary data in Script witnesses via OP_PUSHDATA. Ladder Script's mandatory typing means every witness byte must conform to a known data type with semantic meaning; embedding arbitrary data requires creating cryptographically unspendable outputs (economic cost).
+- **Witness bloat / DoS.** Pathologically large witnesses can slow validation. Bounded limits (MAX_RUNGS=16, MAX_BLOCKS_PER_RUNG=8, MAX_FIELDS_PER_BLOCK=16, MAX_LADDER_WITNESS_SIZE=10,000 bytes) cap worst-case evaluation at 2,048 field checks.
+- **Signature replay across outputs.** Including the conditions hash in the sighash binds each signature to the specific locking conditions it satisfies, preventing replay even when the same key locks multiple outputs.
+- **Quantum key extraction.** The PUBKEY_COMMIT mechanism stores only a 32-byte hash of the public key in conditions. The full key is revealed only in the witness at spend time, limiting the window for quantum adversaries.
+- **Recursive covenant non-termination.** Every RECURSE_* block type has a provably reachable terminal state (see Section 9.5).
+- **Inversion-masked errors.** The inversion flag never inverts ERROR results, preventing attackers from using inverted blocks to suppress consensus failures.
+- **Forward-compatibility exploitation.** Unknown block types are policy-non-standard (not relayed or mined), preventing exploitation before soft fork activation.
+
+### 9.2 Deterministic Evaluation
 
 Ladder Script evaluation contains no loops, no recursion in the evaluator (recursion blocks constrain outputs, they do not cause recursive evaluation), and no data-dependent branching in the evaluation path. The evaluation of a ladder witness visits each rung at most once and each block at most once. Worst-case evaluation time is O(R x B x F) where R is the number of rungs, B is the number of blocks per rung, and F is the maximum fields per block. With the policy limits (16 x 8 x 16), this is bounded at 2,048 field evaluations.
 
-### 9.2 Fail-Closed Defaults
+### 9.3 Fail-Closed Defaults
 
 Three mechanisms ensure that ambiguity defaults to rejection:
 
@@ -459,7 +507,7 @@ Three mechanisms ensure that ambiguity defaults to rejection:
 
 3. **Empty ladders** (no rungs) return false from `EvalLadder`. There is no default-allow path.
 
-### 9.3 Sighash Integrity
+### 9.4 Sighash Integrity
 
 The Ladder Script sighash (`SignatureHashLadder`) uses a BIP-340 tagged hash with the tag "LadderSighash". It commits to:
 
@@ -471,17 +519,66 @@ The Ladder Script sighash (`SignatureHashLadder`) uses a BIP-340 tagged hash wit
 
 The inclusion of the conditions hash in the sighash means that a signature is bound to the specific conditions it satisfies. A valid signature for one set of conditions cannot be replayed against a different set, even if the pubkey and amounts are identical.
 
-### 9.4 Inversion Safety
+### 9.5 Inversion Safety
 
 The `ApplyInversion` function preserves ERROR status: inverting an ERROR still returns ERROR. This prevents an attacker from using the inversion flag to bypass error detection. The `UNKNOWN_BLOCK_TYPE` result, when inverted, becomes SATISFIED. This is intentional: it enables conditions to express "NOT (some future condition)" patterns while maintaining forward compatibility. The rationale is that "the absence of an unknown condition" is a reasonable thing to assert, and conditions containing unknown block types are policy-non-standard (not relayed or mined by default), preventing exploitation before the block type is activated via soft fork.
 
-### 9.5 Merge Validation
+### 9.6 Merge Validation
 
 The `MergeConditionsAndWitness` function performs strict structural validation before evaluation. The witness must have the exact same number of rungs, the same number of blocks per rung, and matching block types in each position. A witness that attempts to present a different structure than the conditions is rejected before any evaluation occurs. The `inverted` flag is always taken from the conditions side, preventing the witness from overriding inversion semantics.
 
 ---
 
-## 10. Conclusion
+## 10. Worked Example
+
+The following illustrates a complete Ladder Script output and witness for a simple SIG + CSV condition ("sign with key K after 10 blocks").
+
+**Conditions (scriptPubKey):**
+
+```
+c1                          — 0xC1 prefix (Ladder Script inline conditions)
+01                          — n_rungs = 1
+02                          — n_blocks = 2 (SIG + CSV)
+00                          — micro-header slot 0x00 = SIG
+  <32 bytes pubkey_commit>  — PUBKEY_COMMIT (SHA-256 of compressed pubkey)
+  01                        — SCHEME = SCHNORR (0x01)
+03                          — micro-header slot 0x03 = CSV
+  0a                        — NUMERIC varint = 10 (blocks)
+01                          — coil_type = UNLOCK (0x01)
+01                          — attestation = INLINE (0x01)
+01                          — scheme = SCHNORR (0x01)
+00                          — address_len = 0 (no destination constraint)
+00                          — n_coil_conditions = 0
+00                          — n_relays = 0
+```
+
+Total conditions size: 1 (prefix) + 1 + 1 + 1 + 32 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 = **45 bytes**.
+
+**Witness (spending input):**
+
+```
+01                          — n_rungs = 1
+02                          — n_blocks = 2 (SIG + CSV)
+00                          — micro-header slot 0x00 = SIG (witness context)
+  40                        — length prefix = 64
+  <64 bytes signature>      — Schnorr signature
+03                          — micro-header slot 0x03 = CSV (witness context)
+                            — (no witness fields for CSV — implicit empty layout)
+01                          — coil_type = UNLOCK
+01                          — attestation = INLINE
+01                          — scheme = SCHNORR
+00                          — address_len = 0
+00                          — n_coil_conditions = 0
+00                          — n_relays = 0
+```
+
+Total witness size: 1 + 1 + 1 + 1 + 64 + 1 + 1 + 1 + 1 + 1 + 1 + 1 = **75 bytes** (18.75 vbytes at segwit discount).
+
+**Evaluation:** The evaluator deserializes both structures, merges them, and evaluates rung 0: the SIG block verifies the signature against the committed pubkey using the Ladder sighash, and the CSV block checks BIP-68 sequence enforcement for 10 blocks. Both must pass (AND logic) for the spend to succeed.
+
+---
+
+## 11. Conclusion
 
 Ladder Script replaces Bitcoin's untyped, imperative scripting model with a typed, declarative block system that draws on decades of industrial control system design. By requiring every byte to be typed, every condition to be named, and every evaluation to be deterministic, Ladder Script eliminates the classes of ambiguity and complexity that have constrained Bitcoin's programmability.
 
@@ -495,10 +592,17 @@ The design is implemented in Bitcoin Ghost's fork of Bitcoin Core, with 185 unit
 
 ## References
 
-1. Bitcoin Script reference, Bitcoin Wiki.
-2. IEC 61131-3: Programmable Controllers, Programming Languages (Ladder Diagram).
-3. BIP-119: CHECKTEMPLATEVERIFY (Jeremy Rubin).
-4. BIP-340: Schnorr Signatures for secp256k1.
-5. BIP-341: Taproot: SegWit version 1 spending rules.
-6. BIP-68: Relative lock-time using consensus-enforced sequence numbers.
-7. NIST Post-Quantum Cryptography Standardization (FALCON, Dilithium).
+1. Bitcoin Script reference, Bitcoin Wiki. https://en.bitcoin.it/wiki/Script
+2. IEC 61131-3:2013, "Programmable controllers — Part 3: Programming languages," International Electrotechnical Commission. Defines Ladder Diagram (LD) and other PLC programming languages.
+3. BIP-65: OP_CHECKLOCKTIMEVERIFY (Peter Todd). Absolute timelock enforcement.
+4. BIP-68: Relative lock-time using consensus-enforced sequence numbers (Mark Friedenbach, BtcDrak, Nicolas Dorier, kinoshitajona).
+5. BIP-112: CHECKSEQUENCEVERIFY (BtcDrak, Mark Friedenbach, Eric Lombrozo). Relative timelock enforcement.
+6. BIP-119: CHECKTEMPLATEVERIFY (Jeremy Rubin). Template-based covenant mechanism.
+7. BIP-141: Segregated Witness (Eric Lombrozo, Johnson Lau, Pieter Wuille). Witness data separation and versioned script.
+8. BIP-340: Schnorr Signatures for secp256k1 (Pieter Wuille, Jonas Nick, Tim Ruffing).
+9. BIP-341: Taproot: SegWit version 1 spending rules (Pieter Wuille, Jonas Nick, Anthony Towns).
+10. BIP-350: Bech32m format for v1+ witness addresses (Pieter Wuille).
+11. NIST FIPS 204: Module-Lattice-Based Digital Signature Standard (ML-DSA, formerly Dilithium). National Institute of Standards and Technology, 2024. Specifies Dilithium3 with 1,952-byte public keys and 3,293-byte signatures.
+12. NIST FIPS 206: Stateless Hash-Based Digital Signature Standard (SLH-DSA, formerly SPHINCS+). National Institute of Standards and Technology, 2024. SPHINCS+-SHA2-256f: 32-byte public keys, ~7,856-byte signatures.
+13. FALCON: Fast-Fourier Lattice-based Compact Signatures over NTRU. NIST PQC Round 3 finalist. FALCON-512: 897-byte public keys, ~666-byte signatures. FALCON-1024: 1,793-byte public keys, ~1,280-byte signatures. (Pending FIPS standardization as of 2025.)
+14. Open Quantum Safe (OQS) project: liboqs C library. https://openquantumsafe.org/

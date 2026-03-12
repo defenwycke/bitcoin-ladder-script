@@ -645,6 +645,25 @@ async def generate_preimage():
     }
 
 
+@app.post("/api/ladder/ctv-hash")
+async def compute_ctv_hash(request: Request):
+    """Compute BIP-119 CTV template hash for a v4 RUNG_TX spending transaction."""
+    body = await request.body()
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        raise HTTPException(400, "Invalid JSON")
+
+    hex_str = data.get("hex", "")
+    input_index = int(data.get("input_index", 0))
+
+    if not hex_str or not all(c in "0123456789abcdefABCDEF" for c in hex_str):
+        raise HTTPException(400, "Invalid hex")
+
+    result = await rpc_call("computectvhash", [hex_str, input_index])
+    return result
+
+
 @app.post("/api/ladder/mine")
 async def mine_blocks(request: Request):
     """Mine blocks on regtest (for local testing only)."""

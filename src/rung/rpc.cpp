@@ -1281,6 +1281,30 @@ static RungBlock BuildWitnessBlock(const UniValue& block_spec,
         SignSingleKey(block_spec, block, mtx, input_idx, txdata, conditions, "KEY_REF_SIG");
         break;
     }
+    case RungBlockType::ACCUMULATOR: {
+        // Merkle proof witness: array of HASH256 sibling hashes followed by leaf hash
+        // The evaluator expects: conditions=[root], witness=[sibling_0..N, leaf]
+        if (block_spec.exists("proof")) {
+            const UniValue& proof_arr = block_spec["proof"].get_array();
+            for (size_t i = 0; i < proof_arr.size(); ++i) {
+                auto h = ParseHex(proof_arr[i].get_str());
+                if (h.size() != 32) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER,
+                        "ACCUMULATOR proof hash at index " + std::to_string(i) + " must be exactly 32 bytes");
+                }
+                block.fields.push_back({RungDataType::HASH256, h});
+            }
+        }
+        if (block_spec.exists("leaf")) {
+            auto leaf = ParseHex(block_spec["leaf"].get_str());
+            if (leaf.size() != 32) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER,
+                    "ACCUMULATOR leaf must be exactly 32 bytes");
+            }
+            block.fields.push_back({RungDataType::HASH256, leaf});
+        }
+        break;
+    }
     default:
         // Covenant/governance/recursion/PLC blocks — no witness fields needed
         break;

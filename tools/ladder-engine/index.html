@@ -2567,7 +2567,8 @@ const BLOCK_FAMILIES = [
         { name: 'denominator', dataType: 'NUMERIC', label: 'Denominator', placeholder: '10' }
       ]},
       { type: 'ACCUMULATOR', label: 'ACCUM', desc: 'Merkle set membership proof with root verification', fields: [
-        { name: 'merkle_root', dataType: 'HASH256', label: 'Merkle Root', placeholder: '32-byte hex' }
+        { name: 'merkle_root', dataType: 'HASH256', label: 'Merkle Root', placeholder: '32-byte hex (auto-computed from leaves)' },
+        { name: 'merkle_leaves', dataType: 'HASH256', label: 'Merkle Leaves (comma-sep)', placeholder: 'leaf1hex, leaf2hex, ...', multi: true, noWire: true }
       ]},
     ]
   },
@@ -3491,6 +3492,57 @@ function fromNumericHex(hex) {
   return bytes[0] | (bytes[1] << 8) | (bytes[2] << 16) | (bytes[3] << 24);
 }
 
+// ─── Merkle tree helpers for ACCUMULATOR (sorted-pair SHA-256) ───
+function hexToBytes(hex) {
+  const b = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) b[i / 2] = parseInt(hex.substr(i, 2), 16);
+  return b;
+}
+function bytesToHex(bytes) {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+async function sha256Bytes(data) {
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', data));
+}
+async function sortedPairHash(a, b) {
+  const ab = hexToBytes(a), bb = hexToBytes(b);
+  const combined = new Uint8Array(64);
+  let cmp = 0;
+  for (let i = 0; i < 32; i++) { if (ab[i] !== bb[i]) { cmp = ab[i] < bb[i] ? -1 : 1; break; } }
+  if (cmp <= 0) { combined.set(ab, 0); combined.set(bb, 32); }
+  else { combined.set(bb, 0); combined.set(ab, 32); }
+  return bytesToHex(await sha256Bytes(combined));
+}
+async function computeMerkleRoot(leafHexes) {
+  if (leafHexes.length === 0) return '0'.repeat(64);
+  if (leafHexes.length === 1) return leafHexes[0];
+  let level = [...leafHexes];
+  // Pad to power of 2 by duplicating last leaf
+  while (level.length & (level.length - 1)) level.push(level[level.length - 1]);
+  while (level.length > 1) {
+    const next = [];
+    for (let i = 0; i < level.length; i += 2) next.push(await sortedPairHash(level[i], level[i + 1]));
+    level = next;
+  }
+  return level[0];
+}
+async function computeMerkleProof(leafHexes, targetIdx) {
+  if (leafHexes.length <= 1) return { siblings: [], leaf: leafHexes[0] || '0'.repeat(64) };
+  let level = [...leafHexes];
+  while (level.length & (level.length - 1)) level.push(level[level.length - 1]);
+  const siblings = [];
+  let idx = targetIdx;
+  while (level.length > 1) {
+    const sibIdx = (idx % 2 === 0) ? idx + 1 : idx - 1;
+    siblings.push(level[sibIdx]);
+    const next = [];
+    for (let i = 0; i < level.length; i += 2) next.push(await sortedPairHash(level[i], level[i + 1]));
+    level = next;
+    idx = Math.floor(idx / 2);
+  }
+  return { siblings, leaf: leafHexes[targetIdx] };
+}
+
 // Convert stored rung objects back to createrungtx conditions format
 function rungsToConditions(storedRungs) {
   return storedRungs.map(rung => {
@@ -3529,6 +3581,7 @@ function exportBlockFields(block) {
   const def = getBlockDef(block.type);
   const fields = [];
   def.fields.forEach(f => {
+    if (f.noWire) return; // skip non-wire fields (e.g. merkle_leaves)
     const val = block.values[f.name];
     if (!val) return;
     if (f.dataType === 'NUMERIC') {
@@ -3553,6 +3606,43 @@ function exportBlockFields(block) {
   const out = { type: block.type, fields };
   if (block.inverted) out.inverted = true;
   return out;
+}
+
+// Reverse of exportBlockFields — converts wire format {type, fields:[{type,hex}]} back to record format {type, values:{fieldName: value}}
+function wireFieldsToValues(wireBlock) {
+  const def = getBlockDef(wireBlock.type);
+  const values = {};
+  const reverseScheme = { '01': 'SCHNORR', '02': 'ECDSA', '10': 'FALCON512', '11': 'FALCON1024', '12': 'DILITHIUM3', '13': 'SPHINCS_SHA' };
+  let fi = 0; // wire field index
+  for (const fd of def.fields) {
+    if (fi >= (wireBlock.fields || []).length) break;
+    const wf = wireBlock.fields[fi];
+    if (fd.dataType === 'NUMERIC' && wf.type === 'NUMERIC') {
+      values[fd.name] = String(fromNumericHex(wf.hex));
+      fi++;
+    } else if (fd.dataType === 'SCHEME' && wf.type === 'SCHEME') {
+      values[fd.name] = reverseScheme[wf.hex] || 'SCHNORR';
+      fi++;
+    } else if (fd.dataType === 'PUBKEY' && wf.type === 'PUBKEY') {
+      if (fd.multi) {
+        const keys = [];
+        while (fi < wireBlock.fields.length && wireBlock.fields[fi].type === 'PUBKEY') {
+          keys.push(wireBlock.fields[fi].hex);
+          fi++;
+        }
+        values[fd.name] = keys.join(', ');
+      } else {
+        values[fd.name] = wf.hex;
+        fi++;
+      }
+    } else if ((fd.dataType === 'HASH256' || fd.dataType === 'HASH160') && (wf.type === 'HASH256' || wf.type === 'HASH160')) {
+      values[fd.name] = wf.hex;
+      fi++;
+    } else {
+      fi++; // skip unrecognized
+    }
+  }
+  return { type: wireBlock.type, values };
 }
 
 // Export as createrungtx wire format
@@ -6280,26 +6370,19 @@ const EXAMPLES = [
   },
   {
     title: 'RECURSIVE SPLIT (TREE)',
-    desc: 'Binary split covenant: UTXO splits into 2 equal children on each spend, up to 4 levels deep. CTV constrains outputs.',
-    tags: [['REC_SPLIT', 'rec'], ['CTV', 'cov'], ['SIG', 'sig'], ['REC_DECAY', 'rec']],
+    desc: 'Binary split covenant: UTXO splits into 2 equal children on each spend, up to 3 levels deep. Each child inherits the same conditions with max_splits decremented.',
+    tags: [['REC_SPLIT', 'rec'], ['SIG', 'sig']],
     rungs: [
       { label: 'SPLIT', blocks: [
         { type: 'SIG', values: { pubkey: FAKE.pk1 } },
-        { type: 'RECURSE_SPLIT', values: { max_splits: '2', min_sats: '10000' } },
-        { type: 'RECURSE_DECAY', values: { max_depth: '4', block_idx: '0', param_idx: '0', decay_per_step: '1' } },
-        { type: 'CTV', values: { template_hash: FAKE.hash4 } },
+        { type: 'RECURSE_SPLIT', values: { max_splits: '3', min_sats: '2000' } },
       ], output: { name: 'BRANCH', type: 'standard' } },
-      { label: 'LEAF', blocks: [
-        { type: 'SIG', values: { pubkey: FAKE.pk1 } },
-        { type: 'RECURSE_COUNT', values: { remaining: '0' } },
-      ], output: { name: 'COLLECT', type: 'standard' } },
     ],
     txInputs: [{ txid: FAKE.txid2, vout: 2 }],
     txOutputs: [
-      { address: FAKE.addr1, amount: 5000 },
-      { address: FAKE.addr2, amount: 5000 },
+      { address: FAKE.addr1, amount: 20000 },
     ],
-    inputMap: [[0], [0]], outputMap: [0, 1],
+    inputMap: [[0]], outputMap: [0],
   },
   {
     title: 'BLOCK-HEIGHT TIMELOCK + COMPARE',
@@ -6585,12 +6668,12 @@ const EXAMPLES = [
 
   {
     title: 'ACCUMULATOR ALLOWLIST',
-    desc: 'Merkle set membership proof. Spending transaction must prove the destination is in a pre-committed allowlist. Combines with SIG and AMOUNT_LOCK for full access control.',
+    desc: 'Merkle set membership proof. Spending transaction must prove the destination is in a pre-committed allowlist. Combines with SIG and AMOUNT_LOCK for full access control. Root auto-computed from leaves at fund time.',
     tags: [['ACCUM', 'gov'], ['SIG', 'sig'], ['AMT_LOCK', 'cov']],
     rungs: [
       { label: 'SEND', blocks: [
         { type: 'SIG', values: { pubkey: FAKE.pk1 } },
-        { type: 'ACCUMULATOR', values: { merkle_root: FAKE.hash3 } },
+        { type: 'ACCUMULATOR', values: { merkle_root: '', merkle_leaves: FAKE.hash1 + ', ' + FAKE.hash2 + ', ' + FAKE.hash3 } },
         { type: 'AMOUNT_LOCK', values: { min: '10000', max: '5000000' } },
       ], output: { name: 'ALLOWLISTED', type: 'standard' } },
       { label: 'ADMIN', blocks: [
@@ -7126,7 +7209,9 @@ function SignetPanel({ rungs, setRungs, txOutputs, txInputs, locktime, onViewAsL
               relayNameMap.set(name, idx);
             });
             const relayRefs = (r.outputRefs || []).map(ref => relayNameMap.get(ref)).filter(idx => idx !== undefined);
-            return { label: r.label, vout: voutIdx >= 0 ? voutIdx : null, blocks: r.blocks.map(b => ({ type: b.type, values: { ...b.values } })), relayRefs: relayRefs.length > 0 ? relayRefs : undefined };
+            const coilType = r.output?.wireType || 'UNLOCK';
+            const coilAddress = (coilType === 'UNLOCK_TO') ? (txOutputs.find(o => o.id === r.output?.txOutputId)?.address || null) : null;
+            return { label: r.label, vout: voutIdx >= 0 ? voutIdx : null, blocks: r.blocks.map(b => ({ type: b.type, values: { ...b.values } })), relayRefs: relayRefs.length > 0 ? relayRefs : undefined, coilType, coilAddress };
           }),
           relays: (() => {
             const relayRungs = rungs.filter(r => r.output.type === 'relay');
@@ -7135,13 +7220,14 @@ function SignetPanel({ rungs, setRungs, txOutputs, txInputs, locktime, onViewAsL
               blocks: r.blocks.filter(b => b.type !== 'OUTPUT_REF').map(b => ({ type: b.type, values: { ...b.values } })),
             }));
           })(),
+          ctvOutputsMap: signingData.ctvOutputsMap || undefined,
         };
         console.log('%c[BROADCAST] hasSnapshot:', 'color: orange', !!signingData.rungSnapshot,
           'record.rungs:', JSON.stringify(record.rungs.map(r => ({ label: r.label, vout: r.vout, blocks: r.blocks.map(b => b.type) }))));
         try {
           const existing = JSON.parse(localStorage.getItem('ghost_rung_keys') || '[]');
           existing.push(record);
-          if (existing.length > 50) existing.splice(0, existing.length - 50);
+          if (existing.length > 100) existing.splice(0, existing.length - 100);
           localStorage.setItem('ghost_rung_keys', JSON.stringify(existing));
         } catch (e) { /* localStorage full or unavailable */ }
       }
@@ -7299,7 +7385,7 @@ function SignetPanel({ rungs, setRungs, txOutputs, txInputs, locktime, onViewAsL
     });
 
     // 5. Replace pubkeys in rungs + set scheme on signature blocks
-    setRungs(prev => prev.map((rung, ri) => ({
+    const applyKeyReplacements = (rung, ri) => ({
       ...rung,
       blocks: rung.blocks.map((block, bi) => {
         const vals = { ...block.values };
@@ -7335,7 +7421,117 @@ function SignetPanel({ rungs, setRungs, txOutputs, txInputs, locktime, onViewAsL
       }),
       // Also set the coil scheme for COMPACT_SIG outputs
       output: rung.output.type !== 'relay' ? { ...rung.output, scheme: fundScheme } : rung.output,
-    })));
+    });
+    // Apply to local rungs array (for CTV computation in step 5b) AND React state
+    const updatedRungs = rungs.map(applyKeyReplacements);
+    for (let i = 0; i < rungs.length; i++) {
+      rungs[i] = updatedRungs[i];
+    }
+    setRungs(prev => prev.map(applyKeyReplacements));
+
+    // 5a. Auto-compute ACCUMULATOR Merkle roots from leaves
+    for (let ri = 0; ri < rungs.length; ri++) {
+      for (let bi = 0; bi < rungs[ri].blocks.length; bi++) {
+        const block = rungs[ri].blocks[bi];
+        if (block.type !== 'ACCUMULATOR' || !block.values?.merkle_leaves) continue;
+        const leaves = block.values.merkle_leaves.split(',').map(s => s.trim()).filter(Boolean);
+        if (leaves.length === 0) continue;
+        const root = await computeMerkleRoot(leaves);
+        // Update both the closure's rungs and React state
+        rungs[ri].blocks[bi] = { ...block, values: { ...block.values, merkle_root: root } };
+        setRungs(prev => prev.map((r, rri) => {
+          if (rri !== ri) return r;
+          return { ...r, blocks: r.blocks.map((b, bbi) => {
+            if (bbi !== bi) return b;
+            return { ...b, values: { ...b.values, merkle_root: root } };
+          })};
+        }));
+      }
+    }
+
+    // 5b. Auto-compute CTV template hashes
+    // CTV commits to: nVersion, nLockTime, scriptSigs hash, nInputs, sequences hash, nOutputs,
+    // outputs hash, input_index. It does NOT commit to input prevouts, so we can compute it
+    // before the funding tx exists by using a dummy input.
+    const ctvOutputsMap = new Map(); // "ri:bi" -> { outputs: [...] } for spend-time reconstruction
+    for (let ri = 0; ri < rungs.length; ri++) {
+      const rung = rungs[ri];
+      for (let bi = 0; bi < rung.blocks.length; bi++) {
+        const block = rung.blocks[bi];
+        if (block.type !== 'CTV') continue;
+
+        // Find all blocks in this rung to determine the spending tx structure
+        const rungBlocks = rung.blocks;
+        const hasSplit = rungBlocks.some(b => b.type === 'RECURSE_SPLIT');
+        const hasDecay = rungBlocks.some(b => b.type === 'RECURSE_DECAY');
+
+        // Build template spending transaction outputs
+        // The CTV hash commits to exact output amounts, so we must compute them
+        // from the actual output amount assigned to the rung containing this CTV block.
+        const rungOutputId = rung.output?.txOutputId;
+        const rungTxOutput = txOutputs.find(o => o.id === rungOutputId);
+        const outputSats = rungTxOutput ? (parseInt(rungTxOutput.amount) || 10000) : 10000;
+        const feeSats_ctv = 500; // small fee for spending tx
+        const spendableSats = outputSats - feeSats_ctv;
+
+        let templateOutputs;
+        if (hasSplit) {
+          // RECURSE_SPLIT: 2 equal outputs with carry-forward conditions (decremented)
+          const halfSats = Math.floor(spendableSats / 2);
+          const makeSplitConds = () => {
+            const conds = rungsToConditions([rung]);
+            for (const cond of conds) {
+              for (const blk of cond.blocks) {
+                if (blk.type === 'RECURSE_SPLIT') {
+                  for (const f of blk.fields) {
+                    if (f.type === 'NUMERIC') { f.hex = toNumericHex(String(Math.max(0, fromNumericHex(f.hex) - 1))); break; }
+                  }
+                }
+              }
+            }
+            return conds;
+          };
+          templateOutputs = [
+            { amount: halfSats / 1e8, conditions: makeSplitConds() },
+            { amount: (spendableSats - halfSats) / 1e8, conditions: makeSplitConds() },
+          ];
+        } else {
+          // Simple: single output to wallet key
+          templateOutputs = [{
+            amount: spendableSats / 1e8,
+            conditions: [{ blocks: [{ type: 'SIG', fields: [{ type: 'PUBKEY', hex: walletKey.pubkey }] }] }],
+          }];
+        }
+
+        // Build the template tx via createrungtx
+        const templateTxData = {
+          inputs: [{ txid: '0'.repeat(64), vout: 0 }],
+          outputs: templateOutputs,
+        };
+        try {
+          const templateResult = await apiCall('/api/ladder/create', templateTxData, true);
+          if (templateResult && templateResult.hex) {
+            const ctvResult = await apiCall('/api/ladder/ctv-hash', { hex: templateResult.hex, input_index: 0 }, true);
+            if (ctvResult && ctvResult.hash) {
+              // Update the CTV block's template_hash in the rung
+              setRungs(prev => prev.map((r, rri) => {
+                if (rri !== ri) return r;
+                return { ...r, blocks: r.blocks.map((b, bbi) => {
+                  if (bbi !== bi) return b;
+                  return { ...b, values: { ...b.values, template_hash: ctvResult.hash } };
+                })};
+              }));
+              // Also update in the local rungs array for the snapshot
+              rungs[ri].blocks[bi].values.template_hash = ctvResult.hash;
+              ctvOutputsMap.set(`${ri}:${bi}`, { outputs: templateOutputs });
+              console.log('[CTV] Auto-computed template hash for rung ' + ri + ': ' + ctvResult.hash.substring(0, 16) + '...');
+            }
+          }
+        } catch (ctvErr) {
+          console.warn('[CTV] Failed to auto-compute template hash:', ctvErr);
+        }
+      }
+    }
 
     // 6. Select UTXOs for inputs — only keep outputs that have rung conditions assigned
     // Build rung→output map (same as exportCreateRungtx) to identify orphaned outputs
@@ -7463,7 +7659,7 @@ function SignetPanel({ rungs, setRungs, txOutputs, txInputs, locktime, onViewAsL
     // Snapshot rungs NOW so the record at broadcast time uses the correct rungs
     // (not whatever the user may have switched to in the BUILD tab after funding).
     // Build snapshot from closure's rungs + the change rung we just created + newOutputs.
-    const snapshotRungs = rungs.filter(r => r.label !== 'Change'); // exclude old change
+    const snapshotRungs = rungs.filter(r => r.label !== 'Change' && r.output.type !== 'relay'); // exclude old change + relay rungs
     const snapshotApplyKeys = (r, ri) => {
       const updatedBlocks = r.blocks.map((block, bi) => {
         const bv = { ...block.values };
@@ -7493,7 +7689,13 @@ function SignetPanel({ rungs, setRungs, txOutputs, txInputs, locktime, onViewAsL
       });
       // Resolve vout index from newOutputs (which has the final output IDs including change)
       const voutIdx = newOutputs.findIndex(o => o.id === r.output?.txOutputId);
-      return { label: r.label, vout: voutIdx >= 0 ? voutIdx : null, blocks: updatedBlocks };
+      const coilType = r.output?.wireType || 'UNLOCK';
+      let coilAddress = null;
+      if (coilType === 'UNLOCK_TO') {
+        const matchedOut = newOutputs.find(o => o.id === r.output?.txOutputId);
+        coilAddress = matchedOut?.address || null;
+      }
+      return { label: r.label, vout: voutIdx >= 0 ? voutIdx : null, blocks: updatedBlocks, coilType, coilAddress };
     };
     const rungSnapshot = snapshotRungs.map(snapshotApplyKeys);
     // Append change rung if one was created (it's not in the closure's rungs yet)
@@ -7518,6 +7720,7 @@ function SignetPanel({ rungs, setRungs, txOutputs, txInputs, locktime, onViewAsL
       scheme: fundScheme,
       preimages: preimagesGenerated,
       rungSnapshot, // frozen at fund time — used by handleBroadcast for the record
+      ctvOutputsMap: Object.fromEntries(ctvOutputsMap), // CTV template outputs for spend-time reconstruction
     });
 
     // 10. Update engine state
@@ -8186,6 +8389,13 @@ function SpendPanel({ onViewAsLadder }) {
 
       // 3. Get destination address
       let dest = destAddress.trim();
+      if (!dest && targetRung.coilType === 'UNLOCK_TO' && targetRung.coilAddress) {
+        dest = targetRung.coilAddress;
+        addLog('UNLOCK_TO: destination locked to ' + dest.substring(0, 20) + '...', 'info');
+      }
+      if (targetRung.coilType === 'COVENANT') {
+        addLog('COVENANT coil: spending tx must satisfy coil conditions (enforced by backend)', 'info');
+      }
       if (!dest) {
         addLog('Generating destination address...');
         const addrData = await apiCall('/api/ladder/wallet/address', undefined, true);
@@ -8261,6 +8471,19 @@ function SpendPanel({ onViewAsLadder }) {
       for (const b of rungBlocks) {
         if (SINGLE_KEY_TYPES.includes(b.type)) {
           let key = findKeyForBlock(b);
+          // KEY_REF_SIG: resolve pubkey from relay[relay_index].blocks[block_index]
+          if (!key && b.type === 'KEY_REF_SIG' && rec.relays) {
+            const ri = parseInt(b.values?.relay_index) || 0;
+            const bi = parseInt(b.values?.block_index) || 0;
+            const relayBlock = rec.relays[ri]?.blocks?.[bi];
+            if (relayBlock) {
+              const refPubkey = relayBlock.values?.pubkey || relayBlock.values?.signing_key || relayBlock.values?.agg_pubkey;
+              if (refPubkey && keyByPubkey.has(refPubkey)) {
+                key = keyByPubkey.get(refPubkey);
+                addLog('KEY_REF_SIG: resolved key from relay[' + ri + '].block[' + bi + ']', 'info');
+              }
+            }
+          }
           if (!key) { key = conditionKeys[fallbackKeyIdx]; fallbackKeyIdx++; }
           if (!key) throw new Error('No matching key for ' + b.type + ' block. Expected pubkey: ' + (b.values?.pubkey || b.values?.signing_key || '?'));
           const entry = { type: b.type };
@@ -8320,6 +8543,21 @@ function SpendPanel({ onViewAsLadder }) {
             throw new Error(b.type + ' block requires a preimage but none was stored. Re-create the transaction with preimage values.');
           }
           signerBlocks.push(entry);
+        } else if (b.type === 'ACCUMULATOR') {
+          // Merkle proof: compute from stored leaves and pass proof + leaf to RPC
+          const leaves = (b.values?.merkle_leaves || '').split(',').map(s => s.trim()).filter(Boolean);
+          if (leaves.length > 0) {
+            const proof = await computeMerkleProof(leaves, 0);
+            signerBlocks.push({ type: 'ACCUMULATOR', proof: proof.siblings, leaf: proof.leaf });
+            addLog('ACCUMULATOR: Merkle proof (' + proof.siblings.length + ' siblings, leaf[0])', 'info');
+          } else {
+            addLog('⚠ ACCUMULATOR: no merkle_leaves stored — proof cannot be generated', 'warn');
+            signerBlocks.push({ type: b.type });
+          }
+        } else if (b.type === 'COSIGN') {
+          // COSIGN: no witness data needed — backend validates cross-input scriptPubKey hashes
+          signerBlocks.push({ type: b.type });
+          addLog('COSIGN: co-input required (conditions_hash=' + (b.values?.conditions_hash || '?').substring(0, 16) + '...)', 'info');
         } else {
           // CSV, CLTV, covenants, governance, recursion, PLC blocks — RPC still needs
           // an entry for every block in the rung (it returns empty witness for these)
@@ -8352,11 +8590,17 @@ function SpendPanel({ onViewAsLadder }) {
           inputSequence = csvBlocks; // BIP68: blocks-based relative lock
           addLog('Setting input sequence=' + csvBlocks + ' for CSV lock', 'info');
         } else if (b.type === 'VAULT_LOCK') {
-          // VAULT_LOCK has internal CSV delay (block-based) for the hot key path
-          const vaultDelay = parseInt(b.values?.delay) || 144;
-          csvBlocks = vaultDelay;
-          inputSequence = vaultDelay; // BIP68: blocks-based relative lock
-          addLog('Setting input sequence=' + vaultDelay + ' for VAULT_LOCK delay', 'info');
+          // VAULT_LOCK: hot-key path has CSV delay, recovery-key path is immediate
+          const matchedKey = findKeyForBlock(b);
+          const isRecovery = matchedKey && b.values?.recovery_key === matchedKey.pubkey;
+          if (!isRecovery) {
+            const vaultDelay = parseInt(b.values?.delay) || 144;
+            csvBlocks = vaultDelay;
+            inputSequence = vaultDelay; // BIP68: blocks-based relative lock
+            addLog('VAULT_LOCK: hot-key path, delay=' + vaultDelay, 'info');
+          } else {
+            addLog('VAULT_LOCK: recovery-key path — no CSV delay', 'info');
+          }
         } else if (b.type === 'CSV_TIME') {
           const seconds = parseInt(b.values?.seconds) || 512;
           csvTimeSeconds = seconds;
@@ -8374,42 +8618,73 @@ function SpendPanel({ onViewAsLadder }) {
         }
       }
 
-      // Determine output construction mode from covenant/recursion blocks
-      const CARRY_IDENTICAL = ['RECURSE_SAME'];
-      const CARRY_MUTATED = ['RECURSE_MODIFIED', 'RECURSE_DECAY'];
-      const CARRY_COUNT = ['RECURSE_COUNT'];
-      const CARRY_SPLIT = ['RECURSE_SPLIT'];
-      const CARRY_UNTIL = ['RECURSE_UNTIL'];
-      const TX_CONSTRAINT = ['AMOUNT_LOCK', 'RELATIVE_VALUE', 'INPUT_COUNT', 'OUTPUT_COUNT', 'WEIGHT_LIMIT',
-        'EPOCH_GATE', 'HYSTERESIS_FEE', 'HYSTERESIS_VALUE', 'RATE_LIMIT'];
+      // ─── COMPOSITIONAL OUTPUT CONSTRUCTION ───
+      // Collect all constraints from blocks, then compose them into outputs.
+      // This handles ANY combination of blocks dynamically.
 
-      let outputMode = 'fresh';
-      let carryBlock = null;
+      // Phase 1: Classify all blocks in this rung
+      const recurseBlocks = [];   // carry-forward / recursion blocks
+      const mutationBlocks = [];  // blocks that mutate carried conditions (RECURSE_MODIFIED, RECURSE_DECAY)
+      const validationBlocks = []; // TX-structure constraints (checked but don't affect outputs)
+      let ctvBlock = null;        // CTV with stored template (overrides everything)
+      let splitBlock = null;      // RECURSE_SPLIT (2 outputs instead of 1)
+
       for (const b of rungBlocks) {
-        if (CARRY_IDENTICAL.includes(b.type)) { outputMode = 'identical'; carryBlock = b; }
-        else if (CARRY_MUTATED.includes(b.type)) { outputMode = 'mutated'; carryBlock = b; }
-        else if (CARRY_COUNT.includes(b.type)) { outputMode = 'count'; carryBlock = b; }
-        else if (CARRY_SPLIT.includes(b.type)) { outputMode = 'split'; carryBlock = b; }
-        else if (CARRY_UNTIL.includes(b.type)) { outputMode = 'until'; carryBlock = b; }
-        else if (b.type === 'CTV') {
-          addLog('⚠ CTV requires pre-committed template — cannot auto-construct spending tx.', 'warn');
+        switch (b.type) {
+          case 'CTV': {
+            const ctvKey = Object.keys(rec.ctvOutputsMap || {}).find(k => k.split(':')[0] === String(rungIdx));
+            if (ctvKey && rec.ctvOutputsMap[ctvKey]) {
+              ctvBlock = { outputs: rec.ctvOutputsMap[ctvKey].outputs };
+              addLog('CTV: found pre-committed template outputs', 'info');
+            } else {
+              addLog('⚠ CTV block present but no stored template outputs — will build outputs from other blocks', 'warn');
+            }
+            break;
+          }
+          case 'RECURSE_SPLIT':
+            splitBlock = b;
+            recurseBlocks.push(b);
+            addLog('RECURSE_SPLIT: max_splits=' + (b.values?.max_splits || '?') + ', min_sats=' + (b.values?.min_sats || '546'), 'info');
+            break;
+          case 'RECURSE_SAME':
+          case 'RECURSE_COUNT':
+          case 'RECURSE_UNTIL':
+            recurseBlocks.push(b);
+            break;
+          case 'RECURSE_MODIFIED':
+          case 'RECURSE_DECAY':
+            mutationBlocks.push(b);
+            recurseBlocks.push(b);
+            break;
+          case 'AMOUNT_LOCK':
+          case 'RELATIVE_VALUE':
+          case 'INPUT_COUNT':
+          case 'OUTPUT_COUNT':
+          case 'WEIGHT_LIMIT':
+          case 'EPOCH_GATE':
+          case 'HYSTERESIS_FEE':
+          case 'HYSTERESIS_VALUE':
+          case 'RATE_LIMIT':
+            validationBlocks.push(b);
+            break;
+          // All other blocks (SIG, CSV, CLTV, HASH, etc.) don't affect output construction
         }
       }
 
-      // Validate TX-structure constraints
-      for (const b of rungBlocks) {
+      // Phase 2: Validate TX-structure constraints
+      for (const b of validationBlocks) {
         if (b.type === 'AMOUNT_LOCK') {
           const min = parseInt(b.values?.min) || 0;
           const max = parseInt(b.values?.max) || Number.MAX_SAFE_INTEGER;
-          if (sendSats < min || sendSats > max) throw new Error('AMOUNT_LOCK: output ' + sendSats + ' sats outside range [' + min + ', ' + max + ']');
-          addLog('AMOUNT_LOCK: ' + sendSats + ' sats within [' + min + ', ' + max + ']', 'ok');
+          if (sendSats < min || sendSats > max) addLog('⚠ AMOUNT_LOCK: output ' + sendSats + ' sats outside [' + min + ', ' + max + '] — backend will enforce', 'warn');
+          else addLog('AMOUNT_LOCK: ' + sendSats + ' sats within [' + min + ', ' + max + ']', 'ok');
         }
         if (b.type === 'RELATIVE_VALUE') {
           const num = parseInt(b.values?.numerator) || 0;
           const den = parseInt(b.values?.denominator) || 1;
           const minOutput = Math.ceil(utxoAmountSats * num / den);
-          if (sendSats < minOutput) throw new Error('RELATIVE_VALUE: output must be >= ' + minOutput + ' sats (' + num + '/' + den + ' of input)');
-          addLog('RELATIVE_VALUE: ' + sendSats + ' sats >= ' + minOutput + ' required', 'ok');
+          if (sendSats < minOutput) addLog('⚠ RELATIVE_VALUE: output ' + sendSats + ' < ' + minOutput + ' required — backend will enforce', 'warn');
+          else addLog('RELATIVE_VALUE: ' + sendSats + ' sats >= ' + minOutput + ' required', 'ok');
         }
       }
 
@@ -8423,111 +8698,170 @@ function SpendPanel({ onViewAsLadder }) {
       }
 
       const spendInputs = [{ txid, vout, sequence: inputSequence }];
+
+      // ─── COSIGN: detect and add co-input ───
+      const cosignBlock = rungBlocks.find(b => b.type === 'COSIGN');
+      let coInput = null; // { txid, vout, amount, scriptPubKey, signerBlocks, spentOutput }
+      if (cosignBlock) {
+        const condHash = cosignBlock.values?.conditions_hash;
+        if (!condHash) {
+          addLog('⚠ COSIGN block has no conditions_hash — backend will reject', 'warn');
+        } else {
+          // Search localStorage records for a matching co-input
+          const allRecords = JSON.parse(localStorage.getItem('ghost_rung_keys') || '[]');
+          for (const cr of allRecords) {
+            if (cr.txid === txid && (cr.vout || 0) === vout) continue; // skip self
+            const coTxData = await apiCall('/api/ladder/tx/' + cr.txid, undefined, true);
+            if (!coTxData) continue;
+            const coOut = coTxData.vout[cr.vout || 0];
+            if (!coOut) continue;
+            const spkHex = coOut.scriptPubKey?.hex || '';
+            if (!spkHex) continue;
+            // Compute SHA256(scriptPubKey) and compare to conditions_hash
+            const spkHash = bytesToHex(await sha256Bytes(hexToBytes(spkHex)));
+            if (spkHash === condHash) {
+              // Found the co-input — build its signer blocks
+              const coRungs = cr.rungs || [];
+              const coRung = coRungs[0];
+              const coBlocks = coRung?.blocks || [];
+              const coKeyByPubkey = new Map();
+              (cr.conditionKeys || []).forEach(k => { if (k.pubkey) coKeyByPubkey.set(k.pubkey, k); });
+              const coSignerBlocks = [];
+              for (const cb of coBlocks) {
+                if (['SIG', 'TIMELOCKED_SIG', 'CLTV_SIG', 'KEY_REF_SIG'].includes(cb.type)) {
+                  const pk = cb.values?.pubkey || cb.values?.signing_key;
+                  const ck = pk ? coKeyByPubkey.get(pk) : (cr.conditionKeys || [])[0];
+                  if (ck) coSignerBlocks.push({ type: cb.type, privkey: ck.privkey });
+                  else coSignerBlocks.push({ type: cb.type });
+                } else if (cb.type === 'MULTISIG' || cb.type === 'TIMELOCKED_MULTISIG') {
+                  const thresh = parseInt(cb.values?.threshold) || 2;
+                  const pks = (cb.values?.pubkeys || '').split(',').map(k => k.trim()).filter(Boolean);
+                  const privkeys = pks.slice(0, thresh).map(pk => coKeyByPubkey.get(pk)?.privkey).filter(Boolean);
+                  coSignerBlocks.push({ type: cb.type, privkeys });
+                } else {
+                  coSignerBlocks.push({ type: cb.type });
+                }
+              }
+              const coAmountSats = Math.round(coOut.value * 1e8);
+              coInput = {
+                txid: cr.txid, vout: cr.vout || 0,
+                amount: coAmountSats,
+                scriptPubKey: spkHex,
+                signerBlocks: coSignerBlocks,
+                spentOutput: { amount: coOut.value, scriptPubKey: spkHex },
+              };
+              spendInputs.push({ txid: cr.txid, vout: cr.vout || 0, sequence: 0xfffffffe });
+              addLog('COSIGN: found co-input ' + cr.txid.substring(0, 16) + ':' + (cr.vout || 0) + ' (' + coAmountSats + ' sats)', 'ok');
+              break;
+            }
+          }
+          if (!coInput) {
+            addLog('⚠ COSIGN: no matching co-input found in records (hash=' + condHash.substring(0, 16) + '...). Spend may fail.', 'warn');
+          }
+        }
+      }
+
       const spendAmount = sendSats / 1e8;
       const freshSigOutput = { amount: spendAmount, conditions: [{ blocks: [{ type: 'SIG', fields: [{ type: 'PUBKEY', hex: walletKey.pubkey }] }] }] };
 
-      // Build output conditions based on covenant requirements
+      // Phase 3: Build outputs compositionally
       let createOutputs;
-      switch (outputMode) {
-        case 'identical': {
-          const conditions = rungsToConditions(voutRungs);
-          createOutputs = [{ amount: spendAmount, conditions }];
-          addLog('Carry-forward: identical conditions (RECURSE_SAME)', 'info');
-          break;
-        }
-        case 'mutated': {
-          const conditions = rungsToConditions(voutRungs);
-          const isDecay = carryBlock.type === 'RECURSE_DECAY';
-          const blockIdx = parseInt(carryBlock.values?.block_idx) || 0;
-          const paramIdx = parseInt(carryBlock.values?.param_idx) || 0;
-          const rawDelta = parseInt(carryBlock.values?.delta || carryBlock.values?.decay_per_step) || 1;
-          const delta = isDecay ? -rawDelta : rawDelta;
-          if (conditions[0] && conditions[0].blocks[blockIdx]) {
-            const targetBlock = conditions[0].blocks[blockIdx];
-            let numCount = 0;
-            for (let fi = 0; fi < targetBlock.fields.length; fi++) {
-              if (targetBlock.fields[fi].type === 'NUMERIC') {
-                if (numCount === paramIdx) {
-                  const oldVal = fromNumericHex(targetBlock.fields[fi].hex);
-                  targetBlock.fields[fi].hex = toNumericHex(String(oldVal + delta));
-                  addLog('Mutated [block=' + blockIdx + ', param=' + paramIdx + ']: ' + oldVal + ' → ' + (oldVal + delta), 'info');
-                  break;
-                }
-                numCount++;
-              }
-            }
+
+      if (ctvBlock) {
+        // ── CTV overrides everything: outputs are pre-committed ──
+        createOutputs = ctvBlock.outputs.map(o => ({ amount: o.amount, conditions: o.conditions, _isCarryForward: true }));
+        addLog('CTV: ' + createOutputs.length + ' template output(s)', 'ok');
+
+      } else if (recurseBlocks.length > 0) {
+        // ── Recursion/carry-forward: rebuild conditions with modifications ──
+
+        // Check for exhausted recursion (free spend)
+        let exhausted = false;
+        for (const rb of recurseBlocks) {
+          if (rb.type === 'RECURSE_COUNT') {
+            const remaining = parseInt(rb.values?.remaining) || 0;
+            if (remaining <= 0) { exhausted = true; addLog('RECURSE_COUNT exhausted — free spend', 'ok'); }
           }
-          createOutputs = [{ amount: spendAmount, conditions }];
-          addLog('Carry-forward: ' + (isDecay ? 'decayed' : 'mutated') + ' (' + carryBlock.type + ')', 'info');
-          break;
+          if (rb.type === 'RECURSE_SPLIT') {
+            const maxSplits = parseInt(rb.values?.max_splits) || 0;
+            if (maxSplits <= 0) { exhausted = true; addLog('RECURSE_SPLIT exhausted — free spend', 'ok'); }
+          }
+          if (rb.type === 'RECURSE_UNTIL') {
+            const target = parseInt(rb.values?.target_height) || 0;
+            if (st.blocks >= target) { exhausted = true; addLog('RECURSE_UNTIL: height ' + target + ' reached — free spend', 'ok'); }
+          }
         }
-        case 'count': {
-          const remaining = parseInt(carryBlock.values?.remaining) || 0;
-          if (remaining <= 0) {
-            createOutputs = [freshSigOutput];
-            addLog('RECURSE_COUNT exhausted — free spend', 'ok');
-          } else {
-            const conditions = rungsToConditions(voutRungs);
-            for (const cond of conditions) {
+
+        if (exhausted) {
+          createOutputs = [freshSigOutput];
+        } else {
+          // Helper: build carry-forward conditions with all modifications applied
+          const buildCarryConditions = () => {
+            const conds = rungsToConditions(voutRungs);
+            for (const cond of conds) {
               for (const blk of cond.blocks) {
+                // Decrement RECURSE_SPLIT max_splits
+                if (blk.type === 'RECURSE_SPLIT') {
+                  for (const f of blk.fields) {
+                    if (f.type === 'NUMERIC') { f.hex = toNumericHex(String(Math.max(0, fromNumericHex(f.hex) - 1))); break; }
+                  }
+                }
+                // Decrement RECURSE_COUNT remaining
                 if (blk.type === 'RECURSE_COUNT') {
                   for (const f of blk.fields) {
-                    if (f.type === 'NUMERIC') { f.hex = toNumericHex(String(fromNumericHex(f.hex) - 1)); break; }
+                    if (f.type === 'NUMERIC') { f.hex = toNumericHex(String(Math.max(0, fromNumericHex(f.hex) - 1))); break; }
                   }
-                  break;
                 }
               }
             }
-            createOutputs = [{ amount: spendAmount, conditions }];
-            addLog('Carry-forward: count ' + remaining + ' → ' + (remaining - 1), 'info');
-          }
-          break;
-        }
-        case 'split': {
-          const maxSplits = parseInt(carryBlock.values?.max_splits) || 2;
-          const minSats = parseInt(carryBlock.values?.min_sats) || 546;
-          if (maxSplits <= 0) {
-            createOutputs = [freshSigOutput];
-            addLog('RECURSE_SPLIT exhausted — free spend', 'ok');
-          } else {
-            const half = Math.floor(sendSats / 2);
-            if (half < minSats) throw new Error('RECURSE_SPLIT: half (' + half + ') below min_sats (' + minSats + ')');
-            const makeSplitConds = () => {
-              const conds = rungsToConditions(voutRungs);
-              for (const cond of conds) {
-                for (const blk of cond.blocks) {
-                  if (blk.type === 'RECURSE_SPLIT') {
-                    for (const f of blk.fields) {
-                      if (f.type === 'NUMERIC') { f.hex = toNumericHex(String(fromNumericHex(f.hex) - 1)); break; }
+            // Apply all mutations (RECURSE_MODIFIED, RECURSE_DECAY)
+            for (const mb of mutationBlocks) {
+              const blockIdx = parseInt(mb.values?.block_idx) || 0;
+              const paramIdx = parseInt(mb.values?.param_idx) || 0;
+              const rawDelta = parseInt(mb.values?.delta || mb.values?.decay_per_step) || 1;
+              const delta = mb.type === 'RECURSE_DECAY' ? -rawDelta : rawDelta;
+              if (conds[0] && conds[0].blocks[blockIdx]) {
+                const targetBlock = conds[0].blocks[blockIdx];
+                let numCount = 0;
+                for (let fi = 0; fi < targetBlock.fields.length; fi++) {
+                  if (targetBlock.fields[fi].type === 'NUMERIC') {
+                    if (numCount === paramIdx) {
+                      const oldVal = fromNumericHex(targetBlock.fields[fi].hex);
+                      const newVal = oldVal + delta;
+                      targetBlock.fields[fi].hex = toNumericHex(String(newVal));
+                      addLog('Mutation [block=' + blockIdx + ', param=' + paramIdx + ']: ' + oldVal + ' → ' + newVal + ' (' + mb.type + ')', 'info');
+                      break;
                     }
+                    numCount++;
                   }
                 }
               }
-              return conds;
-            };
+            }
+            return conds;
+          };
+
+          if (splitBlock) {
+            // ── RECURSE_SPLIT: 2 outputs with carry-forward ──
+            const minSats = parseInt(splitBlock.values?.min_sats) || 546;
+            const half = Math.floor(sendSats / 2);
+            if (half < minSats) throw new Error('RECURSE_SPLIT: half (' + half + ' sats) below min_sats (' + minSats + '). Need at least ' + (minSats * 2 + feeSats) + ' sats in UTXO.');
             createOutputs = [
-              { amount: half / 1e8, conditions: makeSplitConds() },
-              { amount: (sendSats - half) / 1e8, conditions: makeSplitConds() },
+              { amount: half / 1e8, conditions: buildCarryConditions(), _isCarryForward: true },
+              { amount: (sendSats - half) / 1e8, conditions: buildCarryConditions(), _isCarryForward: true },
             ];
+            const maxSplits = parseInt(splitBlock.values?.max_splits) || 0;
             addLog('RECURSE_SPLIT: 2-way (' + half + ' + ' + (sendSats - half) + ' sats), splits ' + maxSplits + ' → ' + (maxSplits - 1), 'info');
-          }
-          break;
-        }
-        case 'until': {
-          const targetHeight = parseInt(carryBlock.values?.target_height) || 0;
-          if (st.blocks >= targetHeight) {
-            createOutputs = [freshSigOutput];
-            addLog('RECURSE_UNTIL: height ' + targetHeight + ' reached (chain ' + st.blocks + ') — free spend', 'ok');
           } else {
-            const conditions = rungsToConditions(voutRungs);
-            createOutputs = [{ amount: spendAmount, conditions }];
-            addLog('RECURSE_UNTIL: before target (' + st.blocks + '/' + targetHeight + '), carry-forward', 'info');
+            // ── Single carry-forward output (RECURSE_SAME, COUNT, UNTIL, MODIFIED, DECAY) ──
+            createOutputs = [{ amount: spendAmount, conditions: buildCarryConditions(), _isCarryForward: true }];
+            const types = recurseBlocks.map(b => b.type).join(' + ');
+            addLog('Carry-forward: ' + types, 'info');
           }
-          break;
         }
-        default: {
-          createOutputs = [freshSigOutput];
-        }
+
+      } else {
+        // ── No recursion, no CTV: fresh output to wallet ──
+        createOutputs = [freshSigOutput];
       }
 
       // Build create payload
@@ -8551,10 +8885,18 @@ function SpendPanel({ onViewAsLadder }) {
         signerEntry.rung = rungIdx;
         addLog('Passing rung index ' + rungIdx + ' to signrungtx (condition ' + (rungIdx + 1) + ' of ' + voutRungs.length + ')', 'info');
       }
+      const signers = [signerEntry];
+      const spent_outputs = [{ amount: utxoOutput.value, scriptPubKey: utxoOutput.scriptPubKey?.hex || '' }];
+      // COSIGN: add co-input signer and spent output
+      if (coInput) {
+        signers.push({ input: 1, blocks: coInput.signerBlocks });
+        spent_outputs.push(coInput.spentOutput);
+        addLog('COSIGN: signing co-input with ' + coInput.signerBlocks.length + ' block(s)', 'info');
+      }
       const signPayload = {
         hex: createResult.hex,
-        signers: [signerEntry],
-        spent_outputs: [{ amount: utxoOutput.value, scriptPubKey: utxoOutput.scriptPubKey?.hex || '' }],
+        signers,
+        spent_outputs,
       };
       const signResult = await apiCall('/api/ladder/sign', signPayload, true);
       if (!signResult || !signResult.hex) throw new Error('Signing failed.');
@@ -8600,6 +8942,37 @@ function SpendPanel({ onViewAsLadder }) {
       addLog('Mining confirmation block...');
       await apiCall('/api/ladder/mine', { blocks: 1 }, true);
       addLog('Confirmed!', 'ok');
+
+      // 9. Save child records for carry-forward outputs (enables chained recursive spends)
+      const carryOutputs = createOutputs.filter(o => o._isCarryForward);
+      if (carryOutputs.length > 0) {
+        try {
+          const existing = JSON.parse(localStorage.getItem('ghost_rung_keys') || '[]');
+          carryOutputs.forEach((co, idx) => {
+            const childRungs = (co.conditions || []).map(cond => {
+              const blocks = (cond.blocks || []).map(wb => wireFieldsToValues(wb));
+              return { label: (targetRung.label || 'Rung') + ' → child ' + idx, vout: idx, blocks, coilType: targetRung.coilType || 'UNLOCK', coilAddress: targetRung.coilAddress || null };
+            });
+            const childAmount = Math.round(co.amount * 1e8);
+            existing.push({
+              txid: bcResult.txid, vout: idx, timestamp: Date.now(),
+              scheme: rec.scheme || 'SCHNORR',
+              amount: childAmount,
+              walletKey: rec.walletKey ? { pubkey: rec.walletKey.pubkey, privkey: rec.walletKey.privkey } : null,
+              conditionKeys: (rec.conditionKeys || []).map(k => ({ pubkey: k.pubkey, privkey: k.privkey, pubkey_commit: k.pubkey_commit || '', scheme: k.scheme || rec.scheme || 'SCHNORR' })),
+              changeKey: null,
+              preimages: rec.preimages || [],
+              rungs: childRungs,
+              relays: rec.relays || undefined,
+              ctvOutputsMap: rec.ctvOutputsMap || undefined,
+            });
+          });
+          if (existing.length > 100) existing.splice(0, existing.length - 100);
+          localStorage.setItem('ghost_rung_keys', JSON.stringify(existing));
+          addLog('Saved ' + carryOutputs.length + ' child record(s) for recursive spend', 'ok');
+          loadRecords();
+        } catch (e) { addLog('Warning: failed to save child records: ' + e.message, 'warn'); }
+      }
 
       setSpendResult({ txid: bcResult.txid, amount: sendSats, scheme, destAddress: dest });
 

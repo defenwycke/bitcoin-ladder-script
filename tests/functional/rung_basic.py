@@ -171,6 +171,35 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         self.test_latch_state_gating(node)
         self.test_latch_covenant_chain(node)
 
+        # Compound block type tests (C-5)
+        self.test_timelocked_sig(node)
+        self.test_negative_timelocked_sig_bad_sig(node)
+        self.test_htlc_compound(node)
+        self.test_negative_htlc_wrong_preimage(node)
+        self.test_hash_sig(node)
+        self.test_negative_hash_sig_wrong_preimage(node)
+        self.test_cltv_sig(node)
+        self.test_negative_cltv_sig_too_early(node)
+        self.test_timelocked_multisig(node)
+        self.test_negative_timelocked_multisig_too_few_sigs(node)
+
+        self.test_ptlc(node)
+        self.test_negative_ptlc_bad_sig(node)
+
+        # Governance block type tests (C-5)
+        self.test_epoch_gate(node)
+        self.test_negative_epoch_gate_outside_window(node)
+        self.test_weight_limit(node)
+        self.test_negative_weight_limit_exceeded(node)
+        self.test_input_count(node)
+        self.test_negative_input_count_below_min(node)
+        self.test_output_count(node)
+        self.test_negative_output_count_above_max(node)
+        self.test_relative_value(node)
+        self.test_negative_relative_value_too_low(node)
+        self.test_accumulator(node)
+        self.test_negative_accumulator_wrong_leaf(node)
+
         # Data embedding / spam resistance tests
         self.test_spam_arbitrary_preimage_rejected(node)
         self.test_spam_pubkey_no_crypto_validation(node)
@@ -5907,6 +5936,989 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         # Transaction should be signed but invalid (wrong key vs commitment)
         assert_raises_rpc_error(-26, None, node.sendrawtransaction, sign_result["hex"])
         self.log.info("  KEY_REF_SIG wrong key correctly rejected!")
+
+    # =========================================================================
+    # Compound block type tests (C-5)
+    # =========================================================================
+
+    def test_timelocked_sig(self, node):
+        """TIMELOCKED_SIG: SIG + CSV in one compound block."""
+        self.log.info("Testing TIMELOCKED_SIG spend...")
+        csv_blocks = 5
+        wif, pubkey = make_keypair()
+        commit = hashlib.sha256(bytes.fromhex(pubkey)).hexdigest()
+
+        conditions = [{"blocks": [{"type": "TIMELOCKED_SIG", "fields": [
+            {"type": "PUBKEY_COMMIT", "hex": commit},
+            {"type": "SCHEME", "hex": "01"},
+            {"type": "NUMERIC", "hex": numeric_hex(csv_blocks)},
+        ]}]}]
+
+        txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
+
+        output_amount = amount - Decimal("0.001")
+        dest_wif, dest_pubkey = make_keypair()
+        dest_conditions = [{"blocks": [{"type": "SIG", "fields": [
+            {"type": "PUBKEY", "hex": dest_pubkey}
+        ]}]}]
+
+        # Mine for CSV maturity
+        self.generate(node, csv_blocks)
+
+        spend = node.createrungtx(
+            [{"txid": txid, "vout": vout, "sequence": csv_blocks}],
+            [{"amount": output_amount, "conditions": dest_conditions}]
+        )
+        sign_result = node.signrungtx(
+            spend["hex"],
+            [{"input": 0, "blocks": [{"type": "TIMELOCKED_SIG", "privkey": wif}]}],
+            [{"amount": amount, "scriptPubKey": spk}]
+        )
+        assert sign_result["complete"]
+        spend_txid = node.sendrawtransaction(sign_result["hex"])
+        self.generate(node, 1)
+        assert node.getrawtransaction(spend_txid, True)["confirmations"] >= 1
+        self.log.info("  TIMELOCKED_SIG spend confirmed!")
+
+    def test_negative_timelocked_sig_bad_sig(self, node):
+        """TIMELOCKED_SIG: wrong key should fail."""
+        self.log.info("Testing TIMELOCKED_SIG negative (wrong key)...")
+        csv_blocks = 5
+        wif, pubkey = make_keypair()
+        wrong_wif, _ = make_keypair()
+        commit = hashlib.sha256(bytes.fromhex(pubkey)).hexdigest()
+
+        conditions = [{"blocks": [{"type": "TIMELOCKED_SIG", "fields": [
+            {"type": "PUBKEY_COMMIT", "hex": commit},
+            {"type": "SCHEME", "hex": "01"},
+            {"type": "NUMERIC", "hex": numeric_hex(csv_blocks)},
+        ]}]}]
+
+        txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
+        self.generate(node, csv_blocks)
+
+        output_amount = amount - Decimal("0.001")
+        dest_wif, dest_pubkey = make_keypair()
+        dest_conditions = [{"blocks": [{"type": "SIG", "fields": [
+            {"type": "PUBKEY", "hex": dest_pubkey}
+        ]}]}]
+
+        spend = node.createrungtx(
+            [{"txid": txid, "vout": vout, "sequence": csv_blocks}],
+            [{"amount": output_amount, "conditions": dest_conditions}]
+        )
+        sign_result = node.signrungtx(
+            spend["hex"],
+            [{"input": 0, "blocks": [{"type": "TIMELOCKED_SIG", "privkey": wrong_wif}]}],
+            [{"amount": amount, "scriptPubKey": spk}]
+        )
+        assert_raises_rpc_error(-26, None, node.sendrawtransaction, sign_result["hex"])
+        self.log.info("  TIMELOCKED_SIG negative (wrong key) — rejected correctly!")
+
+    def test_htlc_compound(self, node):
+        """HTLC compound block: hash + timelock + sig in one block."""
+        self.log.info("Testing HTLC compound block spend...")
+        csv_blocks = 5
+        wif, pubkey = make_keypair()
+        commit = hashlib.sha256(bytes.fromhex(pubkey)).hexdigest()
+
+        preimage = os.urandom(32)
+        preimage_hash = hashlib.sha256(preimage).hexdigest()
+
+        # HTLC conditions: [PUBKEY_COMMIT, PUBKEY_COMMIT(receiver), HASH256, NUMERIC]
+        # For simplicity, use same key for both sender/receiver
+        conditions = [{"blocks": [{"type": "HTLC", "fields": [
+            {"type": "PUBKEY_COMMIT", "hex": commit},
+            {"type": "PUBKEY_COMMIT", "hex": commit},
+            {"type": "HASH256", "hex": preimage_hash},
+            {"type": "NUMERIC", "hex": numeric_hex(csv_blocks)},
+        ]}]}]
+
+        txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
+        self.generate(node, csv_blocks)
+
+        output_amount = amount - Decimal("0.001")
+        dest_wif, dest_pubkey = make_keypair()
+        dest_conditions = [{"blocks": [{"type": "SIG", "fields": [
+            {"type": "PUBKEY", "hex": dest_pubkey}
+        ]}]}]
+
+        spend = node.createrungtx(
+            [{"txid": txid, "vout": vout, "sequence": csv_blocks}],
+            [{"amount": output_amount, "conditions": dest_conditions}]
+        )
+        sign_result = node.signrungtx(
+            spend["hex"],
+            [{"input": 0, "blocks": [{"type": "HTLC", "privkey": wif, "preimage": preimage.hex()}]}],
+            [{"amount": amount, "scriptPubKey": spk}]
+        )
+        assert sign_result["complete"]
+        spend_txid = node.sendrawtransaction(sign_result["hex"])
+        self.generate(node, 1)
+        assert node.getrawtransaction(spend_txid, True)["confirmations"] >= 1
+        self.log.info("  HTLC compound block spend confirmed!")
+
+    def test_negative_htlc_wrong_preimage(self, node):
+        """HTLC compound: wrong preimage should fail."""
+        self.log.info("Testing HTLC negative (wrong preimage)...")
+        csv_blocks = 5
+        wif, pubkey = make_keypair()
+        commit = hashlib.sha256(bytes.fromhex(pubkey)).hexdigest()
+
+        preimage = os.urandom(32)
+        preimage_hash = hashlib.sha256(preimage).hexdigest()
+        wrong_preimage = os.urandom(32)
+
+        conditions = [{"blocks": [{"type": "HTLC", "fields": [
+            {"type": "PUBKEY_COMMIT", "hex": commit},
+            {"type": "PUBKEY_COMMIT", "hex": commit},
+            {"type": "HASH256", "hex": preimage_hash},
+            {"type": "NUMERIC", "hex": numeric_hex(csv_blocks)},
+        ]}]}]
+
+        txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
+        self.generate(node, csv_blocks)
+
+        output_amount = amount - Decimal("0.001")
+        dest_wif, dest_pubkey = make_keypair()
+        dest_conditions = [{"blocks": [{"type": "SIG", "fields": [
+            {"type": "PUBKEY", "hex": dest_pubkey}
+        ]}]}]
+
+        spend = node.createrungtx(
+            [{"txid": txid, "vout": vout, "sequence": csv_blocks}],
+            [{"amount": output_amount, "conditions": dest_conditions}]
+        )
+        sign_result = node.signrungtx(
+            spend["hex"],
+            [{"input": 0, "blocks": [{"type": "HTLC", "privkey": wif, "preimage": wrong_preimage.hex()}]}],
+            [{"amount": amount, "scriptPubKey": spk}]
+        )
+        assert_raises_rpc_error(-26, None, node.sendrawtransaction, sign_result["hex"])
+        self.log.info("  HTLC negative (wrong preimage) — rejected correctly!")
+
+    def test_hash_sig(self, node):
+        """HASH_SIG: hash preimage + signature in one compound block."""
+        self.log.info("Testing HASH_SIG spend...")
+        wif, pubkey = make_keypair()
+        commit = hashlib.sha256(bytes.fromhex(pubkey)).hexdigest()
+
+        preimage = os.urandom(32)
+        preimage_hash = hashlib.sha256(preimage).hexdigest()
+
+        conditions = [{"blocks": [{"type": "HASH_SIG", "fields": [
+            {"type": "PUBKEY_COMMIT", "hex": commit},
+            {"type": "HASH256", "hex": preimage_hash},
+            {"type": "SCHEME", "hex": "01"},
+        ]}]}]
+
+        txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
+
+        output_amount = amount - Decimal("0.001")
+        dest_wif, dest_pubkey = make_keypair()
+        dest_conditions = [{"blocks": [{"type": "SIG", "fields": [
+            {"type": "PUBKEY", "hex": dest_pubkey}
+        ]}]}]
+
+        spend = node.createrungtx(
+            [{"txid": txid, "vout": vout}],
+            [{"amount": output_amount, "conditions": dest_conditions}]
+        )
+        sign_result = node.signrungtx(
+            spend["hex"],
+            [{"input": 0, "blocks": [{"type": "HASH_SIG", "privkey": wif, "preimage": preimage.hex()}]}],
+            [{"amount": amount, "scriptPubKey": spk}]
+        )
+        assert sign_result["complete"]
+        spend_txid = node.sendrawtransaction(sign_result["hex"])
+        self.generate(node, 1)
+        assert node.getrawtransaction(spend_txid, True)["confirmations"] >= 1
+        self.log.info("  HASH_SIG spend confirmed!")
+
+    def test_negative_hash_sig_wrong_preimage(self, node):
+        """HASH_SIG: wrong preimage should fail."""
+        self.log.info("Testing HASH_SIG negative (wrong preimage)...")
+        wif, pubkey = make_keypair()
+        commit = hashlib.sha256(bytes.fromhex(pubkey)).hexdigest()
+
+        preimage = os.urandom(32)
+        preimage_hash = hashlib.sha256(preimage).hexdigest()
+        wrong_preimage = os.urandom(32)
+
+        conditions = [{"blocks": [{"type": "HASH_SIG", "fields": [
+            {"type": "PUBKEY_COMMIT", "hex": commit},
+            {"type": "HASH256", "hex": preimage_hash},
+            {"type": "SCHEME", "hex": "01"},
+        ]}]}]
+
+        txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
+
+        output_amount = amount - Decimal("0.001")
+        dest_wif, dest_pubkey = make_keypair()
+        dest_conditions = [{"blocks": [{"type": "SIG", "fields": [
+            {"type": "PUBKEY", "hex": dest_pubkey}
+        ]}]}]
+
+        spend = node.createrungtx(
+            [{"txid": txid, "vout": vout}],
+            [{"amount": output_amount, "conditions": dest_conditions}]
+        )
+        sign_result = node.signrungtx(
+            spend["hex"],
+            [{"input": 0, "blocks": [{"type": "HASH_SIG", "privkey": wif, "preimage": wrong_preimage.hex()}]}],
+            [{"amount": amount, "scriptPubKey": spk}]
+        )
+        assert_raises_rpc_error(-26, None, node.sendrawtransaction, sign_result["hex"])
+        self.log.info("  HASH_SIG negative (wrong preimage) — rejected correctly!")
+
+    def test_cltv_sig(self, node):
+        """CLTV_SIG: signature + absolute timelock in one compound block."""
+        self.log.info("Testing CLTV_SIG spend...")
+        wif, pubkey = make_keypair()
+        commit = hashlib.sha256(bytes.fromhex(pubkey)).hexdigest()
+
+        current_height = node.getblockcount()
+        target_height = current_height + 10
+
+        conditions = [{"blocks": [{"type": "CLTV_SIG", "fields": [
+            {"type": "PUBKEY_COMMIT", "hex": commit},
+            {"type": "SCHEME", "hex": "01"},
+            {"type": "NUMERIC", "hex": numeric_hex(target_height)},
+        ]}]}]
+
+        txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
+
+        # Mine past CLTV height
+        blocks_needed = target_height - node.getblockcount() + 1
+        if blocks_needed > 0:
+            self.generate(node, blocks_needed)
+
+        output_amount = amount - Decimal("0.001")
+        dest_wif, dest_pubkey = make_keypair()
+        dest_conditions = [{"blocks": [{"type": "SIG", "fields": [
+            {"type": "PUBKEY", "hex": dest_pubkey}
+        ]}]}]
+
+        spend = node.createrungtx(
+            [{"txid": txid, "vout": vout, "locktime": target_height}],
+            [{"amount": output_amount, "conditions": dest_conditions}],
+            target_height,
+        )
+        sign_result = node.signrungtx(
+            spend["hex"],
+            [{"input": 0, "blocks": [{"type": "CLTV_SIG", "privkey": wif}]}],
+            [{"amount": amount, "scriptPubKey": spk}]
+        )
+        assert sign_result["complete"]
+        spend_txid = node.sendrawtransaction(sign_result["hex"])
+        self.generate(node, 1)
+        assert node.getrawtransaction(spend_txid, True)["confirmations"] >= 1
+        self.log.info("  CLTV_SIG spend confirmed!")
+
+    def test_negative_cltv_sig_too_early(self, node):
+        """CLTV_SIG: spending before target height should fail."""
+        self.log.info("Testing CLTV_SIG negative (too early)...")
+        wif, pubkey = make_keypair()
+        commit = hashlib.sha256(bytes.fromhex(pubkey)).hexdigest()
+
+        current_height = node.getblockcount()
+        target_height = current_height + 100  # far in the future
+
+        conditions = [{"blocks": [{"type": "CLTV_SIG", "fields": [
+            {"type": "PUBKEY_COMMIT", "hex": commit},
+            {"type": "SCHEME", "hex": "01"},
+            {"type": "NUMERIC", "hex": numeric_hex(target_height)},
+        ]}]}]
+
+        txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
+
+        output_amount = amount - Decimal("0.001")
+        dest_wif, dest_pubkey = make_keypair()
+        dest_conditions = [{"blocks": [{"type": "SIG", "fields": [
+            {"type": "PUBKEY", "hex": dest_pubkey}
+        ]}]}]
+
+        spend = node.createrungtx(
+            [{"txid": txid, "vout": vout, "locktime": target_height}],
+            [{"amount": output_amount, "conditions": dest_conditions}],
+            target_height,
+        )
+        sign_result = node.signrungtx(
+            spend["hex"],
+            [{"input": 0, "blocks": [{"type": "CLTV_SIG", "privkey": wif}]}],
+            [{"amount": amount, "scriptPubKey": spk}]
+        )
+        assert_raises_rpc_error(-26, "non-final", node.sendrawtransaction, sign_result["hex"])
+        self.log.info("  CLTV_SIG negative (too early) — rejected correctly!")
+
+    def test_timelocked_multisig(self, node):
+        """TIMELOCKED_MULTISIG: 2-of-3 multisig + CSV in one compound block."""
+        self.log.info("Testing TIMELOCKED_MULTISIG spend...")
+        csv_blocks = 5
+        wif1, pk1 = make_keypair()
+        wif2, pk2 = make_keypair()
+        wif3, pk3 = make_keypair()
+        commit1 = hashlib.sha256(bytes.fromhex(pk1)).hexdigest()
+        commit2 = hashlib.sha256(bytes.fromhex(pk2)).hexdigest()
+        commit3 = hashlib.sha256(bytes.fromhex(pk3)).hexdigest()
+
+        conditions = [{"blocks": [{"type": "TIMELOCKED_MULTISIG", "fields": [
+            {"type": "NUMERIC", "hex": numeric_hex(2)},  # threshold
+            {"type": "PUBKEY_COMMIT", "hex": commit1},
+            {"type": "PUBKEY_COMMIT", "hex": commit2},
+            {"type": "PUBKEY_COMMIT", "hex": commit3},
+            {"type": "SCHEME", "hex": "01"},
+            {"type": "NUMERIC", "hex": numeric_hex(csv_blocks)},
+        ]}]}]
+
+        txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
+        self.generate(node, csv_blocks)
+
+        output_amount = amount - Decimal("0.001")
+        dest_wif, dest_pubkey = make_keypair()
+        dest_conditions = [{"blocks": [{"type": "SIG", "fields": [
+            {"type": "PUBKEY", "hex": dest_pubkey}
+        ]}]}]
+
+        spend = node.createrungtx(
+            [{"txid": txid, "vout": vout, "sequence": csv_blocks}],
+            [{"amount": output_amount, "conditions": dest_conditions}]
+        )
+        sign_result = node.signrungtx(
+            spend["hex"],
+            [{"input": 0, "blocks": [{"type": "TIMELOCKED_MULTISIG",
+                                       "privkeys": [wif1, wif2]}]}],
+            [{"amount": amount, "scriptPubKey": spk}]
+        )
+        assert sign_result["complete"]
+        spend_txid = node.sendrawtransaction(sign_result["hex"])
+        self.generate(node, 1)
+        assert node.getrawtransaction(spend_txid, True)["confirmations"] >= 1
+        self.log.info("  TIMELOCKED_MULTISIG spend confirmed!")
+
+    def test_negative_timelocked_multisig_too_few_sigs(self, node):
+        """TIMELOCKED_MULTISIG: 1-of-3 when threshold is 2 should fail."""
+        self.log.info("Testing TIMELOCKED_MULTISIG negative (too few sigs)...")
+        csv_blocks = 5
+        wif1, pk1 = make_keypair()
+        _wif2, pk2 = make_keypair()
+        _wif3, pk3 = make_keypair()
+        commit1 = hashlib.sha256(bytes.fromhex(pk1)).hexdigest()
+        commit2 = hashlib.sha256(bytes.fromhex(pk2)).hexdigest()
+        commit3 = hashlib.sha256(bytes.fromhex(pk3)).hexdigest()
+
+        conditions = [{"blocks": [{"type": "TIMELOCKED_MULTISIG", "fields": [
+            {"type": "NUMERIC", "hex": numeric_hex(2)},
+            {"type": "PUBKEY_COMMIT", "hex": commit1},
+            {"type": "PUBKEY_COMMIT", "hex": commit2},
+            {"type": "PUBKEY_COMMIT", "hex": commit3},
+            {"type": "SCHEME", "hex": "01"},
+            {"type": "NUMERIC", "hex": numeric_hex(csv_blocks)},
+        ]}]}]
+
+        txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
+        self.generate(node, csv_blocks)
+
+        output_amount = amount - Decimal("0.001")
+        dest_wif, dest_pubkey = make_keypair()
+        dest_conditions = [{"blocks": [{"type": "SIG", "fields": [
+            {"type": "PUBKEY", "hex": dest_pubkey}
+        ]}]}]
+
+        spend = node.createrungtx(
+            [{"txid": txid, "vout": vout, "sequence": csv_blocks}],
+            [{"amount": output_amount, "conditions": dest_conditions}]
+        )
+        sign_result = node.signrungtx(
+            spend["hex"],
+            [{"input": 0, "blocks": [{"type": "TIMELOCKED_MULTISIG",
+                                       "privkeys": [wif1]}]}],  # only 1 sig, need 2
+            [{"amount": amount, "scriptPubKey": spk}]
+        )
+        assert_raises_rpc_error(-26, None, node.sendrawtransaction, sign_result["hex"])
+        self.log.info("  TIMELOCKED_MULTISIG negative (too few sigs) — rejected correctly!")
+
+    def test_ptlc(self, node):
+        """PTLC: adaptor signature + CSV in one compound block."""
+        self.log.info("Testing PTLC spend...")
+        csv_blocks = 5
+        signing_wif, signing_pubkey = make_keypair()
+        _adaptor_wif, adaptor_pubkey = make_keypair()
+
+        signing_commit = hashlib.sha256(bytes.fromhex(signing_pubkey)).hexdigest()
+        adaptor_commit = hashlib.sha256(bytes.fromhex(adaptor_pubkey)).hexdigest()
+
+        conditions = [{"blocks": [{"type": "PTLC", "fields": [
+            {"type": "PUBKEY_COMMIT", "hex": signing_commit},
+            {"type": "PUBKEY_COMMIT", "hex": adaptor_commit},
+            {"type": "NUMERIC", "hex": numeric_hex(csv_blocks)},
+        ]}]}]
+
+        txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
+        self.generate(node, csv_blocks)
+
+        output_amount = amount - Decimal("0.001")
+        dest_wif, dest_pubkey = make_keypair()
+        dest_conditions = [{"blocks": [{"type": "SIG", "fields": [
+            {"type": "PUBKEY", "hex": dest_pubkey}
+        ]}]}]
+
+        spend = node.createrungtx(
+            [{"txid": txid, "vout": vout, "sequence": csv_blocks}],
+            [{"amount": output_amount, "conditions": dest_conditions}]
+        )
+        sign_result = node.signrungtx(
+            spend["hex"],
+            [{"input": 0, "blocks": [{"type": "PTLC", "privkey": signing_wif}]}],
+            [{"amount": amount, "scriptPubKey": spk}]
+        )
+        assert sign_result["complete"]
+        spend_txid = node.sendrawtransaction(sign_result["hex"])
+        self.generate(node, 1)
+        assert node.getrawtransaction(spend_txid, True)["confirmations"] >= 1
+        self.log.info("  PTLC spend confirmed!")
+
+    def test_negative_ptlc_bad_sig(self, node):
+        """PTLC: wrong signing key should fail."""
+        self.log.info("Testing PTLC negative (wrong key)...")
+        csv_blocks = 5
+        _correct_wif, signing_pubkey = make_keypair()
+        wrong_wif, _ = make_keypair()
+        _adaptor_wif, adaptor_pubkey = make_keypair()
+
+        signing_commit = hashlib.sha256(bytes.fromhex(signing_pubkey)).hexdigest()
+        adaptor_commit = hashlib.sha256(bytes.fromhex(adaptor_pubkey)).hexdigest()
+
+        conditions = [{"blocks": [{"type": "PTLC", "fields": [
+            {"type": "PUBKEY_COMMIT", "hex": signing_commit},
+            {"type": "PUBKEY_COMMIT", "hex": adaptor_commit},
+            {"type": "NUMERIC", "hex": numeric_hex(csv_blocks)},
+        ]}]}]
+
+        txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
+        self.generate(node, csv_blocks)
+
+        output_amount = amount - Decimal("0.001")
+        dest_wif, dest_pubkey = make_keypair()
+        dest_conditions = [{"blocks": [{"type": "SIG", "fields": [
+            {"type": "PUBKEY", "hex": dest_pubkey}
+        ]}]}]
+
+        spend = node.createrungtx(
+            [{"txid": txid, "vout": vout, "sequence": csv_blocks}],
+            [{"amount": output_amount, "conditions": dest_conditions}]
+        )
+        sign_result = node.signrungtx(
+            spend["hex"],
+            [{"input": 0, "blocks": [{"type": "PTLC", "privkey": wrong_wif}]}],
+            [{"amount": amount, "scriptPubKey": spk}]
+        )
+        assert_raises_rpc_error(-26, None, node.sendrawtransaction, sign_result["hex"])
+        self.log.info("  PTLC negative (wrong key) — rejected correctly!")
+
+    # =========================================================================
+    # Governance block type tests (C-5)
+    # =========================================================================
+
+    def test_epoch_gate(self, node):
+        """EPOCH_GATE: spending allowed within epoch window."""
+        self.log.info("Testing EPOCH_GATE spend...")
+        # Use a large epoch so we're guaranteed to be within the window
+        epoch_size = 10000
+        window_size = 9999  # almost always open
+
+        conditions = [{"blocks": [
+            {"type": "EPOCH_GATE", "fields": [
+                {"type": "NUMERIC", "hex": numeric_hex(epoch_size)},
+                {"type": "NUMERIC", "hex": numeric_hex(window_size)},
+            ]},
+            {"type": "SIG", "fields": [
+                {"type": "PUBKEY", "hex": make_keypair()[1]}
+            ]},
+        ]}]
+
+        wif, pubkey = make_keypair()
+        conditions[0]["blocks"][1]["fields"][0]["hex"] = pubkey
+
+        txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
+
+        output_amount = amount - Decimal("0.001")
+        dest_wif, dest_pubkey = make_keypair()
+        dest_conditions = [{"blocks": [{"type": "SIG", "fields": [
+            {"type": "PUBKEY", "hex": dest_pubkey}
+        ]}]}]
+
+        spend = node.createrungtx(
+            [{"txid": txid, "vout": vout}],
+            [{"amount": output_amount, "conditions": dest_conditions}]
+        )
+        sign_result = node.signrungtx(
+            spend["hex"],
+            [{"input": 0, "blocks": [{"type": "EPOCH_GATE"}, {"type": "SIG", "privkey": wif}]}],
+            [{"amount": amount, "scriptPubKey": spk}]
+        )
+        assert sign_result["complete"]
+        spend_txid = node.sendrawtransaction(sign_result["hex"])
+        self.generate(node, 1)
+        assert node.getrawtransaction(spend_txid, True)["confirmations"] >= 1
+        self.log.info("  EPOCH_GATE spend confirmed!")
+
+    def test_negative_epoch_gate_outside_window(self, node):
+        """EPOCH_GATE: spending outside epoch window should fail."""
+        self.log.info("Testing EPOCH_GATE negative (outside window)...")
+        # Epoch of 10 blocks, window of 1 — very narrow
+        epoch_size = 10
+        window_size = 1
+
+        wif, pubkey = make_keypair()
+
+        conditions = [{"blocks": [
+            {"type": "EPOCH_GATE", "fields": [
+                {"type": "NUMERIC", "hex": numeric_hex(epoch_size)},
+                {"type": "NUMERIC", "hex": numeric_hex(window_size)},
+            ]},
+            {"type": "SIG", "fields": [
+                {"type": "PUBKEY", "hex": pubkey}
+            ]},
+        ]}]
+
+        txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
+
+        # Mine to ensure we're outside the 1-block window (height % 10 >= 1)
+        current = node.getblockcount()
+        remainder = current % epoch_size
+        if remainder < window_size:
+            self.generate(node, window_size - remainder + 1)
+
+        output_amount = amount - Decimal("0.001")
+        dest_wif, dest_pubkey = make_keypair()
+        dest_conditions = [{"blocks": [{"type": "SIG", "fields": [
+            {"type": "PUBKEY", "hex": dest_pubkey}
+        ]}]}]
+
+        spend = node.createrungtx(
+            [{"txid": txid, "vout": vout}],
+            [{"amount": output_amount, "conditions": dest_conditions}]
+        )
+        sign_result = node.signrungtx(
+            spend["hex"],
+            [{"input": 0, "blocks": [{"type": "EPOCH_GATE"}, {"type": "SIG", "privkey": wif}]}],
+            [{"amount": amount, "scriptPubKey": spk}]
+        )
+        assert_raises_rpc_error(-26, None, node.sendrawtransaction, sign_result["hex"])
+        self.log.info("  EPOCH_GATE negative (outside window) — rejected correctly!")
+
+    def test_weight_limit(self, node):
+        """WEIGHT_LIMIT: transaction weight within limit."""
+        self.log.info("Testing WEIGHT_LIMIT spend...")
+        wif, pubkey = make_keypair()
+
+        # Generous weight limit — a simple tx is ~560 WU
+        conditions = [{"blocks": [
+            {"type": "WEIGHT_LIMIT", "fields": [
+                {"type": "NUMERIC", "hex": numeric_hex(100000)},
+            ]},
+            {"type": "SIG", "fields": [
+                {"type": "PUBKEY", "hex": pubkey}
+            ]},
+        ]}]
+
+        txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
+
+        output_amount = amount - Decimal("0.001")
+        dest_wif, dest_pubkey = make_keypair()
+        dest_conditions = [{"blocks": [{"type": "SIG", "fields": [
+            {"type": "PUBKEY", "hex": dest_pubkey}
+        ]}]}]
+
+        spend = node.createrungtx(
+            [{"txid": txid, "vout": vout}],
+            [{"amount": output_amount, "conditions": dest_conditions}]
+        )
+        sign_result = node.signrungtx(
+            spend["hex"],
+            [{"input": 0, "blocks": [{"type": "WEIGHT_LIMIT"}, {"type": "SIG", "privkey": wif}]}],
+            [{"amount": amount, "scriptPubKey": spk}]
+        )
+        assert sign_result["complete"]
+        spend_txid = node.sendrawtransaction(sign_result["hex"])
+        self.generate(node, 1)
+        assert node.getrawtransaction(spend_txid, True)["confirmations"] >= 1
+        self.log.info("  WEIGHT_LIMIT spend confirmed!")
+
+    def test_negative_weight_limit_exceeded(self, node):
+        """WEIGHT_LIMIT: transaction weight exceeding limit should fail."""
+        self.log.info("Testing WEIGHT_LIMIT negative (exceeded)...")
+        wif, pubkey = make_keypair()
+
+        # Impossibly small weight limit — any real tx exceeds this
+        conditions = [{"blocks": [
+            {"type": "WEIGHT_LIMIT", "fields": [
+                {"type": "NUMERIC", "hex": numeric_hex(1)},
+            ]},
+            {"type": "SIG", "fields": [
+                {"type": "PUBKEY", "hex": pubkey}
+            ]},
+        ]}]
+
+        txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
+
+        output_amount = amount - Decimal("0.001")
+        dest_wif, dest_pubkey = make_keypair()
+        dest_conditions = [{"blocks": [{"type": "SIG", "fields": [
+            {"type": "PUBKEY", "hex": dest_pubkey}
+        ]}]}]
+
+        spend = node.createrungtx(
+            [{"txid": txid, "vout": vout}],
+            [{"amount": output_amount, "conditions": dest_conditions}]
+        )
+        sign_result = node.signrungtx(
+            spend["hex"],
+            [{"input": 0, "blocks": [{"type": "WEIGHT_LIMIT"}, {"type": "SIG", "privkey": wif}]}],
+            [{"amount": amount, "scriptPubKey": spk}]
+        )
+        assert_raises_rpc_error(-26, None, node.sendrawtransaction, sign_result["hex"])
+        self.log.info("  WEIGHT_LIMIT negative (exceeded) — rejected correctly!")
+
+    def test_input_count(self, node):
+        """INPUT_COUNT: transaction has correct number of inputs."""
+        self.log.info("Testing INPUT_COUNT spend...")
+        wif, pubkey = make_keypair()
+
+        # Allow 1-10 inputs (our tx will have 1)
+        conditions = [{"blocks": [
+            {"type": "INPUT_COUNT", "fields": [
+                {"type": "NUMERIC", "hex": numeric_hex(1)},
+                {"type": "NUMERIC", "hex": numeric_hex(10)},
+            ]},
+            {"type": "SIG", "fields": [
+                {"type": "PUBKEY", "hex": pubkey}
+            ]},
+        ]}]
+
+        txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
+
+        output_amount = amount - Decimal("0.001")
+        dest_wif, dest_pubkey = make_keypair()
+        dest_conditions = [{"blocks": [{"type": "SIG", "fields": [
+            {"type": "PUBKEY", "hex": dest_pubkey}
+        ]}]}]
+
+        spend = node.createrungtx(
+            [{"txid": txid, "vout": vout}],
+            [{"amount": output_amount, "conditions": dest_conditions}]
+        )
+        sign_result = node.signrungtx(
+            spend["hex"],
+            [{"input": 0, "blocks": [{"type": "INPUT_COUNT"}, {"type": "SIG", "privkey": wif}]}],
+            [{"amount": amount, "scriptPubKey": spk}]
+        )
+        assert sign_result["complete"]
+        spend_txid = node.sendrawtransaction(sign_result["hex"])
+        self.generate(node, 1)
+        assert node.getrawtransaction(spend_txid, True)["confirmations"] >= 1
+        self.log.info("  INPUT_COUNT spend confirmed!")
+
+    def test_negative_input_count_below_min(self, node):
+        """INPUT_COUNT: too few inputs should fail."""
+        self.log.info("Testing INPUT_COUNT negative (below min)...")
+        wif, pubkey = make_keypair()
+
+        # Require at least 3 inputs — our tx has only 1
+        conditions = [{"blocks": [
+            {"type": "INPUT_COUNT", "fields": [
+                {"type": "NUMERIC", "hex": numeric_hex(3)},
+                {"type": "NUMERIC", "hex": numeric_hex(10)},
+            ]},
+            {"type": "SIG", "fields": [
+                {"type": "PUBKEY", "hex": pubkey}
+            ]},
+        ]}]
+
+        txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
+
+        output_amount = amount - Decimal("0.001")
+        dest_wif, dest_pubkey = make_keypair()
+        dest_conditions = [{"blocks": [{"type": "SIG", "fields": [
+            {"type": "PUBKEY", "hex": dest_pubkey}
+        ]}]}]
+
+        spend = node.createrungtx(
+            [{"txid": txid, "vout": vout}],
+            [{"amount": output_amount, "conditions": dest_conditions}]
+        )
+        sign_result = node.signrungtx(
+            spend["hex"],
+            [{"input": 0, "blocks": [{"type": "INPUT_COUNT"}, {"type": "SIG", "privkey": wif}]}],
+            [{"amount": amount, "scriptPubKey": spk}]
+        )
+        assert_raises_rpc_error(-26, None, node.sendrawtransaction, sign_result["hex"])
+        self.log.info("  INPUT_COUNT negative (below min) — rejected correctly!")
+
+    def test_output_count(self, node):
+        """OUTPUT_COUNT: transaction has correct number of outputs."""
+        self.log.info("Testing OUTPUT_COUNT spend...")
+        wif, pubkey = make_keypair()
+
+        # Allow 1-5 outputs
+        conditions = [{"blocks": [
+            {"type": "OUTPUT_COUNT", "fields": [
+                {"type": "NUMERIC", "hex": numeric_hex(1)},
+                {"type": "NUMERIC", "hex": numeric_hex(5)},
+            ]},
+            {"type": "SIG", "fields": [
+                {"type": "PUBKEY", "hex": pubkey}
+            ]},
+        ]}]
+
+        txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
+
+        output_amount = amount - Decimal("0.001")
+        dest_wif, dest_pubkey = make_keypair()
+        dest_conditions = [{"blocks": [{"type": "SIG", "fields": [
+            {"type": "PUBKEY", "hex": dest_pubkey}
+        ]}]}]
+
+        spend = node.createrungtx(
+            [{"txid": txid, "vout": vout}],
+            [{"amount": output_amount, "conditions": dest_conditions}]
+        )
+        sign_result = node.signrungtx(
+            spend["hex"],
+            [{"input": 0, "blocks": [{"type": "OUTPUT_COUNT"}, {"type": "SIG", "privkey": wif}]}],
+            [{"amount": amount, "scriptPubKey": spk}]
+        )
+        assert sign_result["complete"]
+        spend_txid = node.sendrawtransaction(sign_result["hex"])
+        self.generate(node, 1)
+        assert node.getrawtransaction(spend_txid, True)["confirmations"] >= 1
+        self.log.info("  OUTPUT_COUNT spend confirmed!")
+
+    def test_negative_output_count_above_max(self, node):
+        """OUTPUT_COUNT: too many outputs should fail."""
+        self.log.info("Testing OUTPUT_COUNT negative (above max)...")
+        wif, pubkey = make_keypair()
+
+        # Allow exactly 1 output — our tx will have 1 but bootstrap may add change
+        # Use a tight amount to avoid change output
+        conditions = [{"blocks": [
+            {"type": "OUTPUT_COUNT", "fields": [
+                {"type": "NUMERIC", "hex": numeric_hex(1)},
+                {"type": "NUMERIC", "hex": numeric_hex(1)},  # max 1 output
+            ]},
+            {"type": "SIG", "fields": [
+                {"type": "PUBKEY", "hex": pubkey}
+            ]},
+        ]}]
+
+        txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
+
+        # Create spending tx with 2 outputs to exceed the max of 1
+        output_amount = (amount - Decimal("0.001")) / 2
+        dest_wif, dest_pubkey = make_keypair()
+        dest_conditions = [{"blocks": [{"type": "SIG", "fields": [
+            {"type": "PUBKEY", "hex": dest_pubkey}
+        ]}]}]
+
+        spend = node.createrungtx(
+            [{"txid": txid, "vout": vout}],
+            [
+                {"amount": output_amount, "conditions": dest_conditions},
+                {"amount": output_amount, "conditions": dest_conditions},
+            ]
+        )
+        sign_result = node.signrungtx(
+            spend["hex"],
+            [{"input": 0, "blocks": [{"type": "OUTPUT_COUNT"}, {"type": "SIG", "privkey": wif}]}],
+            [{"amount": amount, "scriptPubKey": spk}]
+        )
+        assert_raises_rpc_error(-26, None, node.sendrawtransaction, sign_result["hex"])
+        self.log.info("  OUTPUT_COUNT negative (above max) — rejected correctly!")
+
+    def test_relative_value(self, node):
+        """RELATIVE_VALUE: output must be >= 90% of input."""
+        self.log.info("Testing RELATIVE_VALUE spend...")
+        wif, pubkey = make_keypair()
+
+        # 9/10 = 90% minimum ratio
+        conditions = [{"blocks": [
+            {"type": "RELATIVE_VALUE", "fields": [
+                {"type": "NUMERIC", "hex": numeric_hex(9)},
+                {"type": "NUMERIC", "hex": numeric_hex(10)},
+            ]},
+            {"type": "SIG", "fields": [
+                {"type": "PUBKEY", "hex": pubkey}
+            ]},
+        ]}]
+
+        txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
+
+        # Output 95% of input — should satisfy 90% requirement
+        output_amount = amount * 95 / 100
+        # Round to 8 decimal places
+        output_amount = Decimal(str(output_amount)).quantize(Decimal("0.00000001"))
+        dest_wif, dest_pubkey = make_keypair()
+        dest_conditions = [{"blocks": [{"type": "SIG", "fields": [
+            {"type": "PUBKEY", "hex": dest_pubkey}
+        ]}]}]
+
+        spend = node.createrungtx(
+            [{"txid": txid, "vout": vout}],
+            [{"amount": output_amount, "conditions": dest_conditions}]
+        )
+        sign_result = node.signrungtx(
+            spend["hex"],
+            [{"input": 0, "blocks": [{"type": "RELATIVE_VALUE"}, {"type": "SIG", "privkey": wif}]}],
+            [{"amount": amount, "scriptPubKey": spk}]
+        )
+        assert sign_result["complete"]
+        spend_txid = node.sendrawtransaction(sign_result["hex"])
+        self.generate(node, 1)
+        assert node.getrawtransaction(spend_txid, True)["confirmations"] >= 1
+        self.log.info("  RELATIVE_VALUE spend confirmed!")
+
+    def test_negative_relative_value_too_low(self, node):
+        """RELATIVE_VALUE: output below 90% of input should fail."""
+        self.log.info("Testing RELATIVE_VALUE negative (too low)...")
+        wif, pubkey = make_keypair()
+
+        conditions = [{"blocks": [
+            {"type": "RELATIVE_VALUE", "fields": [
+                {"type": "NUMERIC", "hex": numeric_hex(9)},
+                {"type": "NUMERIC", "hex": numeric_hex(10)},
+            ]},
+            {"type": "SIG", "fields": [
+                {"type": "PUBKEY", "hex": pubkey}
+            ]},
+        ]}]
+
+        txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
+
+        # Output only 50% — should violate 90% requirement
+        output_amount = amount * 50 / 100
+        output_amount = Decimal(str(output_amount)).quantize(Decimal("0.00000001"))
+        dest_wif, dest_pubkey = make_keypair()
+        dest_conditions = [{"blocks": [{"type": "SIG", "fields": [
+            {"type": "PUBKEY", "hex": dest_pubkey}
+        ]}]}]
+
+        spend = node.createrungtx(
+            [{"txid": txid, "vout": vout}],
+            [{"amount": output_amount, "conditions": dest_conditions}]
+        )
+        sign_result = node.signrungtx(
+            spend["hex"],
+            [{"input": 0, "blocks": [{"type": "RELATIVE_VALUE"}, {"type": "SIG", "privkey": wif}]}],
+            [{"amount": amount, "scriptPubKey": spk}]
+        )
+        assert_raises_rpc_error(-26, None, node.sendrawtransaction, sign_result["hex"])
+        self.log.info("  RELATIVE_VALUE negative (too low) — rejected correctly!")
+
+    def test_accumulator(self, node):
+        """ACCUMULATOR: Merkle set membership proof."""
+        self.log.info("Testing ACCUMULATOR spend...")
+        wif, pubkey = make_keypair()
+
+        # Build a 2-leaf Merkle tree
+        leaf0 = hashlib.sha256(b"leaf0").digest()
+        leaf1 = hashlib.sha256(b"leaf1").digest()
+        # Sorted concatenation
+        if leaf0 < leaf1:
+            combined = leaf0 + leaf1
+        else:
+            combined = leaf1 + leaf0
+        root = hashlib.sha256(combined).digest()
+
+        conditions = [{"blocks": [
+            {"type": "ACCUMULATOR", "fields": [
+                {"type": "HASH256", "hex": root.hex()},  # merkle root
+            ]},
+            {"type": "SIG", "fields": [
+                {"type": "PUBKEY", "hex": pubkey}
+            ]},
+        ]}]
+
+        txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
+
+        output_amount = amount - Decimal("0.001")
+        dest_wif, dest_pubkey = make_keypair()
+        dest_conditions = [{"blocks": [{"type": "SIG", "fields": [
+            {"type": "PUBKEY", "hex": dest_pubkey}
+        ]}]}]
+
+        # Prove leaf0 membership: witness has [sibling=leaf1, leaf=leaf0]
+        spend = node.createrungtx(
+            [{"txid": txid, "vout": vout}],
+            [{"amount": output_amount, "conditions": dest_conditions}]
+        )
+        sign_result = node.signrungtx(
+            spend["hex"],
+            [{"input": 0, "blocks": [
+                {"type": "ACCUMULATOR", "fields": [
+                    {"type": "HASH256", "hex": leaf1.hex()},  # sibling
+                    {"type": "HASH256", "hex": leaf0.hex()},  # leaf
+                ]},
+                {"type": "SIG", "privkey": wif},
+            ]}],
+            [{"amount": amount, "scriptPubKey": spk}]
+        )
+        assert sign_result["complete"]
+        spend_txid = node.sendrawtransaction(sign_result["hex"])
+        self.generate(node, 1)
+        assert node.getrawtransaction(spend_txid, True)["confirmations"] >= 1
+        self.log.info("  ACCUMULATOR spend confirmed!")
+
+    def test_negative_accumulator_wrong_leaf(self, node):
+        """ACCUMULATOR: wrong leaf should fail verification."""
+        self.log.info("Testing ACCUMULATOR negative (wrong leaf)...")
+        wif, pubkey = make_keypair()
+
+        leaf0 = hashlib.sha256(b"leaf0").digest()
+        leaf1 = hashlib.sha256(b"leaf1").digest()
+        if leaf0 < leaf1:
+            combined = leaf0 + leaf1
+        else:
+            combined = leaf1 + leaf0
+        root = hashlib.sha256(combined).digest()
+
+        conditions = [{"blocks": [
+            {"type": "ACCUMULATOR", "fields": [
+                {"type": "HASH256", "hex": root.hex()},
+            ]},
+            {"type": "SIG", "fields": [
+                {"type": "PUBKEY", "hex": pubkey}
+            ]},
+        ]}]
+
+        txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
+
+        output_amount = amount - Decimal("0.001")
+        dest_wif, dest_pubkey = make_keypair()
+        dest_conditions = [{"blocks": [{"type": "SIG", "fields": [
+            {"type": "PUBKEY", "hex": dest_pubkey}
+        ]}]}]
+
+        # Wrong leaf — not in the tree
+        wrong_leaf = os.urandom(32)
+
+        spend = node.createrungtx(
+            [{"txid": txid, "vout": vout}],
+            [{"amount": output_amount, "conditions": dest_conditions}]
+        )
+        sign_result = node.signrungtx(
+            spend["hex"],
+            [{"input": 0, "blocks": [
+                {"type": "ACCUMULATOR", "fields": [
+                    {"type": "HASH256", "hex": leaf1.hex()},
+                    {"type": "HASH256", "hex": wrong_leaf.hex()},
+                ]},
+                {"type": "SIG", "privkey": wif},
+            ]}],
+            [{"amount": amount, "scriptPubKey": spk}]
+        )
+        assert_raises_rpc_error(-26, None, node.sendrawtransaction, sign_result["hex"])
+        self.log.info("  ACCUMULATOR negative (wrong leaf) — rejected correctly!")
 
     def bootstrap_v4_output_with_relays(self, node, conditions, relays, output_amount=None):
         """Create and confirm a v4 output with conditions + relays.

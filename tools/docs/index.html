@@ -450,6 +450,13 @@
         ]
       },
       {
+        name: 'Multisig', cls: 'sig',
+        intro: 'Threshold signature patterns demonstrating M-of-N multisig vaults with recovery paths and PUBKEY_COMMIT privacy.',
+        txs: [
+          { file: 'multisig-vault', name: '2-of-3 Multisig Vault', desc: 'Multi-output vault with 2-of-3 Schnorr threshold primary spend, CSV-gated single-key recovery (144 blocks), and change. Spend provides 2 keys + 2 sigs.', date: '2026-03-12', scheme: 'MULTISIG' },
+        ]
+      },
+      {
         name: 'Covenants', cls: 'cov',
         intro: 'Vault and covenant patterns demonstrating advanced spending conditions with built-in timelocks and multi-path outputs.',
         txs: [
