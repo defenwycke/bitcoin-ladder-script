@@ -18,13 +18,13 @@ The format is a single soft fork that subsumes OP_CTV, OP_VAULT, OP_CAT, and eve
 
 **Contact inversion.** Any block can be inverted. `[/CSV: 144]` means "spend BEFORE 144 blocks" — a primitive Bitcoin has never had. This enables breach remedies, dead man's switches, governance vetoes, and time-bounded escrows natively.
 
-**Spam is structural.** Nine data types, enforced at the deserialiser before any cryptographic operation. Conditions contain zero user-chosen bytes — every field is a hash digest or bounded numeric. PUBKEY is witness-only; conditions use PUBKEY_COMMIT (SHA-256 hash). Preimage blocks are limited to 2 per witness. There is no push-data opcode. If it doesn't parse as a typed field, it doesn't enter the mempool.
+**Spam is structural.** Ten data types, enforced at the deserialiser before any cryptographic operation. Conditions contain zero user-chosen bytes — every field is a hash digest or bounded numeric. PUBKEY is witness-only; conditions use PUBKEY_COMMIT (SHA-256 hash). Preimage blocks are limited to 2 per witness. There is no push-data opcode. If it doesn't parse as a typed field, it doesn't enter the mempool.
 
 **Post-quantum ready.** FALCON-512 signatures work today. All keys use PUBKEY_COMMIT in conditions (32-byte SHA-256 hash), keeping UTXO size constant regardless of key type. The COSIGN pattern lets a single PQ anchor protect unlimited child UTXOs.
 
 **Human readable.** A CFO can audit a ladder diagram. A PLC engineer can read it immediately. No stack simulation required.
 
-## 48 Block Types
+## 60 Block Types
 
 | Category | Blocks |
 |----------|--------|
@@ -37,6 +37,7 @@ The format is a single soft fork that subsumes OP_CTV, OP_VAULT, OP_CAT, and eve
 | PLC | HYSTERESIS_FEE, HYSTERESIS_VALUE, TIMER_CONTINUOUS, TIMER_OFF_DELAY, LATCH_SET, LATCH_RESET, COUNTER_DOWN, COUNTER_PRESET, COUNTER_UP, COMPARE, SEQUENCER, ONE_SHOT, RATE_LIMIT, COSIGN |
 | Compound | TIMELOCKED_SIG, HTLC, HASH_SIG |
 | Governance | EPOCH_GATE, WEIGHT_LIMIT, INPUT_COUNT, OUTPUT_COUNT, RELATIVE_VALUE, ACCUMULATOR |
+| Legacy | P2PK, P2PKH, P2SH, P2WPKH, P2WSH, P2TR, P2TR_SCRIPT |
 
 ## Try it
 
@@ -59,7 +60,7 @@ proxy/             FastAPI signet proxy for live testing
 
 - [Whitepaper](docs/WHITEPAPER.md) — design rationale and architecture
 - [Specification](docs/SPECIFICATION.md) — wire format, evaluation rules, data types
-- [Block Library](docs/BLOCK_LIBRARY.md) — all 48 blocks with fields and semantics
+- [Block Library](docs/BLOCK_LIBRARY.md) — all 60 blocks with fields and semantics
 - [BIP Draft](docs/BIP-XXXX.md) — formal Bitcoin Improvement Proposal
 - [Examples](docs/EXAMPLES.md) — 8 worked scenarios with JSON
 - [Implementation Notes](docs/IMPLEMENTATION_NOTES.md) — spec deviations and why
