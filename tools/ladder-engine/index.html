@@ -5343,7 +5343,7 @@ function LadderView({ scanSequence, fullSimState, energizedOutputs, energizedRun
   const onClearRenamingInput = useCallback(() => dispatch({ type: 'SET_RENAMING_INPUT', value: null }), [dispatch]);
   const onDeselect = useCallback(() => dispatch({ type: 'DESELECT_ALL' }), [dispatch]);
   const onOutputContextMenu = useCallback((x, y, rung) => dispatch({ type: 'SET_OUTPUT_CONTEXT_MENU', value: { x, y, rung } }), [dispatch]);
-  const onFillAllTestData = useCallback(() => dispatch({ type: 'UPDATE_RUNGS', fn: prev => prev.map(rung => ({ ...rung, blocks: rung.blocks.map(block => { const testVals = generateTestData(block.type); if (!testVals || Object.keys(testVals).length === 0) return block; return { ...block, values: { ...testVals, ...block.values } }; }) })) }), [dispatch]);
+  const onFillAllTestData = useCallback(() => dispatch({ type: 'UPDATE_RUNGS', fn: prev => prev.map(rung => ({ ...rung, blocks: rung.blocks.map(block => { const testVals = generateTestData(block.type); if (!testVals || Object.keys(testVals).length === 0) return block; const merged = { ...block.values }; Object.entries(testVals).forEach(([k, v]) => { if (!merged[k]) merged[k] = v; }); return { ...block, values: merged }; }) })) }), [dispatch]);
   const onJustifyLeft = useCallback(() => dispatch({ type: 'UPDATE_RUNGS', fn: prev => prev.map(r => ({ ...r, blocks: r.blocks.map((b, i) => ({ ...b, slot: i })) })) }), [dispatch]);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
