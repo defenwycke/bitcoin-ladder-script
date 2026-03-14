@@ -233,10 +233,48 @@
 </div>
 
 
+<!-- Spending Transaction JSON -->
+<div class="doc-section">
+  <div class="section-label">Spending Transaction JSON (P2PKH_LEGACY Spend)</div>
+  <div class="json-block">
+    <pre>{
+  <span class="json-key">&quot;txid&quot;</span>: <span class="json-str">&quot;a1b2c3d4e5f6...spending_txid...&quot;</span>,
+  <span class="json-key">&quot;version&quot;</span>: <span class="json-num">4</span>,
+  <span class="json-key">&quot;size&quot;</span>: <span class="json-num">248</span>,
+  <span class="json-key">&quot;vsize&quot;</span>: <span class="json-num">166</span>,
+  <span class="json-key">&quot;locktime&quot;</span>: <span class="json-num">0</span>,
+  <span class="json-key">&quot;vin&quot;</span>: [
+    {
+      <span class="json-key">&quot;txid&quot;</span>: <span class="json-str">&quot;f0e1d2c3b4a5968778695a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d&quot;</span>,
+      <span class="json-key">&quot;vout&quot;</span>: <span class="json-num">0</span>,
+      <span class="json-key">&quot;scriptSig&quot;</span>: {
+        <span class="json-key">&quot;asm&quot;</span>: <span class="json-str">&quot;&quot;</span>,
+        <span class="json-key">&quot;hex&quot;</span>: <span class="json-str">&quot;&quot;</span>
+      },
+      <span class="json-key">&quot;txinwitness&quot;</span>: [
+        <span class="json-str">&quot;0101000936...rung0_witness...PUBKEY_33B...SIGNATURE_64B...&quot;</span>
+      ],
+      <span class="json-key">&quot;sequence&quot;</span>: <span class="json-num">4294967294</span>
+    }
+  ],
+  <span class="json-key">&quot;vout&quot;</span>: [
+    {
+      <span class="json-key">&quot;value&quot;</span>: <span class="json-num">0.00045000</span>,
+      <span class="json-key">&quot;n&quot;</span>: <span class="json-num">0</span>,
+      <span class="json-key">&quot;scriptPubKey&quot;</span>: {
+        <span class="json-key">&quot;type&quot;</span>: <span class="json-str">&quot;witness_v1_taproot&quot;</span>
+      }
+    }
+  ]
+}</pre>
+  </div>
+  <p style="font-size: 12px; color: #666; margin-top: 8px;">The witness contains the P2PKH_LEGACY block: 33-byte compressed pubkey (HASH160 matches conditions commitment) + 64-byte Schnorr signature. Rung 0 satisfies &mdash; rung 1 (CSV recovery) is never evaluated.</p>
+</div>
+
 <!-- Nav -->
 <div class="doc-nav">
   <span onclick="if(window.parent !== window) window.parent.location.hash='TX_INDEX'; else window.location.href='../index.html#TX_INDEX';">&#8592; All Transaction Examples</span>
-  <span onclick="if(window.parent !== window) window.parent.postMessage({loadTx:'legacy-p2sh-multisig-vault'},'*'); else window.location.href='legacy-p2sh-multisig-vault.html';">Legacy P2SH Multisig Vault &#8594;</span>
+  <span onclick="window.location.href='legacy-p2sh-multisig-vault.html';">Legacy P2SH Multisig Vault &#8594;</span>
 </div>
 
 </div>

@@ -259,10 +259,48 @@
 </div>
 
 
+<!-- Spending Transaction JSON -->
+<div class="doc-section">
+  <div class="section-label">Spending Transaction JSON (P2WPKH_LEGACY Hot Spend)</div>
+  <div class="json-block">
+    <pre>{
+  <span class="json-key">&quot;txid&quot;</span>: <span class="json-str">&quot;b2c3d4e5f6a7...spending_txid...&quot;</span>,
+  <span class="json-key">&quot;version&quot;</span>: <span class="json-num">4</span>,
+  <span class="json-key">&quot;size&quot;</span>: <span class="json-num">265</span>,
+  <span class="json-key">&quot;vsize&quot;</span>: <span class="json-num">178</span>,
+  <span class="json-key">&quot;locktime&quot;</span>: <span class="json-num">0</span>,
+  <span class="json-key">&quot;vin&quot;</span>: [
+    {
+      <span class="json-key">&quot;txid&quot;</span>: <span class="json-str">&quot;a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2&quot;</span>,
+      <span class="json-key">&quot;vout&quot;</span>: <span class="json-num">0</span>,
+      <span class="json-key">&quot;scriptSig&quot;</span>: {
+        <span class="json-key">&quot;asm&quot;</span>: <span class="json-str">&quot;&quot;</span>,
+        <span class="json-key">&quot;hex&quot;</span>: <span class="json-str">&quot;&quot;</span>
+      },
+      <span class="json-key">&quot;txinwitness&quot;</span>: [
+        <span class="json-str">&quot;0101000938...rung0_P2WPKH_witness...PUBKEY_33B...SIGNATURE_64B...&quot;</span>
+      ],
+      <span class="json-key">&quot;sequence&quot;</span>: <span class="json-num">4294967294</span>
+    }
+  ],
+  <span class="json-key">&quot;vout&quot;</span>: [
+    {
+      <span class="json-key">&quot;value&quot;</span>: <span class="json-num">0.00040000</span>,
+      <span class="json-key">&quot;n&quot;</span>: <span class="json-num">0</span>,
+      <span class="json-key">&quot;scriptPubKey&quot;</span>: {
+        <span class="json-key">&quot;type&quot;</span>: <span class="json-str">&quot;witness_v1_taproot&quot;</span>
+      }
+    }
+  ]
+}</pre>
+  </div>
+  <p style="font-size: 12px; color: #666; margin-top: 8px;">Rung 0 (HOT) satisfies via P2WPKH_LEGACY: delegates to P2PKH evaluation internally. HASH160(pubkey) matched, signature verified. Rungs 1 (VAULT) and 2 (COLD) never evaluated.</p>
+</div>
+
 <!-- Nav -->
 <div class="doc-nav">
-  <span onclick="if(window.parent !== window) window.parent.postMessage({loadTx:'legacy-p2pkh-recovery'},'*'); else window.location.href='legacy-p2pkh-recovery.html';">&#8592; Legacy P2PKH + Recovery</span>
-  <span onclick="if(window.parent !== window) window.parent.postMessage({loadTx:'p2tr-taproot-migration'},'*'); else window.location.href='p2tr-taproot-migration.html';">P2TR Taproot Migration &#8594;</span>
+  <span onclick="window.location.href='legacy-p2pkh-recovery.html';">&#8592; Legacy P2PKH + Recovery</span>
+  <span onclick="window.location.href='p2tr-taproot-migration.html';">P2TR Taproot Migration &#8594;</span>
 </div>
 
 </div>
