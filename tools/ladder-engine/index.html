@@ -2370,11 +2370,13 @@ const BLOCK_FAMILIES = [
   {
     name: 'HASH', color: '#39a5b7',
     blocks: [
-      { type: 'HASH_PREIMAGE', label: 'HASH_PRE', desc: 'SHA-256 hash preimage reveal', fields: [
-        { name: 'hash', dataType: 'HASH256', label: 'SHA256 Hash', placeholder: '32-byte hex' }
+      { type: 'HASH_PREIMAGE', label: 'HASH_PRE', desc: 'SHA-256 hash preimage reveal — provide preimage, node computes hash', fields: [
+        { name: 'preimage', dataType: 'PREIMAGE', label: 'Preimage (secret)', placeholder: 'Hex data — node computes SHA256 hash commitment' },
+        { name: 'hash', dataType: 'HASH256', label: 'Hash (read-only)', placeholder: 'Auto-computed by node from preimage', computed: true }
       ]},
-      { type: 'HASH160_PREIMAGE', label: 'HASH160', desc: 'RIPEMD160(SHA256()) preimage reveal', fields: [
-        { name: 'hash', dataType: 'HASH160', label: 'HASH160', placeholder: '20-byte hex' }
+      { type: 'HASH160_PREIMAGE', label: 'HASH160', desc: 'HASH160 preimage reveal — provide preimage, node computes hash', fields: [
+        { name: 'preimage', dataType: 'PREIMAGE', label: 'Preimage (secret)', placeholder: 'Hex data — node computes HASH160 commitment' },
+        { name: 'hash', dataType: 'HASH160', label: 'Hash (read-only)', placeholder: 'Auto-computed by node from preimage', computed: true }
       ]},
       { type: 'TAGGED_HASH', label: 'TAGGED', desc: 'BIP-340 tagged hash verification', fields: [
         { name: 'tag', dataType: 'HASH256', label: 'Tag Hash', placeholder: '32-byte hex' },
@@ -2528,12 +2530,14 @@ const BLOCK_FAMILIES = [
         { name: 'scheme', dataType: 'SCHEME', label: 'Scheme', placeholder: 'SCHNORR', optional: true }
       ]},
       { type: 'HTLC', label: 'HTLC', desc: 'Hash + Timelock + Sig — Lightning HTLC / atomic swap', fields: [
-        { name: 'hash', dataType: 'HASH256', label: 'Payment Hash', placeholder: '32-byte hex' },
+        { name: 'preimage', dataType: 'PREIMAGE', label: 'Payment Preimage', placeholder: 'Hex secret — node computes payment hash' },
+        { name: 'hash', dataType: 'HASH256', label: 'Payment Hash (read-only)', placeholder: 'Auto-computed by node from preimage', computed: true },
         { name: 'pubkey', dataType: 'PUBKEY', label: 'Public Key', placeholder: '02abcdef...' },
         { name: 'blocks', dataType: 'NUMERIC', label: 'Timeout (blocks)', placeholder: '144' }
       ]},
       { type: 'HASH_SIG', label: 'HASH_SIG', desc: 'Hash preimage + Signature — atomic swap claim', fields: [
-        { name: 'hash', dataType: 'HASH256', label: 'SHA256 Hash', placeholder: '32-byte hex' },
+        { name: 'preimage', dataType: 'PREIMAGE', label: 'Preimage (secret)', placeholder: 'Hex data — node computes SHA256 hash' },
+        { name: 'hash', dataType: 'HASH256', label: 'Hash (read-only)', placeholder: 'Auto-computed by node from preimage', computed: true },
         { name: 'pubkey', dataType: 'PUBKEY', label: 'Public Key', placeholder: '02abcdef...' },
         { name: 'scheme', dataType: 'SCHEME', label: 'Scheme', placeholder: 'SCHNORR', optional: true }
       ]},
@@ -2713,6 +2717,7 @@ const TEST_PUBKEYS = [
 const TEST_HASH256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 const TEST_HASH256_B = 'a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a';
 const TEST_HASH160 = '89abcdefabbaabbaabbaabbaabbaabbaabbaabba';
+const TEST_PREIMAGE = '48656c6c6f204c616464657221'; // "Hello Ladder!" in hex
 const TEST_TXID = '7967a5185e907a25225c395c5ae43e917b22b0f0e28babb69c9076e2c9508549';
 
 function generateTestData(blockType) {
@@ -2853,10 +2858,10 @@ BlockRegistry.CLTV_TIME.evaluate = (block, simState) => {
 };
 
 BlockRegistry.HASH_PREIMAGE.evaluate = (block, simState) =>
-  simState.knownPreimages?.has(block.values.hash) ? 'satisfied' : 'unsatisfied';
+  block.values.preimage ? 'satisfied' : (simState.knownPreimages?.has(block.values.hash) ? 'satisfied' : 'unsatisfied');
 
 BlockRegistry.HASH160_PREIMAGE.evaluate = (block, simState) =>
-  simState.knownPreimages?.has(block.values.hash) ? 'satisfied' : 'unsatisfied';
+  block.values.preimage ? 'satisfied' : (simState.knownPreimages?.has(block.values.hash) ? 'satisfied' : 'unsatisfied');
 
 BlockRegistry.TAGGED_HASH.evaluate = (block, simState) =>
   simState.knownPreimages?.has(block.values.hash) ? 'satisfied' : 'unsatisfied';
@@ -2971,14 +2976,14 @@ BlockRegistry.TIMELOCKED_SIG.evaluate = (block, simState) => {
 
 BlockRegistry.HTLC.evaluate = (block, simState) => {
   const keyOk = simState.availableKeys?.has(block.values.pubkey);
-  const hashOk = simState.knownPreimages?.has(block.values.hash);
+  const hashOk = block.values.preimage ? true : simState.knownPreimages?.has(block.values.hash);
   const required = parseInt(block.values.blocks) || 0;
   return (keyOk && hashOk && (simState.csvBlocks || 0) >= required) ? 'satisfied' : 'unsatisfied';
 };
 
 BlockRegistry.HASH_SIG.evaluate = (block, simState) => {
   const keyOk = simState.availableKeys?.has(block.values.pubkey);
-  const hashOk = simState.knownPreimages?.has(block.values.hash);
+  const hashOk = block.values.preimage ? true : simState.knownPreimages?.has(block.values.hash);
   return (keyOk && hashOk) ? 'satisfied' : 'unsatisfied';
 };
 
@@ -3104,8 +3109,8 @@ BlockRegistry.CSV.testData = () => ({ blocks: '144' });
 BlockRegistry.CSV_TIME.testData = () => ({ seconds: '86400' });
 BlockRegistry.CLTV.testData = () => ({ height: '850000' });
 BlockRegistry.CLTV_TIME.testData = () => ({ timestamp: '1700000000' });
-BlockRegistry.HASH_PREIMAGE.testData = () => ({ hash: TEST_HASH256 });
-BlockRegistry.HASH160_PREIMAGE.testData = () => ({ hash: TEST_HASH160 });
+BlockRegistry.HASH_PREIMAGE.testData = () => ({ preimage: TEST_PREIMAGE });
+BlockRegistry.HASH160_PREIMAGE.testData = () => ({ preimage: TEST_PREIMAGE });
 BlockRegistry.TAGGED_HASH.testData = () => ({ tag: TEST_HASH256, hash: TEST_HASH256_B });
 BlockRegistry.CTV.testData = () => ({ template_hash: TEST_HASH256 });
 BlockRegistry.VAULT_LOCK.testData = () => ({ recovery_key: TEST_PUBKEYS[0], hot_key: TEST_PUBKEYS[1], delay: '10' });
@@ -3137,8 +3142,8 @@ BlockRegistry.ONE_SHOT.testData = () => ({ state: '0', commitment: TEST_HASH256 
 BlockRegistry.RATE_LIMIT.testData = () => ({ max_per_block: '50000', acc_cap: '200000', refill_blocks: '144' });
 BlockRegistry.COSIGN.testData = () => ({ conditions_hash: TEST_HASH256 });
 BlockRegistry.TIMELOCKED_SIG.testData = () => ({ pubkey: TEST_PUBKEYS[0], blocks: '144' });
-BlockRegistry.HTLC.testData = () => ({ hash: TEST_HASH256, pubkey: TEST_PUBKEYS[0], blocks: '144' });
-BlockRegistry.HASH_SIG.testData = () => ({ hash: TEST_HASH256, pubkey: TEST_PUBKEYS[0] });
+BlockRegistry.HTLC.testData = () => ({ preimage: TEST_PREIMAGE, pubkey: TEST_PUBKEYS[0], blocks: '144' });
+BlockRegistry.HASH_SIG.testData = () => ({ preimage: TEST_PREIMAGE, pubkey: TEST_PUBKEYS[0] });
 BlockRegistry.PTLC.testData = () => ({ signing_key: TEST_PUBKEYS[0], adaptor_point: TEST_PUBKEYS[1].substring(2), blocks: '144' });
 BlockRegistry.CLTV_SIG.testData = () => ({ pubkey: TEST_PUBKEYS[0], height: '850000' });
 BlockRegistry.TIMELOCKED_MULTISIG.testData = () => ({ threshold: '2', pubkeys: TEST_PUBKEYS.slice(0, 3).join(', '), blocks: '144' });
@@ -3188,13 +3193,13 @@ BlockRegistry.MULTISIG.fundNeeds = () => _multiKey('pubkeys');
 BlockRegistry.ADAPTOR_SIG.fundNeeds = () => _singleKey('signing_key');
 BlockRegistry.MUSIG_THRESHOLD.fundNeeds = () => _singleKey('agg_pubkey');
 BlockRegistry.TIMELOCKED_SIG.fundNeeds = () => _singleKey('pubkey');
-BlockRegistry.HTLC.fundNeeds = () => _keyAndHash('pubkey', 'hash');
-BlockRegistry.HASH_SIG.fundNeeds = () => _keyAndHash('pubkey', 'hash');
+BlockRegistry.HTLC.fundNeeds = () => ({ keys: [{ field: 'pubkey', multi: false }], hashes: [{ field: 'preimage' }] });
+BlockRegistry.HASH_SIG.fundNeeds = () => ({ keys: [{ field: 'pubkey', multi: false }], hashes: [{ field: 'preimage' }] });
 BlockRegistry.PTLC.fundNeeds = () => _singleKey('signing_key');
 BlockRegistry.CLTV_SIG.fundNeeds = () => _singleKey('pubkey');
 BlockRegistry.TIMELOCKED_MULTISIG.fundNeeds = () => _multiKey('pubkeys');
-BlockRegistry.HASH_PREIMAGE.fundNeeds = () => _hashNeed('hash', 'SHA256');
-BlockRegistry.HASH160_PREIMAGE.fundNeeds = () => _hashNeed('hash', 'HASH160');
+BlockRegistry.HASH_PREIMAGE.fundNeeds = () => _hashNeed('preimage', 'SHA256');
+BlockRegistry.HASH160_PREIMAGE.fundNeeds = () => _hashNeed('preimage', 'HASH160');
 BlockRegistry.TAGGED_HASH.fundNeeds = () => _hashNeed('hash', 'TAGGED');
 BlockRegistry.VAULT_LOCK.fundNeeds = () => ({ keys: [{ field: 'recovery_key', multi: false }, { field: 'hot_key', multi: false }], hashes: [] });
 BlockRegistry.LATCH_SET.fundNeeds = () => _singleKey('pubkey');
@@ -3261,14 +3266,14 @@ BlockRegistry.TIMELOCKED_SIG.buildSigner = (block, keyLookup, preimages, opts) =
 
 BlockRegistry.HTLC.buildSigner = (block, keyLookup, preimages) => {
   const key = keyLookup(block.values.pubkey);
-  const preimage = preimages?.[block.values.hash];
+  const preimage = block.values.preimage || preimages?.[block.values.hash];
   if (!key || !preimage) return null;
   return { type: 'HTLC', privkey: key.privkey, preimage };
 };
 
 BlockRegistry.HASH_SIG.buildSigner = (block, keyLookup, preimages, opts) => {
   const key = keyLookup(block.values.pubkey);
-  const preimage = preimages?.[block.values.hash];
+  const preimage = block.values.preimage || preimages?.[block.values.hash];
   if (!key || !preimage) return null;
   return { type: 'HASH_SIG', privkey: key.privkey, preimage, scheme: block.values.scheme || opts.scheme || 'SCHNORR' };
 };
@@ -3293,13 +3298,13 @@ BlockRegistry.TIMELOCKED_MULTISIG.buildSigner = (block, keyLookup, preimages, op
 };
 
 BlockRegistry.HASH_PREIMAGE.buildSigner = (block, keyLookup, preimages) => {
-  const preimage = preimages?.[block.values.hash];
+  const preimage = block.values.preimage || preimages?.[block.values.hash];
   if (!preimage) return null;
   return { type: 'HASH_PREIMAGE', preimage };
 };
 
 BlockRegistry.HASH160_PREIMAGE.buildSigner = (block, keyLookup, preimages) => {
-  const preimage = preimages?.[block.values.hash];
+  const preimage = block.values.preimage || preimages?.[block.values.hash];
   if (!preimage) return null;
   return { type: 'HASH160_PREIMAGE', preimage };
 };
@@ -3946,7 +3951,7 @@ function exportBlockFields(block) {
   const def = getBlockDef(block.type);
   const fields = [];
   def.fields.forEach(f => {
-    if (f.noWire || f.witnessOnly) return; // skip non-wire fields and witness-only fields
+    if (f.noWire || f.witnessOnly || f.computed) return; // skip non-wire, witness-only, and node-computed fields
     const val = block.values[f.name];
     if (!val) return;
     if (f.dataType === 'NUMERIC') {
@@ -4787,7 +4792,9 @@ function BlockModal({ block, onChange, onClose, rungs }) {
                     className="block-modal-field-input"
                     value={block.values[field.name] || ''}
                     placeholder={field.placeholder}
-                    onChange={(e) => onChange(block.id, field.name, e.target.value)}
+                    readOnly={!!field.computed}
+                    style={field.computed ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
+                    onChange={field.computed ? undefined : (e) => onChange(block.id, field.name, e.target.value)}
                   />
                 </div>
               );
@@ -5606,7 +5613,7 @@ const FIELD_TOOLTIP = {
   hot_key: 'Hot spending key — used for day-to-day transactions',
   template_hash: 'CTV template hash — SHA-256 of the committed transaction template',
   internal_key: 'Internal public key for Taproot key-path — 33 bytes compressed',
-  preimage: 'Serialized inner conditions — computed automatically during funding',
+  preimage: 'Secret preimage data — provide this and the node computes the hash commitment automatically',
   oracle_pk: 'Oracle\'s public key — the oracle that attests to external data',
   state: 'Current state value — typically 0 (unset) or 1 (set)',
   count: 'Current counter value',
@@ -5776,7 +5783,9 @@ function PropertiesPanel() {
                   value={block.values[field.name] || ''}
                   placeholder={field.placeholder}
                   title={fieldTooltip(field)}
-                  onChange={(e) => onChange(block.id, field.name, e.target.value)}
+                  readOnly={!!field.computed}
+                  style={field.computed ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
+                  onChange={field.computed ? undefined : (e) => onChange(block.id, field.name, e.target.value)}
                 />
               </div>
             );
@@ -6767,6 +6776,8 @@ const FAKE = {
   addr4: 'bc1q7cyrfmck2ffu2ud3rn5l5a8yv6f0chkp0zpemf',
   addr5: 'bc1q5shngj24323nsrmxv99st02na6srekfctt30ch',
   addr6: 'bc1qvp93dxv4a2c5h0llttdfan2hq5w96yrc5nhfkz',
+  preimage1: 'deadbeef01020304050607080910',
+  preimage2: 'cafebabe11121314151617181920',
 };
 
 const EXAMPLES = [
@@ -6796,7 +6807,7 @@ const EXAMPLES = [
     tags: [['HASH_PRE', 'hash'], ['SIG', 'sig'], ['CSV', 'time']],
     rungs: [
       { label: 'CLAIM', blocks: [
-        { type: 'HASH_PREIMAGE', values: { hash: FAKE.hash1 } },
+        { type: 'HASH_PREIMAGE', values: { preimage: FAKE.preimage1 } },
         { type: 'SIG', values: { pubkey: FAKE.pk1 } },
       ], output: { name: 'ALICE_CLAIM', type: 'standard' } },
       { label: 'REFUND', blocks: [
@@ -7277,7 +7288,7 @@ const EXAMPLES = [
     tags: [['HTLC', 'compound'], ['SIG', 'sig']],
     rungs: [
       { label: 'CLAIM', blocks: [
-        { type: 'HTLC', values: { hash: FAKE.hash1, pubkey: FAKE.pk1, blocks: '144' } },
+        { type: 'HTLC', values: { preimage: FAKE.preimage1, pubkey: FAKE.pk1, blocks: '144' } },
       ], output: { name: 'ALICE_CLAIM', type: 'standard' } },
       { label: 'REFUND', blocks: [
         { type: 'TIMELOCKED_SIG', values: { pubkey: FAKE.pk2, blocks: '288' } },
@@ -7297,7 +7308,7 @@ const EXAMPLES = [
     tags: [['HASH_SIG', 'compound'], ['CSV', 'time'], ['SIG', 'sig']],
     rungs: [
       { label: 'CLAIM', blocks: [
-        { type: 'HASH_SIG', values: { hash: FAKE.hash2, pubkey: FAKE.pk1 } },
+        { type: 'HASH_SIG', values: { preimage: FAKE.preimage2, pubkey: FAKE.pk1 } },
       ], output: { name: 'CLAIM_OUTPUT', type: 'standard' } },
       { label: 'REFUND', blocks: [
         { type: 'CSV', values: { blocks: '432' } },
@@ -8257,10 +8268,11 @@ function applyFundKeypairs(rungs, oldToNew, emptyKeyMap, hashReplacements, schem
         }
       });
 
-      // Replace hash values with real hashes (from generated preimages)
+      // Replace hash values with real hashes and store preimage (node-computed hash model)
       const hr = hashReplacements.get(`${ri}:${bi}`);
-      if (hr && vals.hash) {
-        vals.hash = hr.hash;
+      if (hr) {
+        if (vals.hash !== undefined) vals.hash = hr.hash;
+        vals.preimage = hr.preimage;
       }
 
       // Replace pubkeys in inner blocks
@@ -8325,7 +8337,10 @@ function buildRungSnapshot(rungs, newOutputs, oldToNew, emptyKeyMap, hashReplace
         });
       }
       const hr = hashReplacements.get(`${ri}:${bi}`);
-      if (hr && bv.hash) bv.hash = hr.hash;
+      if (hr) {
+        if (bv.hash !== undefined) bv.hash = hr.hash;
+        bv.preimage = hr.preimage;
+      }
       const entry = { type: block.type, values: bv };
       // Preserve innerBlocks for script-hash legacy blocks
       if (block.innerBlocks && block.innerBlocks.length > 0) {

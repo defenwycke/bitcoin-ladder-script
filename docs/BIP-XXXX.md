@@ -922,6 +922,15 @@ When multiple RECURSE_* blocks appear in the same rung (AND), the shortest termi
 
 PUBKEY_COMMIT values are always computed by the node from validated public keys supplied in the `pubkey` field. User-supplied raw 32-byte commitments are rejected. This prevents inscription-style data embedding in the UTXO set via the commitment field, since every stored commitment is provably derived from a real public key.
 
+**Hash preimage commitments** follow the same model. For HASH_PREIMAGE, HASH160_PREIMAGE, HTLC, and HASH_SIG blocks, the node computes the hash commitment from a user-supplied preimage:
+
+- **HASH_PREIMAGE / HASH_SIG / HTLC:** User provides `PREIMAGE` → node computes `HASH256 = SHA256(preimage)` and stores the hash in conditions.
+- **HASH160_PREIMAGE:** User provides `PREIMAGE` → node computes `HASH160 = RIPEMD160(SHA256(preimage))` and stores the hash in conditions.
+
+This closes a potential data-stuffing vector: without node-computed hashes, a user could write arbitrary 32-byte values into the HASH256 condition field, encoding ~32 bytes of arbitrary data per block. With node-computed hashes, every stored hash is provably derived from a known preimage — the user cannot inject arbitrary data into the hash commitment.
+
+The combined effect of node-computed PUBKEY_COMMIT and node-computed hash commitments is that **no condition field in the UTXO set accepts arbitrary user-chosen bytes**. Every commitment is a deterministic function of validated input data.
+
 ### Post-Quantum Library Dependency
 
 Post-quantum signature verification uses the Open Quantum Safe project's liboqs library. The dependency is structured to minimise consensus risk:

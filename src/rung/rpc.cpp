@@ -13,6 +13,7 @@
 
 #include <core_io.h>
 #include <crypto/sha256.h>
+#include <hash.h>
 #include <key.h>
 #include <key_io.h>
 #include <random.h>
@@ -337,6 +338,24 @@ static RungBlock ParseBlockSpec(const UniValue& block_obj, bool conditions_only)
             commit_field.data.resize(CSHA256::OUTPUT_SIZE);
             CSHA256().Write(field.data.data(), field.data.size()).Finalize(commit_field.data.data());
             block.fields.push_back(std::move(commit_field));
+            continue;
+        }
+        // Auto-convert PREIMAGE to hash commitment in conditions (node-computed, closes data-stuffing vector)
+        // User provides the preimage, node computes the hash — user never writes to the hash field directly.
+        if (conditions_only && field.type == RungDataType::PREIMAGE) {
+            RungField hash_field;
+            if (block.type == RungBlockType::HASH160_PREIMAGE) {
+                // HASH160_PREIMAGE: RIPEMD160(SHA256(preimage)) → HASH160
+                hash_field.type = RungDataType::HASH160;
+                hash_field.data.resize(CHash160::OUTPUT_SIZE);
+                CHash160().Write(field.data).Finalize(hash_field.data.data());
+            } else {
+                // HASH_PREIMAGE, HASH_SIG, HTLC, TAGGED_HASH: SHA256(preimage) → HASH256
+                hash_field.type = RungDataType::HASH256;
+                hash_field.data.resize(CSHA256::OUTPUT_SIZE);
+                CSHA256().Write(field.data.data(), field.data.size()).Finalize(hash_field.data.data());
+            }
+            block.fields.push_back(std::move(hash_field));
             continue;
         }
         if (conditions_only && !rung::IsConditionDataType(field.type)) {
