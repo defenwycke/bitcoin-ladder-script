@@ -273,8 +273,9 @@ BOOST_AUTO_TEST_CASE(known_type_checks)
     // Data types — uint8_t
     BOOST_CHECK(IsKnownDataType(0x01)); // PUBKEY
     BOOST_CHECK(IsKnownDataType(0x09)); // SCHEME
+    BOOST_CHECK(IsKnownDataType(0x0A)); // SCRIPT_BODY
     BOOST_CHECK(!IsKnownDataType(0x00));
-    BOOST_CHECK(!IsKnownDataType(0x0A));
+    BOOST_CHECK(!IsKnownDataType(0x0B));
 
     // Scheme checks
     BOOST_CHECK(IsKnownScheme(0x01)); // SCHNORR
@@ -1760,6 +1761,22 @@ BOOST_AUTO_TEST_CASE(serialize_roundtrip_all_60_types_witness)
         {RungBlockType::RELATIVE_VALUE, {{RungDataType::NUMERIC, num1}, {RungDataType::NUMERIC, num2}}},
         // ACCUMULATOR: explicit — HASH256
         {RungBlockType::ACCUMULATOR, {{RungDataType::HASH256, h256}}},
+
+        // === Legacy family ===
+        // P2PK_LEGACY witness: [PUBKEY, SIGNATURE] (= SIG_WITNESS)
+        {RungBlockType::P2PK_LEGACY, {{RungDataType::PUBKEY, pk}, {RungDataType::SIGNATURE, sig}}},
+        // P2PKH_LEGACY witness: [PUBKEY, SIGNATURE] (= SIG_WITNESS)
+        {RungBlockType::P2PKH_LEGACY, {{RungDataType::PUBKEY, pk}, {RungDataType::SIGNATURE, sig}}},
+        // P2SH_LEGACY witness: explicit — PREIMAGE + PUBKEY + SIGNATURE
+        {RungBlockType::P2SH_LEGACY, {{RungDataType::PREIMAGE, preimage}, {RungDataType::PUBKEY, pk}, {RungDataType::SIGNATURE, sig}}},
+        // P2WPKH_LEGACY witness: [PUBKEY, SIGNATURE] (= SIG_WITNESS)
+        {RungBlockType::P2WPKH_LEGACY, {{RungDataType::PUBKEY, pk}, {RungDataType::SIGNATURE, sig}}},
+        // P2WSH_LEGACY witness: explicit — PREIMAGE + PUBKEY + SIGNATURE
+        {RungBlockType::P2WSH_LEGACY, {{RungDataType::PREIMAGE, preimage}, {RungDataType::PUBKEY, pk}, {RungDataType::SIGNATURE, sig}}},
+        // P2TR_LEGACY witness: [PUBKEY, SIGNATURE] (= SIG_WITNESS)
+        {RungBlockType::P2TR_LEGACY, {{RungDataType::PUBKEY, pk}, {RungDataType::SIGNATURE, sig}}},
+        // P2TR_SCRIPT_LEGACY witness: explicit — PREIMAGE + PUBKEY + SIGNATURE
+        {RungBlockType::P2TR_SCRIPT_LEGACY, {{RungDataType::PREIMAGE, preimage}, {RungDataType::PUBKEY, pk}, {RungDataType::SIGNATURE, sig}}},
     };
 
     BOOST_CHECK_EQUAL(entries.size(), 60u);
@@ -1912,6 +1929,22 @@ BOOST_AUTO_TEST_CASE(serialize_roundtrip_all_60_types_conditions)
         {RungBlockType::OUTPUT_COUNT, {{RungDataType::NUMERIC, num1}, {RungDataType::NUMERIC, num10}}},
         {RungBlockType::RELATIVE_VALUE, {{RungDataType::NUMERIC, num1}, {RungDataType::NUMERIC, num2}}},
         {RungBlockType::ACCUMULATOR, {{RungDataType::HASH256, h256}}},
+
+        // === Legacy family ===
+        // P2PK_LEGACY conditions: [PUBKEY_COMMIT, SCHEME] (= SIG_CONDITIONS)
+        {RungBlockType::P2PK_LEGACY, {{RungDataType::PUBKEY_COMMIT, commit}, {RungDataType::SCHEME, scheme_schnorr}}},
+        // P2PKH_LEGACY conditions: [HASH160]
+        {RungBlockType::P2PKH_LEGACY, {{RungDataType::HASH160, h160}}},
+        // P2SH_LEGACY conditions: [HASH160]
+        {RungBlockType::P2SH_LEGACY, {{RungDataType::HASH160, h160}}},
+        // P2WPKH_LEGACY conditions: [HASH160]
+        {RungBlockType::P2WPKH_LEGACY, {{RungDataType::HASH160, h160}}},
+        // P2WSH_LEGACY conditions: [HASH256]
+        {RungBlockType::P2WSH_LEGACY, {{RungDataType::HASH256, h256}}},
+        // P2TR_LEGACY conditions: [PUBKEY_COMMIT, SCHEME] (= SIG_CONDITIONS)
+        {RungBlockType::P2TR_LEGACY, {{RungDataType::PUBKEY_COMMIT, commit}, {RungDataType::SCHEME, scheme_schnorr}}},
+        // P2TR_SCRIPT_LEGACY conditions: [HASH256, PUBKEY_COMMIT]
+        {RungBlockType::P2TR_SCRIPT_LEGACY, {{RungDataType::HASH256, h256}, {RungDataType::PUBKEY_COMMIT, commit}}},
     };
 
     BOOST_CHECK_EQUAL(entries.size(), 60u);
@@ -10335,14 +10368,12 @@ BOOST_AUTO_TEST_CASE(eval_p2sh_legacy_script_body)
     inner_rung.blocks.push_back(inner_sig);
     inner_witness.rungs.push_back(inner_rung);
 
-    std::vector<uint8_t> serialized;
-    std::string error;
-    bool ok = SerializeLadderWitness(inner_witness, serialized, error, SerializationContext::CONDITIONS);
-    BOOST_CHECK(ok);
+    std::vector<uint8_t> serialized = SerializeLadderWitness(inner_witness, SerializationContext::CONDITIONS);
+    BOOST_CHECK(!serialized.empty());
 
     // Compute HASH160 of the serialized inner conditions
     std::vector<uint8_t> hash160(CHash160::OUTPUT_SIZE);
-    CHash160().Write(serialized).Finalize(hash160.data());
+    CHash160().Write(serialized).Finalize(hash160);
 
     // Build P2SH block with SCRIPT_BODY (instead of PREIMAGE)
     RungBlock block;
@@ -10378,10 +10409,8 @@ BOOST_AUTO_TEST_CASE(eval_p2wsh_legacy_script_body)
     inner_rung.blocks.push_back(inner_sig);
     inner_witness.rungs.push_back(inner_rung);
 
-    std::vector<uint8_t> serialized;
-    std::string error;
-    bool ok = SerializeLadderWitness(inner_witness, serialized, error, SerializationContext::CONDITIONS);
-    BOOST_CHECK(ok);
+    std::vector<uint8_t> serialized = SerializeLadderWitness(inner_witness, SerializationContext::CONDITIONS);
+    BOOST_CHECK(!serialized.empty());
 
     // Compute SHA256 of the serialized inner conditions
     std::vector<uint8_t> hash256(CSHA256::OUTPUT_SIZE);

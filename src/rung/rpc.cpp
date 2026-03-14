@@ -374,7 +374,7 @@ static RungBlock ParseBlockSpec(const UniValue& block_obj, bool conditions_only)
                 block.type == RungBlockType::P2WPKH_LEGACY) {
                 commit_field.type = RungDataType::HASH160;
                 commit_field.data.resize(CHash160::OUTPUT_SIZE);
-                CHash160().Write(field.data).Finalize(commit_field.data.data());
+                CHash160().Write(field.data).Finalize(commit_field.data);
             } else {
                 commit_field.type = RungDataType::PUBKEY_COMMIT;
                 commit_field.data.resize(CSHA256::OUTPUT_SIZE);
@@ -393,7 +393,7 @@ static RungBlock ParseBlockSpec(const UniValue& block_obj, bool conditions_only)
                 block.type == RungBlockType::P2SH_LEGACY) {
                 hash_field.type = RungDataType::HASH160;
                 hash_field.data.resize(CHash160::OUTPUT_SIZE);
-                CHash160().Write(field.data).Finalize(hash_field.data.data());
+                CHash160().Write(field.data).Finalize(hash_field.data);
             } else {
                 hash_field.type = RungDataType::HASH256;
                 hash_field.data.resize(CSHA256::OUTPUT_SIZE);
@@ -409,7 +409,7 @@ static RungBlock ParseBlockSpec(const UniValue& block_obj, bool conditions_only)
             if (block.type == RungBlockType::P2SH_LEGACY) {
                 hash_field.type = RungDataType::HASH160;
                 hash_field.data.resize(CHash160::OUTPUT_SIZE);
-                CHash160().Write(field.data).Finalize(hash_field.data.data());
+                CHash160().Write(field.data).Finalize(hash_field.data);
             } else {
                 hash_field.type = RungDataType::HASH256;
                 hash_field.data.resize(CSHA256::OUTPUT_SIZE);
@@ -1449,6 +1449,21 @@ static RungBlock BuildWitnessBlock(const UniValue& block_spec,
         }
         if (block_spec.exists("privkey")) {
             SignSingleKey(block_spec, block, mtx, input_idx, txdata, conditions, "P2WSH_LEGACY");
+        }
+        break;
+    }
+    case RungBlockType::P2TR_SCRIPT_LEGACY: {
+        // Witness: PREIMAGE (revealed script leaf) + inner witness fields
+        // The preimage is the serialized Ladder conditions that hash to the committed SHA256 Merkle root.
+        if (block_spec.exists("preimage")) {
+            auto preimage_data = ParseHex(block_spec["preimage"].get_str());
+            if (preimage_data.empty()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "P2TR_SCRIPT_LEGACY requires non-empty preimage hex");
+            }
+            block.fields.push_back({RungDataType::PREIMAGE, preimage_data});
+        }
+        if (block_spec.exists("privkey")) {
+            SignSingleKey(block_spec, block, mtx, input_idx, txdata, conditions, "P2TR_SCRIPT_LEGACY");
         }
         break;
     }

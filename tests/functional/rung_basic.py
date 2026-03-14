@@ -17,7 +17,6 @@ import os
 from decimal import Decimal
 
 from test_framework.key import ECKey
-from test_framework.script import hash160
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, assert_raises_rpc_error
 from test_framework.wallet import MiniWallet
@@ -256,11 +255,14 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         self.test_p2tr_legacy_spend(node)
         self.test_p2sh_legacy_inner_sig(node)
         self.test_p2wsh_legacy_inner_sig(node)
-        self.test_negative_p2pkh_wrong_hash(node)
+        self.test_negative_p2pkh_wrong_key(node)
         self.test_negative_p2sh_malformed_preimage(node)
         self.test_legacy_plus_covenant(node)
         self.test_legacy_plus_csv(node)
         self.test_legacy_mlsc(node)
+        self.test_p2tr_script_legacy_spend(node)
+        self.test_negative_raw_hash160_rejected(node)
+        self.test_negative_raw_hash256_rejected(node)
 
     # =========================================================================
     # Helpers
@@ -509,13 +511,12 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         """HASH_PREIMAGE: SHA256 preimage reveal spend."""
         self.log.info("Testing HASH_PREIMAGE spend...")
 
-        # Generate random 32-byte preimage, compute SHA256 hash
+        # Generate random 32-byte preimage
         preimage = os.urandom(32)
-        hash_digest = hashlib.sha256(preimage).digest()
 
         # Create v4 output with HASH_PREIMAGE condition
         conditions = [{"blocks": [{"type": "HASH_PREIMAGE", "fields": [
-            {"type": "HASH256", "hex": hash_digest.hex()}
+            {"type": "PREIMAGE", "hex": preimage.hex()}
         ]}]}]
 
         txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
@@ -753,7 +754,6 @@ class LadderScriptBasicTest(BitcoinTestFramework):
 
         key_a_wif, key_a_pubkey = make_keypair()
         preimage = os.urandom(32)
-        hash_digest = hashlib.sha256(preimage).digest()
 
         # Conditions: 2 rungs
         # Rung 0: SIG(key_A)
@@ -763,7 +763,7 @@ class LadderScriptBasicTest(BitcoinTestFramework):
                 {"type": "PUBKEY", "hex": key_a_pubkey}
             ]}]},
             {"blocks": [{"type": "HASH_PREIMAGE", "fields": [
-                {"type": "HASH256", "hex": hash_digest.hex()}
+                {"type": "PREIMAGE", "hex": preimage.hex()}
             ]}]},
         ]
 
@@ -833,11 +833,10 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         self.log.info("Testing negative: wrong HASH_PREIMAGE preimage...")
 
         preimage = os.urandom(32)
-        hash_digest = hashlib.sha256(preimage).digest()
         wrong_preimage = os.urandom(32)
 
         conditions = [{"blocks": [{"type": "HASH_PREIMAGE", "fields": [
-            {"type": "HASH256", "hex": hash_digest.hex()}
+            {"type": "PREIMAGE", "hex": preimage.hex()}
         ]}]}]
 
         txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
@@ -1021,12 +1020,11 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         self.log.info("Testing inverted HASH_PREIMAGE...")
 
         preimage = os.urandom(32)
-        hash_digest = hashlib.sha256(preimage).digest()
 
         # Create v4 output with inverted HASH_PREIMAGE condition
         # Inverted means: spendable when hash check FAILS (no valid preimage)
         conditions = [{"blocks": [{"type": "HASH_PREIMAGE", "inverted": True, "fields": [
-            {"type": "HASH256", "hex": hash_digest.hex()}
+            {"type": "PREIMAGE", "hex": preimage.hex()}
         ]}]}]
 
         txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
@@ -1070,7 +1068,8 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         tag = b"GhostTaggedHash"
         preimage = os.urandom(32)
 
-        # Compute BIP-340 tagged hash: SHA256(SHA256(tag) || SHA256(tag) || preimage)
+        # TAGGED_HASH conditions use actual HASH256 values (not auto-converted):
+        # Field 1: SHA256(tag), Field 2: SHA256(SHA256(tag) || SHA256(tag) || preimage)
         tag_hash = hashlib.sha256(tag).digest()
         expected = hashlib.sha256(tag_hash + tag_hash + preimage).digest()
 
@@ -1598,18 +1597,11 @@ class LadderScriptBasicTest(BitcoinTestFramework):
 
         privkey_wif, pubkey_hex = make_keypair()
 
-        # Create tagged hash conditions
+        # Create tagged hash conditions with actual HASH256 values
         tag = b"ghost/test-tag"
         preimage = b"correct_preimage_data"
         tag_hash = hashlib.sha256(tag).digest()
-
-        # Compute correct tagged hash: SHA256(SHA256(tag) || SHA256(tag) || preimage)
-        tagged_hasher = hashlib.sha256()
-        tagged_hasher.update(tag_hash)
-        tagged_hasher.update(tag_hash)
-        tagged_hasher.update(preimage)
-        expected_hash = tagged_hasher.digest()
-
+        expected_hash = hashlib.sha256(tag_hash + tag_hash + preimage).digest()
         conditions = [{"blocks": [{"type": "TAGGED_HASH", "fields": [
             {"type": "HASH256", "hex": tag_hash.hex()},
             {"type": "HASH256", "hex": expected_hash.hex()},
@@ -2043,10 +2035,9 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         self.log.info("Testing HASH160_PREIMAGE spend...")
 
         preimage = os.urandom(16)
-        h160 = hash160(preimage)
 
         conditions = [{"blocks": [{"type": "HASH160_PREIMAGE", "fields": [
-            {"type": "HASH160", "hex": h160.hex()},
+            {"type": "PREIMAGE", "hex": preimage.hex()},
         ]}]}]
 
         txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
@@ -2936,7 +2927,6 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         # Rung 1: HASH_PREIMAGE (fallback)
         privkey_wif, pubkey_hex = make_keypair()
         preimage = os.urandom(16)
-        hash_val = hashlib.sha256(preimage).digest()
 
         conditions = [
             {"blocks": [
@@ -2944,7 +2934,7 @@ class LadderScriptBasicTest(BitcoinTestFramework):
                 {"type": "CSV", "fields": [{"type": "NUMERIC", "hex": numeric_hex(1)}]},
             ]},
             {"blocks": [
-                {"type": "HASH_PREIMAGE", "fields": [{"type": "HASH256", "hex": hash_val.hex()}]},
+                {"type": "HASH_PREIMAGE", "fields": [{"type": "PREIMAGE", "hex": preimage.hex()}]},
             ]},
         ]
 
@@ -4002,15 +3992,12 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         pq_pubkey = keypair["pubkey"]
         pq_privkey = keypair["privkey"]
 
-        # Compute commitment via RPC helper
-        commit_result = node.pqpubkeycommit(pq_pubkey)
-        commit_hex = commit_result["commit"]
-        self.log.info(f"  PUBKEY_COMMIT: {commit_hex[:16]}... (32 bytes vs {len(pq_pubkey)//2}B pubkey)")
+        self.log.info(f"  PQ pubkey: {pq_pubkey[:16]}... ({len(pq_pubkey)//2}B)")
 
-        # Conditions: SCHEME(FALCON512) + PUBKEY_COMMIT (34 bytes total in UTXO!)
+        # Conditions: SCHEME(FALCON512) + PUBKEY (node auto-computes commitment)
         conditions = [{"blocks": [{"type": "SIG", "fields": [
             {"type": "SCHEME", "hex": "10"},
-            {"type": "PUBKEY_COMMIT", "hex": commit_hex},
+            {"type": "PUBKEY", "hex": pq_pubkey},
         ]}]}]
 
         txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
@@ -4058,14 +4045,13 @@ class LadderScriptBasicTest(BitcoinTestFramework):
 
         # Alice's key — committed in conditions
         alice_keypair = node.generatepqkeypair("FALCON512")
-        alice_commit = node.pqpubkeycommit(alice_keypair["pubkey"])["commit"]
 
         # Eve's key — will try to spend
         eve_keypair = node.generatepqkeypair("FALCON512")
 
         conditions = [{"blocks": [{"type": "SIG", "fields": [
             {"type": "SCHEME", "hex": "10"},
-            {"type": "PUBKEY_COMMIT", "hex": alice_commit},
+            {"type": "PUBKEY", "hex": alice_keypair["pubkey"]},
         ]}]}]
 
         txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
@@ -5179,12 +5165,10 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         pq_keypair = node.generatepqkeypair("FALCON512")
         pq_pubkey = pq_keypair["pubkey"]
         pq_privkey = pq_keypair["privkey"]
-        commit = node.pqpubkeycommit(pq_pubkey)["commit"]
-
         anchor_conditions = [{"blocks": [
             {"type": "SIG", "fields": [
                 {"type": "SCHEME", "hex": "10"},
-                {"type": "PUBKEY_COMMIT", "hex": commit},
+                {"type": "PUBKEY", "hex": pq_pubkey},
             ]},
             {"type": "RECURSE_SAME", "fields": [
                 {"type": "NUMERIC", "hex": "e803"},  # depth=1000
@@ -5343,12 +5327,10 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         pq_keypair = node.generatepqkeypair("FALCON512")
         pq_pubkey = pq_keypair["pubkey"]
         pq_privkey = pq_keypair["privkey"]
-        commit = node.pqpubkeycommit(pq_pubkey)["commit"]
-
         anchor_conditions = [{"blocks": [
             {"type": "SIG", "fields": [
                 {"type": "SCHEME", "hex": "10"},
-                {"type": "PUBKEY_COMMIT", "hex": commit},
+                {"type": "PUBKEY", "hex": pq_pubkey},
             ]},
             {"type": "RECURSE_SAME", "fields": [
                 {"type": "NUMERIC", "hex": "e803"},
@@ -5760,15 +5742,11 @@ class LadderScriptBasicTest(BitcoinTestFramework):
 
         privkey_wif, pubkey_hex = make_keypair()
 
-        # Compute pubkey commitment (SHA256 of compressed pubkey)
-        pubkey_bytes = bytes.fromhex(pubkey_hex)
-        pubkey_commit = hashlib.sha256(pubkey_bytes).hexdigest()
-
-        # Relay 0: SIG block with PUBKEY_COMMIT (the shared key commitment)
+        # Relay 0: SIG block with PUBKEY (node auto-computes commitment)
         relays = [{"blocks": [{
             "type": "SIG",
             "fields": [
-                {"type": "PUBKEY_COMMIT", "hex": pubkey_commit},
+                {"type": "PUBKEY", "hex": pubkey_hex},
                 {"type": "SCHEME", "hex": "01"},  # SCHNORR
             ]
         }]}]
@@ -5827,12 +5805,11 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         privkey_wif1, pubkey_hex1 = make_keypair()
         privkey_wif2, pubkey_hex2 = make_keypair()
 
-        # Shared relay: SIG with pubkey1 commitment
-        pubkey_commit1 = hashlib.sha256(bytes.fromhex(pubkey_hex1)).hexdigest()
+        # Shared relay: SIG with pubkey1 (node auto-computes commitment)
         relays = [{"blocks": [{
             "type": "SIG",
             "fields": [
-                {"type": "PUBKEY_COMMIT", "hex": pubkey_commit1},
+                {"type": "PUBKEY", "hex": pubkey_hex1},
                 {"type": "SCHEME", "hex": "01"},
             ]
         }]}]
@@ -5898,12 +5875,10 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         privkey_wif, pubkey_hex = make_keypair()
         wrong_wif, wrong_pubkey = make_keypair()
 
-        pubkey_commit = hashlib.sha256(bytes.fromhex(pubkey_hex)).hexdigest()
-
         relays = [{"blocks": [{
             "type": "SIG",
             "fields": [
-                {"type": "PUBKEY_COMMIT", "hex": pubkey_commit},
+                {"type": "PUBKEY", "hex": pubkey_hex},
                 {"type": "SCHEME", "hex": "01"},
             ]
         }]}]
@@ -5959,10 +5934,9 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         self.log.info("Testing TIMELOCKED_SIG spend...")
         csv_blocks = 5
         wif, pubkey = make_keypair()
-        commit = hashlib.sha256(bytes.fromhex(pubkey)).hexdigest()
 
         conditions = [{"blocks": [{"type": "TIMELOCKED_SIG", "fields": [
-            {"type": "PUBKEY_COMMIT", "hex": commit},
+            {"type": "PUBKEY", "hex": pubkey},
             {"type": "SCHEME", "hex": "01"},
             {"type": "NUMERIC", "hex": numeric_hex(csv_blocks)},
         ]}]}]
@@ -5999,10 +5973,9 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         csv_blocks = 5
         wif, pubkey = make_keypair()
         wrong_wif, _ = make_keypair()
-        commit = hashlib.sha256(bytes.fromhex(pubkey)).hexdigest()
 
         conditions = [{"blocks": [{"type": "TIMELOCKED_SIG", "fields": [
-            {"type": "PUBKEY_COMMIT", "hex": commit},
+            {"type": "PUBKEY", "hex": pubkey},
             {"type": "SCHEME", "hex": "01"},
             {"type": "NUMERIC", "hex": numeric_hex(csv_blocks)},
         ]}]}]
@@ -6033,17 +6006,15 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         self.log.info("Testing HTLC compound block spend...")
         csv_blocks = 5
         wif, pubkey = make_keypair()
-        commit = hashlib.sha256(bytes.fromhex(pubkey)).hexdigest()
 
         preimage = os.urandom(32)
-        preimage_hash = hashlib.sha256(preimage).hexdigest()
 
-        # HTLC conditions: [PUBKEY_COMMIT, PUBKEY_COMMIT(receiver), HASH256, NUMERIC]
+        # HTLC conditions: [PUBKEY, PUBKEY(receiver), PREIMAGE, NUMERIC]
         # For simplicity, use same key for both sender/receiver
         conditions = [{"blocks": [{"type": "HTLC", "fields": [
-            {"type": "PUBKEY_COMMIT", "hex": commit},
-            {"type": "PUBKEY_COMMIT", "hex": commit},
-            {"type": "HASH256", "hex": preimage_hash},
+            {"type": "PUBKEY", "hex": pubkey},
+            {"type": "PUBKEY", "hex": pubkey},
+            {"type": "PREIMAGE", "hex": preimage.hex()},
             {"type": "NUMERIC", "hex": numeric_hex(csv_blocks)},
         ]}]}]
 
@@ -6076,16 +6047,14 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         self.log.info("Testing HTLC negative (wrong preimage)...")
         csv_blocks = 5
         wif, pubkey = make_keypair()
-        commit = hashlib.sha256(bytes.fromhex(pubkey)).hexdigest()
 
         preimage = os.urandom(32)
-        preimage_hash = hashlib.sha256(preimage).hexdigest()
         wrong_preimage = os.urandom(32)
 
         conditions = [{"blocks": [{"type": "HTLC", "fields": [
-            {"type": "PUBKEY_COMMIT", "hex": commit},
-            {"type": "PUBKEY_COMMIT", "hex": commit},
-            {"type": "HASH256", "hex": preimage_hash},
+            {"type": "PUBKEY", "hex": pubkey},
+            {"type": "PUBKEY", "hex": pubkey},
+            {"type": "PREIMAGE", "hex": preimage.hex()},
             {"type": "NUMERIC", "hex": numeric_hex(csv_blocks)},
         ]}]}]
 
@@ -6114,14 +6083,12 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         """HASH_SIG: hash preimage + signature in one compound block."""
         self.log.info("Testing HASH_SIG spend...")
         wif, pubkey = make_keypair()
-        commit = hashlib.sha256(bytes.fromhex(pubkey)).hexdigest()
 
         preimage = os.urandom(32)
-        preimage_hash = hashlib.sha256(preimage).hexdigest()
 
         conditions = [{"blocks": [{"type": "HASH_SIG", "fields": [
-            {"type": "PUBKEY_COMMIT", "hex": commit},
-            {"type": "HASH256", "hex": preimage_hash},
+            {"type": "PUBKEY", "hex": pubkey},
+            {"type": "PREIMAGE", "hex": preimage.hex()},
             {"type": "SCHEME", "hex": "01"},
         ]}]}]
 
@@ -6152,15 +6119,13 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         """HASH_SIG: wrong preimage should fail."""
         self.log.info("Testing HASH_SIG negative (wrong preimage)...")
         wif, pubkey = make_keypair()
-        commit = hashlib.sha256(bytes.fromhex(pubkey)).hexdigest()
 
         preimage = os.urandom(32)
-        preimage_hash = hashlib.sha256(preimage).hexdigest()
         wrong_preimage = os.urandom(32)
 
         conditions = [{"blocks": [{"type": "HASH_SIG", "fields": [
-            {"type": "PUBKEY_COMMIT", "hex": commit},
-            {"type": "HASH256", "hex": preimage_hash},
+            {"type": "PUBKEY", "hex": pubkey},
+            {"type": "PREIMAGE", "hex": preimage.hex()},
             {"type": "SCHEME", "hex": "01"},
         ]}]}]
 
@@ -6188,13 +6153,12 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         """CLTV_SIG: signature + absolute timelock in one compound block."""
         self.log.info("Testing CLTV_SIG spend...")
         wif, pubkey = make_keypair()
-        commit = hashlib.sha256(bytes.fromhex(pubkey)).hexdigest()
 
         current_height = node.getblockcount()
         target_height = current_height + 10
 
         conditions = [{"blocks": [{"type": "CLTV_SIG", "fields": [
-            {"type": "PUBKEY_COMMIT", "hex": commit},
+            {"type": "PUBKEY", "hex": pubkey},
             {"type": "SCHEME", "hex": "01"},
             {"type": "NUMERIC", "hex": numeric_hex(target_height)},
         ]}]}]
@@ -6232,13 +6196,12 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         """CLTV_SIG: spending before target height should fail."""
         self.log.info("Testing CLTV_SIG negative (too early)...")
         wif, pubkey = make_keypair()
-        commit = hashlib.sha256(bytes.fromhex(pubkey)).hexdigest()
 
         current_height = node.getblockcount()
         target_height = current_height + 100  # far in the future
 
         conditions = [{"blocks": [{"type": "CLTV_SIG", "fields": [
-            {"type": "PUBKEY_COMMIT", "hex": commit},
+            {"type": "PUBKEY", "hex": pubkey},
             {"type": "SCHEME", "hex": "01"},
             {"type": "NUMERIC", "hex": numeric_hex(target_height)},
         ]}]}]
@@ -6271,15 +6234,12 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         wif1, pk1 = make_keypair()
         wif2, pk2 = make_keypair()
         wif3, pk3 = make_keypair()
-        commit1 = hashlib.sha256(bytes.fromhex(pk1)).hexdigest()
-        commit2 = hashlib.sha256(bytes.fromhex(pk2)).hexdigest()
-        commit3 = hashlib.sha256(bytes.fromhex(pk3)).hexdigest()
 
         conditions = [{"blocks": [{"type": "TIMELOCKED_MULTISIG", "fields": [
             {"type": "NUMERIC", "hex": numeric_hex(2)},  # threshold
-            {"type": "PUBKEY_COMMIT", "hex": commit1},
-            {"type": "PUBKEY_COMMIT", "hex": commit2},
-            {"type": "PUBKEY_COMMIT", "hex": commit3},
+            {"type": "PUBKEY", "hex": pk1},
+            {"type": "PUBKEY", "hex": pk2},
+            {"type": "PUBKEY", "hex": pk3},
             {"type": "SCHEME", "hex": "01"},
             {"type": "NUMERIC", "hex": numeric_hex(csv_blocks)},
         ]}]}]
@@ -6316,15 +6276,12 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         wif1, pk1 = make_keypair()
         _wif2, pk2 = make_keypair()
         _wif3, pk3 = make_keypair()
-        commit1 = hashlib.sha256(bytes.fromhex(pk1)).hexdigest()
-        commit2 = hashlib.sha256(bytes.fromhex(pk2)).hexdigest()
-        commit3 = hashlib.sha256(bytes.fromhex(pk3)).hexdigest()
 
         conditions = [{"blocks": [{"type": "TIMELOCKED_MULTISIG", "fields": [
             {"type": "NUMERIC", "hex": numeric_hex(2)},
-            {"type": "PUBKEY_COMMIT", "hex": commit1},
-            {"type": "PUBKEY_COMMIT", "hex": commit2},
-            {"type": "PUBKEY_COMMIT", "hex": commit3},
+            {"type": "PUBKEY", "hex": pk1},
+            {"type": "PUBKEY", "hex": pk2},
+            {"type": "PUBKEY", "hex": pk3},
             {"type": "SCHEME", "hex": "01"},
             {"type": "NUMERIC", "hex": numeric_hex(csv_blocks)},
         ]}]}]
@@ -6358,12 +6315,9 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         signing_wif, signing_pubkey = make_keypair()
         _adaptor_wif, adaptor_pubkey = make_keypair()
 
-        signing_commit = hashlib.sha256(bytes.fromhex(signing_pubkey)).hexdigest()
-        adaptor_commit = hashlib.sha256(bytes.fromhex(adaptor_pubkey)).hexdigest()
-
         conditions = [{"blocks": [{"type": "PTLC", "fields": [
-            {"type": "PUBKEY_COMMIT", "hex": signing_commit},
-            {"type": "PUBKEY_COMMIT", "hex": adaptor_commit},
+            {"type": "PUBKEY", "hex": signing_pubkey},
+            {"type": "PUBKEY", "hex": adaptor_pubkey},
             {"type": "NUMERIC", "hex": numeric_hex(csv_blocks)},
         ]}]}]
 
@@ -6399,12 +6353,9 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         wrong_wif, _ = make_keypair()
         _adaptor_wif, adaptor_pubkey = make_keypair()
 
-        signing_commit = hashlib.sha256(bytes.fromhex(signing_pubkey)).hexdigest()
-        adaptor_commit = hashlib.sha256(bytes.fromhex(adaptor_pubkey)).hexdigest()
-
         conditions = [{"blocks": [{"type": "PTLC", "fields": [
-            {"type": "PUBKEY_COMMIT", "hex": signing_commit},
-            {"type": "PUBKEY_COMMIT", "hex": adaptor_commit},
+            {"type": "PUBKEY", "hex": signing_pubkey},
+            {"type": "PUBKEY", "hex": adaptor_pubkey},
             {"type": "NUMERIC", "hex": numeric_hex(csv_blocks)},
         ]}]}]
 
@@ -6976,18 +6927,14 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         self.log.info("  P2PK_LEGACY spend confirmed!")
 
     def test_p2pkh_legacy_spend(self, node):
-        """P2PKH_LEGACY: create output with HASH160(pubkey), spend with pubkey + sig."""
+        """P2PKH_LEGACY: provide PUBKEY in conditions (node computes HASH160), spend with pubkey + sig."""
         self.log.info("Testing P2PKH_LEGACY spend...")
 
         privkey_wif, pubkey_hex = make_keypair()
 
-        # Compute HASH160(pubkey)
-        pubkey_bytes = bytes.fromhex(pubkey_hex)
-        h160 = hashlib.new('ripemd160', hashlib.sha256(pubkey_bytes).digest()).digest()
-
-        # P2PKH_LEGACY conditions: HASH160 (20-byte hash of pubkey)
+        # P2PKH_LEGACY conditions: PUBKEY (node auto-converts to HASH160)
         conditions = [{"blocks": [{"type": "P2PKH_LEGACY", "fields": [
-            {"type": "HASH160", "hex": h160.hex()},
+            {"type": "PUBKEY", "hex": pubkey_hex},
         ]}]}]
 
         txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
@@ -7022,12 +6969,9 @@ class LadderScriptBasicTest(BitcoinTestFramework):
 
         privkey_wif, pubkey_hex = make_keypair()
 
-        # Compute HASH160(pubkey)
-        pubkey_bytes = bytes.fromhex(pubkey_hex)
-        h160 = hashlib.new('ripemd160', hashlib.sha256(pubkey_bytes).digest()).digest()
-
+        # P2WPKH_LEGACY conditions: PUBKEY (node auto-converts to HASH160)
         conditions = [{"blocks": [{"type": "P2WPKH_LEGACY", "fields": [
-            {"type": "HASH160", "hex": h160.hex()},
+            {"type": "PUBKEY", "hex": pubkey_hex},
         ]}]}]
 
         txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
@@ -7132,12 +7076,9 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         # Build inner conditions (CONDITIONS-context serialized SIG block)
         inner_bytes = self._build_inner_sig_conditions(pubkey_hex)
 
-        # Compute HASH160 of inner conditions
-        h160 = hashlib.new('ripemd160', hashlib.sha256(inner_bytes).digest()).digest()
-
-        # P2SH_LEGACY conditions: HASH160 of serialized inner conditions
+        # P2SH_LEGACY conditions: PREIMAGE (node auto-converts to HASH160)
         conditions = [{"blocks": [{"type": "P2SH_LEGACY", "fields": [
-            {"type": "HASH160", "hex": h160.hex()},
+            {"type": "PREIMAGE", "hex": inner_bytes.hex()},
         ]}]}]
 
         txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
@@ -7178,12 +7119,9 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         # Build inner conditions (CONDITIONS-context serialized SIG block)
         inner_bytes = self._build_inner_sig_conditions(pubkey_hex)
 
-        # Compute SHA256 of inner conditions
-        h256 = hashlib.sha256(inner_bytes).digest()
-
-        # P2WSH_LEGACY conditions: HASH256 (SHA256) of serialized inner conditions
+        # P2WSH_LEGACY conditions: PREIMAGE (node auto-converts to HASH256)
         conditions = [{"blocks": [{"type": "P2WSH_LEGACY", "fields": [
-            {"type": "HASH256", "hex": h256.hex()},
+            {"type": "PREIMAGE", "hex": inner_bytes.hex()},
         ]}]}]
 
         txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
@@ -7215,17 +7153,16 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         assert tx_info["confirmations"] >= 1
         self.log.info("  P2WSH_LEGACY inner SIG spend confirmed!")
 
-    def test_negative_p2pkh_wrong_hash(self, node):
-        """Negative: P2PKH_LEGACY with wrong HASH160 → rejection."""
-        self.log.info("Testing negative: P2PKH_LEGACY wrong HASH160...")
+    def test_negative_p2pkh_wrong_key(self, node):
+        """Negative: P2PKH_LEGACY locked to key A, spend attempt with key B → rejection."""
+        self.log.info("Testing negative: P2PKH_LEGACY wrong key...")
 
-        privkey_wif, pubkey_hex = make_keypair()
+        key_a_wif, key_a_pubkey = make_keypair()
+        key_b_wif, key_b_pubkey = make_keypair()
 
-        # Use a completely wrong HASH160 (not derived from this pubkey)
-        wrong_hash = os.urandom(20)
-
+        # Lock to key A
         conditions = [{"blocks": [{"type": "P2PKH_LEGACY", "fields": [
-            {"type": "HASH160", "hex": wrong_hash.hex()},
+            {"type": "PUBKEY", "hex": key_a_pubkey},
         ]}]}]
 
         txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
@@ -7239,26 +7176,26 @@ class LadderScriptBasicTest(BitcoinTestFramework):
                 "type": "SIG", "fields": [{"type": "PUBKEY", "hex": dest_pubkey}]
             }]}]}]
         )
+        # Sign with key B — HASH160 won't match
         sign_result = node.signrungtx(
             result["hex"],
-            [{"input": 0, "blocks": [{"type": "P2PKH_LEGACY", "privkey": privkey_wif}]}],
+            [{"input": 0, "blocks": [{"type": "P2PKH_LEGACY", "privkey": key_b_wif}]}],
             [{"amount": amount, "scriptPubKey": spk}]
         )
 
         assert_raises_rpc_error(-26, None, node.sendrawtransaction, sign_result["hex"])
-        self.log.info("  P2PKH_LEGACY wrong HASH160 correctly rejected!")
+        self.log.info("  P2PKH_LEGACY wrong key correctly rejected!")
 
     def test_negative_p2sh_malformed_preimage(self, node):
-        """Negative: P2SH_LEGACY with garbage preimage that passes HASH160 but fails deser."""
+        """Negative: P2SH_LEGACY with garbage preimage — hash matches but inner deser fails."""
         self.log.info("Testing negative: P2SH_LEGACY malformed preimage...")
 
         # Create garbage inner conditions bytes that will fail deserialization
         garbage = os.urandom(32)
-        h160 = hashlib.new('ripemd160', hashlib.sha256(garbage).digest()).digest()
 
-        # P2SH conditions: HASH160 matches the garbage
+        # P2SH conditions: PREIMAGE (node auto-converts to HASH160)
         conditions = [{"blocks": [{"type": "P2SH_LEGACY", "fields": [
-            {"type": "HASH160", "hex": h160.hex()},
+            {"type": "PREIMAGE", "hex": garbage.hex()},
         ]}]}]
 
         txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
@@ -7291,16 +7228,12 @@ class LadderScriptBasicTest(BitcoinTestFramework):
 
         privkey_wif, pubkey_hex = make_keypair()
 
-        # Compute HASH160(pubkey)
-        pubkey_bytes = bytes.fromhex(pubkey_hex)
-        h160 = hashlib.new('ripemd160', hashlib.sha256(pubkey_bytes).digest()).digest()
-
         min_sats = 10000       # 0.0001 BTC
         max_sats = 200000000   # 2.0 BTC
 
         conditions = [{"blocks": [
             {"type": "P2PKH_LEGACY", "fields": [
-                {"type": "HASH160", "hex": h160.hex()},
+                {"type": "PUBKEY", "hex": pubkey_hex},
             ]},
             {"type": "AMOUNT_LOCK", "fields": [
                 {"type": "NUMERIC", "hex": numeric_hex(min_sats)},
@@ -7346,15 +7279,11 @@ class LadderScriptBasicTest(BitcoinTestFramework):
 
         privkey_wif, pubkey_hex = make_keypair()
 
-        # Compute HASH160(pubkey)
-        pubkey_bytes = bytes.fromhex(pubkey_hex)
-        h160 = hashlib.new('ripemd160', hashlib.sha256(pubkey_bytes).digest()).digest()
-
         csv_blocks = 10
 
         conditions = [{"blocks": [
             {"type": "P2WPKH_LEGACY", "fields": [
-                {"type": "HASH160", "hex": h160.hex()},
+                {"type": "PUBKEY", "hex": pubkey_hex},
             ]},
             {"type": "CSV", "fields": [
                 {"type": "NUMERIC", "hex": numeric_hex(csv_blocks)},
@@ -7400,17 +7329,13 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         key_a_wif, key_a_pubkey = make_keypair()
         key_b_wif, key_b_pubkey = make_keypair()
 
-        # Compute HASH160(key_a)
-        key_a_bytes = bytes.fromhex(key_a_pubkey)
-        h160 = hashlib.new('ripemd160', hashlib.sha256(key_a_bytes).digest()).digest()
-
         csv_blocks = 50
 
-        # Rung 0: P2PKH_LEGACY(key_a)
+        # Rung 0: P2PKH_LEGACY(key_a) — PUBKEY auto-converts to HASH160
         # Rung 1: SIG(key_b) + CSV(50)
         conditions = [
             {"blocks": [{"type": "P2PKH_LEGACY", "fields": [
-                {"type": "HASH160", "hex": h160.hex()},
+                {"type": "PUBKEY", "hex": key_a_pubkey},
             ]}]},
             {"blocks": [
                 {"type": "SIG", "fields": [{"type": "PUBKEY", "hex": key_b_pubkey}]},
@@ -7446,6 +7371,89 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         tx_info = node.getrawtransaction(spend_txid, True)
         assert tx_info["confirmations"] >= 1
         self.log.info("  Legacy MLSC spend via rung 0 (P2PKH_LEGACY) confirmed!")
+
+    def test_p2tr_script_legacy_spend(self, node):
+        """P2TR_SCRIPT_LEGACY: script-path spend — inner SIG conditions."""
+        self.log.info("Testing P2TR_SCRIPT_LEGACY with inner SIG conditions...")
+
+        privkey_wif, pubkey_hex = make_keypair()
+        ikey_wif, ikey_pubkey = make_keypair()
+
+        # Build inner conditions (CONDITIONS-context serialized SIG block)
+        inner_bytes = self._build_inner_sig_conditions(pubkey_hex)
+
+        # P2TR_SCRIPT_LEGACY conditions:
+        # PREIMAGE (inner conditions → node auto-converts to HASH256 Merkle root)
+        # PUBKEY (internal key → node auto-converts to PUBKEY_COMMIT)
+        conditions = [{"blocks": [{"type": "P2TR_SCRIPT_LEGACY", "fields": [
+            {"type": "PREIMAGE", "hex": inner_bytes.hex()},
+            {"type": "PUBKEY", "hex": ikey_pubkey},
+        ]}]}]
+
+        txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
+        self.log.info(f"  P2TR_SCRIPT_LEGACY output: {txid}:{vout}")
+
+        output_amount = amount - Decimal("0.001")
+        dest_wif, dest_pubkey = make_keypair()
+        dest_conditions = [{"blocks": [{"type": "SIG", "fields": [
+            {"type": "PUBKEY", "hex": dest_pubkey}
+        ]}]}]
+
+        result = node.createrungtx(
+            [{"txid": txid, "vout": vout}],
+            [{"amount": output_amount, "conditions": dest_conditions}]
+        )
+        # Witness: PREIMAGE (inner conditions) + PUBKEY + SIGNATURE
+        sign_result = node.signrungtx(
+            result["hex"],
+            [{"input": 0, "blocks": [{"type": "P2TR_SCRIPT_LEGACY",
+                                       "preimage": inner_bytes.hex(),
+                                       "privkey": privkey_wif}]}],
+            [{"amount": amount, "scriptPubKey": spk}]
+        )
+        assert sign_result["complete"]
+
+        spend_txid = node.sendrawtransaction(sign_result["hex"])
+        self.generate(node, 1)
+        tx_info = node.getrawtransaction(spend_txid, True)
+        assert tx_info["confirmations"] >= 1
+        self.log.info("  P2TR_SCRIPT_LEGACY script-path spend confirmed!")
+
+    def test_negative_raw_hash160_rejected(self, node):
+        """Negative: raw HASH160 for P2PKH_LEGACY is rejected when node should compute it."""
+        self.log.info("Testing negative: raw HASH160 rejected for P2PKH_LEGACY...")
+
+        # Any 20 bytes — doesn't matter, should be rejected before validation
+        h160 = os.urandom(20)
+
+        # Node-computed enforcement: raw HASH160 rejected, must use PUBKEY
+        assert_raises_rpc_error(-8, "Use PUBKEY instead of HASH160",
+            node.createrungtx,
+            [{"txid": "0" * 64, "vout": 0}],
+            [{"amount": Decimal("0.001"), "conditions": [{"blocks": [{
+                "type": "P2PKH_LEGACY", "fields": [
+                    {"type": "HASH160", "hex": h160.hex()},
+                ]
+            }]}]}]
+        )
+        self.log.info("  Raw HASH160 for P2PKH_LEGACY correctly rejected!")
+
+    def test_negative_raw_hash256_rejected(self, node):
+        """Negative: raw HASH256 for P2WSH_LEGACY is rejected when node should compute it."""
+        self.log.info("Testing negative: raw HASH256 rejected for P2WSH_LEGACY...")
+
+        h256 = os.urandom(32)
+
+        assert_raises_rpc_error(-8, "Use PREIMAGE instead of HASH256",
+            node.createrungtx,
+            [{"txid": "0" * 64, "vout": 0}],
+            [{"amount": Decimal("0.001"), "conditions": [{"blocks": [{
+                "type": "P2WSH_LEGACY", "fields": [
+                    {"type": "HASH256", "hex": h256.hex()},
+                ]
+            }]}]}]
+        )
+        self.log.info("  Raw HASH256 for P2WSH_LEGACY correctly rejected!")
 
     def bootstrap_v4_output_with_relays(self, node, conditions, relays, output_amount=None):
         """Create and confirm a v4 output with conditions + relays.
