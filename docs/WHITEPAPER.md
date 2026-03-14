@@ -362,19 +362,19 @@ Legacy Bitcoin transaction types wrapped as typed Ladder Script blocks. Each blo
 
 **P2PK_LEGACY (0x0901):** P2PK wrapped. Conditions: PUBKEY_COMMIT + SCHEME. Witness: PUBKEY + SIGNATURE. The PUBKEY_COMMIT commits to the full public key; SCHEME selects the signature algorithm.
 
-**P2PKH_LEGACY (0x0902):** P2PKH wrapped. Conditions: HASH160. Witness: PUBKEY + SIGNATURE. The witness PUBKEY must hash to the committed HASH160 value, and the SIGNATURE must verify against that key.
+**P2PKH_LEGACY (0x0902):** P2PKH wrapped. User provides PUBKEY; the node computes HASH160 = RIPEMD160(SHA256(pubkey)) and stores it in conditions. Raw HASH160 input is rejected. Witness: PUBKEY + SIGNATURE. The witness PUBKEY must hash to the committed HASH160 value, and the SIGNATURE must verify against that key.
 
-**P2SH_LEGACY (0x0903):** P2SH wrapped. Conditions: HASH160. Witness: PREIMAGE + inner witness. The PREIMAGE must hash to HASH160 and must deserialize as valid Ladder Script conditions. Inner witness satisfies those conditions. Recursion depth limited to 2.
+**P2SH_LEGACY (0x0903):** P2SH wrapped. User provides PREIMAGE (serialized Ladder Script conditions); the node computes HASH160 = RIPEMD160(SHA256(preimage)) and stores it in conditions. Raw HASH160 input is rejected. Witness: PREIMAGE + inner witness. The PREIMAGE must deserialize as valid Ladder Script conditions. Inner witness satisfies those conditions. Recursion depth limited to 2.
 
-**P2WPKH_LEGACY (0x0904):** P2WPKH wrapped. Conditions: HASH160. Witness: PUBKEY + SIGNATURE. Delegates to P2PKH_LEGACY evaluation: HASH160 contains the 20-byte witness program.
+**P2WPKH_LEGACY (0x0904):** P2WPKH wrapped. User provides PUBKEY; the node computes HASH160 (same as P2PKH_LEGACY). Raw HASH160 input is rejected. Witness: PUBKEY + SIGNATURE. Delegates to P2PKH_LEGACY evaluation.
 
-**P2WSH_LEGACY (0x0905):** P2WSH wrapped. Conditions: HASH256. Witness: PREIMAGE + inner witness. The PREIMAGE must deserialize as valid Ladder Script conditions. Recursion depth limited to 2.
+**P2WSH_LEGACY (0x0905):** P2WSH wrapped. User provides PREIMAGE (serialized Ladder Script conditions); the node computes HASH256 = SHA256(preimage) and stores it in conditions. Raw HASH256 input is rejected. Witness: PREIMAGE + inner witness. The PREIMAGE must deserialize as valid Ladder Script conditions. Recursion depth limited to 2.
 
-**P2TR_LEGACY (0x0906):** P2TR key-path wrapped. Conditions: PUBKEY_COMMIT + SCHEME. Witness: PUBKEY + SIGNATURE. PUBKEY_COMMIT commits to the Taproot internal key. Verification uses Schnorr (BIP-340) by default.
+**P2TR_LEGACY (0x0906):** P2TR key-path wrapped. Conditions: PUBKEY_COMMIT + SCHEME. User provides PUBKEY; the node computes PUBKEY_COMMIT = SHA256(pubkey). Witness: PUBKEY + SIGNATURE. Verification uses Schnorr (BIP-340) by default.
 
-**P2TR_SCRIPT_LEGACY (0x0907):** P2TR script-path wrapped. Conditions: HASH256 + PUBKEY_COMMIT. Witness: PREIMAGE + inner witness. HASH256 is the tapleaf hash; PUBKEY_COMMIT commits to the internal key. The PREIMAGE must deserialize as valid Ladder Script conditions. Recursion depth limited to 2.
+**P2TR_SCRIPT_LEGACY (0x0907):** P2TR script-path wrapped. User provides PUBKEY (internal key) and PREIMAGE (script leaf); the node computes PUBKEY_COMMIT = SHA256(pubkey) and HASH256 = SHA256(preimage). Raw hash input is rejected. Witness: PREIMAGE + inner witness. The PREIMAGE must deserialize as valid Ladder Script conditions. Recursion depth limited to 2.
 
-For P2SH_LEGACY, P2WSH_LEGACY, and P2TR_SCRIPT_LEGACY, the PREIMAGE field in the witness must deserialize as a valid `RungConditions` structure. Arbitrary byte sequences are rejected at deserialization. The recursion depth is limited to 2, preventing unbounded nesting while allowing one level of script wrapping.
+For all legacy block types, hash commitments stored in conditions are computed exclusively by the node from validated inputs. No hash field accepts user-supplied values directly. For P2SH_LEGACY, P2WSH_LEGACY, and P2TR_SCRIPT_LEGACY, the PREIMAGE must additionally deserialize as a valid `RungConditions` structure — arbitrary byte sequences are rejected at deserialization. The recursion depth is limited to 2, preventing unbounded nesting while allowing one level of script wrapping.
 
 ---
 
@@ -472,7 +472,13 @@ Because every field must conform to a data type that has semantic meaning in the
 
 ### 7.5 Legacy Wrapping
 
-Legacy Bitcoin transaction types (P2PK, P2PKH, P2SH, P2WPKH, P2WSH, P2TR) retain writable surfaces for arbitrary data embedding. By wrapping these as typed Ladder Script blocks in the Legacy family (0x0900--0x09FF), all fields become typed and validated. P2SH/P2WSH/P2TR_SCRIPT inner scripts must be valid Ladder Script conditions — arbitrary byte sequences are rejected at deserialization. This closes the inscription vector while preserving legacy spending semantics.
+Legacy Bitcoin transaction types (P2PK, P2PKH, P2SH, P2WPKH, P2WSH, P2TR) retain writable surfaces for arbitrary data embedding. By wrapping these as typed Ladder Script blocks in the Legacy family (0x0900--0x09FF), all fields become typed and validated. P2SH/P2WSH/P2TR_SCRIPT inner scripts must be valid Ladder Script conditions — arbitrary byte sequences are rejected at deserialization.
+
+### 7.6 Node-Computed Commitments
+
+All hash commitments stored in the UTXO set are computed exclusively by the node from validated preimages. Users provide source data (public keys or preimages); the node computes the corresponding hash (PUBKEY_COMMIT, HASH160, or HASH256) and stores the result in conditions. Raw hash values are rejected at the RPC layer for all block types that support auto-conversion.
+
+This property is uniform across all 60 block types. No condition field accepts arbitrary user-chosen bytes. Arbitrary data embedding is structurally impossible regardless of transaction construction method — enforced at the consensus layer, not by mempool policy, and not bypassable by miners or custom transaction construction software.
 
 ---
 

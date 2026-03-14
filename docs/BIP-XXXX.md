@@ -861,7 +861,7 @@ The line count is higher because Ladder Script replaces the entire Script evalua
 
 The implementation includes comprehensive test coverage across two layers:
 
-**Unit tests** (`src/test/rung_tests.cpp`): 268 test cases covering:
+**Unit tests** (`src/test/rung_tests.cpp`): 422 test cases covering:
 - Field validation for all 9 data types with boundary conditions
 - Serialization round-trips for all 60 block types
 - Deserialization rejection of malformed inputs (empty, truncated, trailing bytes, oversized, unknown types)
@@ -882,6 +882,7 @@ The implementation includes comprehensive test coverage across two layers:
 - Counter, latch, and one-shot state gating
 - Varint NUMERIC encoding edge cases (0, 1, 252, 253, 65535, max uint32)
 - Micro-header roundtrips for all known block types
+- Legacy block types: serialization round-trips, evaluator pass/fail, wrong hash/key, missing fields, inner condition deserialization, recursion depth limits, ECDSA fallback, dispatch routing
 - Implicit field encoding in CONDITIONS and WITNESS contexts
 - Template inheritance serialization, resolution, and diff application
 - Cross-phase integration (multi-block, multi-rung optimised roundtrips)
