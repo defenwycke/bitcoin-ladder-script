@@ -5,3 +5,13 @@ build/
 __pycache__/
 *.pyc
 .DS_Store
+tests/config.ini
+tools/test-results*.json
+*.v1-backup
+
+# Audit and report files
+BIP-READINESS-AUDIT.md
+
+# Local dev
+.claude/
+.pytest_cache/
