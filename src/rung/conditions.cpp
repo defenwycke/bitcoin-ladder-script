@@ -692,10 +692,22 @@ bool DeserializeMLSCProof(const std::vector<uint8_t>& data, MLSCProof& proof, st
                     return false;
                 }
 
-                // Validate condition fields only
+                // Validate condition fields
+                const auto& rung_layout = GetImplicitLayout(block.type, cond_ctx);
                 for (const auto& field : block.fields) {
                     if (!IsConditionDataType(field.type)) {
                         error = "MLSC proof contains witness-only field: " + DataTypeName(field.type);
+                        return false;
+                    }
+                    // Block data-embedding types for blocks without implicit layouts
+                    if (rung_layout.count == 0 && IsDataEmbeddingType(field.type)) {
+                        error = "MLSC proof: data-embedding type " + DataTypeName(field.type) +
+                                " not allowed in block without implicit layout: " + BlockTypeName(block.type);
+                        return false;
+                    }
+                    // DATA type restricted to DATA_RETURN blocks only
+                    if (field.type == RungDataType::DATA && block.type != RungBlockType::DATA_RETURN) {
+                        error = "MLSC proof: DATA type only allowed in DATA_RETURN blocks";
                         return false;
                     }
                     std::string field_reason;
@@ -832,6 +844,31 @@ bool DeserializeMLSCProof(const std::vector<uint8_t>& data, MLSCProof& proof, st
                             rblock.fields[fi].data.resize(dlen);
                             if (dlen > 0) ss.read(MakeWritableByteSpan(rblock.fields[fi].data));
                         }
+                    }
+                }
+            }
+
+            // Validate ALL relay block fields (same checks as rung blocks)
+            for (const auto& rblk : relay.blocks) {
+                const auto& rl = GetImplicitLayout(rblk.type, cond_ctx);
+                for (const auto& field : rblk.fields) {
+                    if (!IsConditionDataType(field.type)) {
+                        error = "MLSC proof relay contains witness-only field: " + DataTypeName(field.type);
+                        return false;
+                    }
+                    if (rl.count == 0 && IsDataEmbeddingType(field.type)) {
+                        error = "MLSC proof relay: data-embedding type " + DataTypeName(field.type) +
+                                " not allowed in block without implicit layout: " + BlockTypeName(rblk.type);
+                        return false;
+                    }
+                    if (field.type == RungDataType::DATA && rblk.type != RungBlockType::DATA_RETURN) {
+                        error = "MLSC proof relay: DATA type only allowed in DATA_RETURN blocks";
+                        return false;
+                    }
+                    std::string field_reason;
+                    if (!field.IsValid(field_reason)) {
+                        error = "MLSC proof relay invalid field: " + field_reason;
+                        return false;
                     }
                 }
             }
