@@ -21,6 +21,7 @@ docs/COMPACT_RUNG_PLAN.md
 docs/BUILD_PROMPT.md
 
 # Local dev
+tools/dashboard.html
 .claude/
 .pytest_cache/
 docs/IMPLEMENTATION_NOTES.md
