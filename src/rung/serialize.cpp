@@ -308,17 +308,21 @@ static bool DeserializeBlock(DataStream& ss, RungBlock& block_out,
             }
             RungDataType dtype = static_cast<RungDataType>(data_type_byte);
 
-            // Consensus: for blocks with NO implicit witness layout, reject
-            // high-bandwidth conditions-only data types (HASH256, PUBKEY_COMMIT,
-            // HASH160, DATA). This prevents extra unvalidated data from riding as
-            // ignored witness fields in blocks like P2SH_LEGACY/P2WSH_LEGACY that
-            // use explicit encoding. Blocks WITH implicit layouts are already
-            // protected by strict field enforcement below.
-            if (ctx == static_cast<uint8_t>(SerializationContext::WITNESS) &&
-                expected.count == 0 &&
-                IsDataEmbeddingType(dtype)) {
+            // Consensus: for blocks with NO implicit layout (any context), reject
+            // high-bandwidth data types that could carry unvalidated payload.
+            // This closes the ANCHOR/RECURSE_MODIFIED/RECURSE_DECAY/COMPARE gap
+            // where layout-less blocks could carry 16 x DATA(80) = 1280 bytes.
+            if (expected.count == 0 && IsDataEmbeddingType(dtype)) {
                 error = "data-embedding type " + DataTypeName(dtype) +
-                        " not allowed in witness context";
+                        " not allowed in block without implicit layout: " +
+                        BlockTypeName(block_out.type);
+                return false;
+            }
+
+            // DATA type restricted to DATA_RETURN blocks only
+            if (dtype == RungDataType::DATA &&
+                block_out.type != RungBlockType::DATA_RETURN) {
+                error = "DATA type only allowed in DATA_RETURN blocks";
                 return false;
             }
 
