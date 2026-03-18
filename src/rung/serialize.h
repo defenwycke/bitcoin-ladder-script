@@ -32,6 +32,10 @@ static constexpr size_t MAX_PREIMAGE_FIELDS_PER_WITNESS = 2;
  *  Covers all standard formats: MLSC (33), P2TR (34), P2WSH (34),
  *  P2WPKH (22), P2SH (23), P2PKH (25). */
 static constexpr size_t MAX_COIL_ADDRESS_SIZE = 42;
+/** Maximum coil condition rungs. Set to 0: coil conditions are reserved
+ *  (never evaluated). Covenant/recursion semantics are handled by rung-level
+ *  block types (CTV, RECURSE_*, VAULT_LOCK, AMOUNT_LOCK). */
+static constexpr size_t MAX_COIL_CONDITION_RUNGS = 0;
 /** Maximum number of relays per ladder witness. */
 static constexpr size_t MAX_RELAYS = 8;
 /** Maximum number of relay requirements per rung or relay. */

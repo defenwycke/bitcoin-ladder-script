@@ -489,14 +489,14 @@ inline bool IsPQScheme(RungScheme s)
 
 /** Coil metadata — attached to each output (LadderWitness), determines unlock semantics.
  *  UNLOCK:    Standard spend to an address.
- *  UNLOCK_TO: Send to an address, but recipient must also satisfy coil conditions.
- *  COVENANT:  Constrains the spending transaction structure via coil conditions. */
+ *  UNLOCK_TO: Send to an address (coil address field specifies destination).
+ *  COVENANT:  Constrains the spending transaction via rung-level covenant/recursion blocks. */
 struct RungCoil {
     RungCoilType coil_type{RungCoilType::UNLOCK};
     RungAttestationMode attestation{RungAttestationMode::INLINE};
     RungScheme scheme{RungScheme::SCHNORR};
     std::vector<uint8_t> address;              //!< Destination address (raw scriptPubKey bytes), empty if none
-    std::vector<struct Rung> conditions;        //!< Coil condition rungs (AND within rung, OR across rungs)
+    std::vector<struct Rung> conditions;        //!< Reserved — must be empty (MAX_COIL_CONDITION_RUNGS = 0)
 };
 
 /** A single typed field within a block. Type constrains the allowed data size. */
@@ -850,6 +850,145 @@ inline constexpr ImplicitFieldLayout DATA_RETURN_CONDITIONS = {1, {
     {RungDataType::DATA, 0},
 }};
 
+// -- Conditions layouts for previously layout-less block types --
+// These close the NUMERIC multiplication data channel by enforcing
+// exact field count and types for all block types in conditions context.
+
+/** MULTISIG conditions: [NUMERIC(threshold M)] — pubkeys in Merkle leaf */
+inline constexpr ImplicitFieldLayout MULTISIG_CONDITIONS = {1, {
+    {RungDataType::NUMERIC, 0},
+}};
+
+/** KEY_REF_SIG conditions: [NUMERIC(relay_index), NUMERIC(block_index)] */
+inline constexpr ImplicitFieldLayout KEY_REF_SIG_CONDITIONS = {2, {
+    {RungDataType::NUMERIC, 0},
+    {RungDataType::NUMERIC, 0},
+}};
+
+/** VAULT_LOCK conditions: [NUMERIC(hot_delay)] — pubkeys in Merkle leaf */
+inline constexpr ImplicitFieldLayout VAULT_LOCK_CONDITIONS = {1, {
+    {RungDataType::NUMERIC, 0},
+}};
+
+/** RECURSE_SAME conditions: [NUMERIC(max_depth)] */
+inline constexpr ImplicitFieldLayout RECURSE_SAME_CONDITIONS = {1, {
+    {RungDataType::NUMERIC, 0},
+}};
+
+/** RECURSE_UNTIL conditions: [NUMERIC(until_height)] */
+inline constexpr ImplicitFieldLayout RECURSE_UNTIL_CONDITIONS = RECURSE_SAME_CONDITIONS;
+
+/** RECURSE_COUNT conditions: [NUMERIC(max_count)] */
+inline constexpr ImplicitFieldLayout RECURSE_COUNT_CONDITIONS = RECURSE_SAME_CONDITIONS;
+
+/** RECURSE_SPLIT conditions: [NUMERIC(max_splits), NUMERIC(min_split_sats)] */
+inline constexpr ImplicitFieldLayout RECURSE_SPLIT_CONDITIONS = {2, {
+    {RungDataType::NUMERIC, 0},
+    {RungDataType::NUMERIC, 0},
+}};
+
+/** ANCHOR_CHANNEL conditions: [NUMERIC(commitment_number)] — pubkeys in Merkle leaf */
+inline constexpr ImplicitFieldLayout ANCHOR_CHANNEL_CONDITIONS = {1, {
+    {RungDataType::NUMERIC, 0},
+}};
+
+/** ANCHOR_POOL conditions: [HASH256(vtxo_tree_root), NUMERIC(participant_count)] */
+inline constexpr ImplicitFieldLayout ANCHOR_POOL_CONDITIONS = {2, {
+    {RungDataType::HASH256, 32},
+    {RungDataType::NUMERIC, 0},
+}};
+
+/** ANCHOR_RESERVE conditions: [NUMERIC(threshold_n), NUMERIC(threshold_m), HASH256(guardian_hash)] */
+inline constexpr ImplicitFieldLayout ANCHOR_RESERVE_CONDITIONS = {3, {
+    {RungDataType::NUMERIC, 0},
+    {RungDataType::NUMERIC, 0},
+    {RungDataType::HASH256, 32},
+}};
+
+/** ANCHOR_ORACLE conditions: [NUMERIC(outcome_count)] — oracle pubkey in Merkle leaf */
+inline constexpr ImplicitFieldLayout ANCHOR_ORACLE_CONDITIONS = {1, {
+    {RungDataType::NUMERIC, 0},
+}};
+
+/** HYSTERESIS_FEE conditions: [NUMERIC(high_sat_vb), NUMERIC(low_sat_vb)] */
+inline constexpr ImplicitFieldLayout HYSTERESIS_FEE_CONDITIONS = {2, {
+    {RungDataType::NUMERIC, 0},
+    {RungDataType::NUMERIC, 0},
+}};
+
+/** HYSTERESIS_VALUE conditions: [NUMERIC(high_sats), NUMERIC(low_sats)] */
+inline constexpr ImplicitFieldLayout HYSTERESIS_VALUE_CONDITIONS = HYSTERESIS_FEE_CONDITIONS;
+
+/** TIMER_CONTINUOUS conditions: [NUMERIC(accumulated), NUMERIC(target)] */
+inline constexpr ImplicitFieldLayout TIMER_CONTINUOUS_CONDITIONS = HYSTERESIS_FEE_CONDITIONS;
+
+/** TIMER_OFF_DELAY conditions: [NUMERIC(remaining)] */
+inline constexpr ImplicitFieldLayout TIMER_OFF_DELAY_CONDITIONS = {1, {
+    {RungDataType::NUMERIC, 0},
+}};
+
+/** LATCH_SET conditions: [NUMERIC(state)] — setter key in Merkle leaf */
+inline constexpr ImplicitFieldLayout LATCH_SET_CONDITIONS = {1, {
+    {RungDataType::NUMERIC, 0},
+}};
+
+/** LATCH_RESET conditions: [NUMERIC(state), NUMERIC(delay)] — resetter key in Merkle leaf */
+inline constexpr ImplicitFieldLayout LATCH_RESET_CONDITIONS = HYSTERESIS_FEE_CONDITIONS;
+
+/** COUNTER_DOWN conditions: [NUMERIC(count)] — event signer in Merkle leaf */
+inline constexpr ImplicitFieldLayout COUNTER_DOWN_CONDITIONS = {1, {
+    {RungDataType::NUMERIC, 0},
+}};
+
+/** COUNTER_PRESET conditions: [NUMERIC(current), NUMERIC(preset)] */
+inline constexpr ImplicitFieldLayout COUNTER_PRESET_CONDITIONS = HYSTERESIS_FEE_CONDITIONS;
+
+/** COUNTER_UP conditions: [NUMERIC(current), NUMERIC(target)] — event signer in Merkle leaf */
+inline constexpr ImplicitFieldLayout COUNTER_UP_CONDITIONS = HYSTERESIS_FEE_CONDITIONS;
+
+/** SEQUENCER conditions: [NUMERIC(current_step), NUMERIC(total_steps)] */
+inline constexpr ImplicitFieldLayout SEQUENCER_CONDITIONS = HYSTERESIS_FEE_CONDITIONS;
+
+/** ONE_SHOT conditions: [NUMERIC(state), HASH256(commitment)] */
+inline constexpr ImplicitFieldLayout ONE_SHOT_CONDITIONS = {2, {
+    {RungDataType::NUMERIC, 0},
+    {RungDataType::HASH256, 32},
+}};
+
+/** RATE_LIMIT conditions: [NUMERIC(max_per_block), NUMERIC(accumulation_cap), NUMERIC(refill_blocks)] */
+inline constexpr ImplicitFieldLayout RATE_LIMIT_CONDITIONS = {3, {
+    {RungDataType::NUMERIC, 0},
+    {RungDataType::NUMERIC, 0},
+    {RungDataType::NUMERIC, 0},
+}};
+
+/** PTLC conditions: [NUMERIC(CSV_sequence)] — adaptor key in Merkle leaf */
+inline constexpr ImplicitFieldLayout PTLC_CONDITIONS = {1, {
+    {RungDataType::NUMERIC, 0},
+}};
+
+/** TIMELOCKED_MULTISIG conditions: [NUMERIC(threshold_M), NUMERIC(CSV)] — pubkeys in Merkle leaf */
+inline constexpr ImplicitFieldLayout TIMELOCKED_MULTISIG_CONDITIONS = HYSTERESIS_FEE_CONDITIONS;
+
+/** WEIGHT_LIMIT conditions: [NUMERIC(max_weight)] */
+inline constexpr ImplicitFieldLayout WEIGHT_LIMIT_CONDITIONS = {1, {
+    {RungDataType::NUMERIC, 0},
+}};
+
+/** INPUT_COUNT conditions: [NUMERIC(min_inputs), NUMERIC(max_inputs)] */
+inline constexpr ImplicitFieldLayout INPUT_COUNT_CONDITIONS = HYSTERESIS_FEE_CONDITIONS;
+
+/** OUTPUT_COUNT conditions: [NUMERIC(min_outputs), NUMERIC(max_outputs)] */
+inline constexpr ImplicitFieldLayout OUTPUT_COUNT_CONDITIONS = HYSTERESIS_FEE_CONDITIONS;
+
+/** RELATIVE_VALUE conditions: [NUMERIC(numerator), NUMERIC(denominator)] */
+inline constexpr ImplicitFieldLayout RELATIVE_VALUE_CONDITIONS = HYSTERESIS_FEE_CONDITIONS;
+
+/** ACCUMULATOR conditions: [HASH256(merkle_root)] */
+inline constexpr ImplicitFieldLayout ACCUMULATOR_CONDITIONS = {1, {
+    {RungDataType::HASH256, 32},
+}};
+
 // -- Witness context implicit field layouts --
 
 /** SIG witness: [PUBKEY(var), SIGNATURE(var)] */
@@ -930,6 +1069,43 @@ inline const ImplicitFieldLayout& GetImplicitLayout(RungBlockType type, uint8_t 
         case RungBlockType::EPOCH_GATE:       return EPOCH_GATE_CONDITIONS;
         case RungBlockType::ANCHOR_SEAL:      return ANCHOR_SEAL_CONDITIONS;
         case RungBlockType::DATA_RETURN:      return DATA_RETURN_CONDITIONS;
+        // Signature family (previously layout-less)
+        case RungBlockType::MULTISIG:         return MULTISIG_CONDITIONS;
+        case RungBlockType::KEY_REF_SIG:      return KEY_REF_SIG_CONDITIONS;
+        // Covenant family
+        case RungBlockType::VAULT_LOCK:       return VAULT_LOCK_CONDITIONS;
+        // Recursion family (RECURSE_MODIFIED/RECURSE_DECAY: variable length, stay NO_IMPLICIT)
+        case RungBlockType::RECURSE_SAME:     return RECURSE_SAME_CONDITIONS;
+        case RungBlockType::RECURSE_UNTIL:    return RECURSE_UNTIL_CONDITIONS;
+        case RungBlockType::RECURSE_COUNT:    return RECURSE_COUNT_CONDITIONS;
+        case RungBlockType::RECURSE_SPLIT:    return RECURSE_SPLIT_CONDITIONS;
+        // Anchor family (ANCHOR: variable/generic, stays NO_IMPLICIT)
+        case RungBlockType::ANCHOR_CHANNEL:   return ANCHOR_CHANNEL_CONDITIONS;
+        case RungBlockType::ANCHOR_POOL:      return ANCHOR_POOL_CONDITIONS;
+        case RungBlockType::ANCHOR_RESERVE:   return ANCHOR_RESERVE_CONDITIONS;
+        case RungBlockType::ANCHOR_ORACLE:    return ANCHOR_ORACLE_CONDITIONS;
+        // PLC family
+        case RungBlockType::HYSTERESIS_FEE:   return HYSTERESIS_FEE_CONDITIONS;
+        case RungBlockType::HYSTERESIS_VALUE: return HYSTERESIS_VALUE_CONDITIONS;
+        case RungBlockType::TIMER_CONTINUOUS: return TIMER_CONTINUOUS_CONDITIONS;
+        case RungBlockType::TIMER_OFF_DELAY:  return TIMER_OFF_DELAY_CONDITIONS;
+        case RungBlockType::LATCH_SET:        return LATCH_SET_CONDITIONS;
+        case RungBlockType::LATCH_RESET:      return LATCH_RESET_CONDITIONS;
+        case RungBlockType::COUNTER_DOWN:     return COUNTER_DOWN_CONDITIONS;
+        case RungBlockType::COUNTER_PRESET:   return COUNTER_PRESET_CONDITIONS;
+        case RungBlockType::COUNTER_UP:       return COUNTER_UP_CONDITIONS;
+        case RungBlockType::SEQUENCER:        return SEQUENCER_CONDITIONS;
+        case RungBlockType::ONE_SHOT:         return ONE_SHOT_CONDITIONS;
+        case RungBlockType::RATE_LIMIT:       return RATE_LIMIT_CONDITIONS;
+        // Compound family
+        case RungBlockType::PTLC:             return PTLC_CONDITIONS;
+        case RungBlockType::TIMELOCKED_MULTISIG: return TIMELOCKED_MULTISIG_CONDITIONS;
+        // Governance family
+        case RungBlockType::WEIGHT_LIMIT:     return WEIGHT_LIMIT_CONDITIONS;
+        case RungBlockType::INPUT_COUNT:      return INPUT_COUNT_CONDITIONS;
+        case RungBlockType::OUTPUT_COUNT:     return OUTPUT_COUNT_CONDITIONS;
+        case RungBlockType::RELATIVE_VALUE:   return RELATIVE_VALUE_CONDITIONS;
+        case RungBlockType::ACCUMULATOR:      return ACCUMULATOR_CONDITIONS;
         // Legacy family
         case RungBlockType::P2PK_LEGACY:      return SIG_CONDITIONS;
         case RungBlockType::P2PKH_LEGACY:     return P2PKH_LEGACY_CONDITIONS;
@@ -988,12 +1164,31 @@ inline bool MatchesImplicitLayout(const RungBlock& block, const ImplicitFieldLay
 inline bool VerifyImplicitLayoutPairing()
 {
     // Block types that intentionally have conditions-only implicit layouts
+    // (no implicit witness layout — witness uses explicit encoding)
     static constexpr RungBlockType conditions_only[] = {
+        // Original conditions-only types
         RungBlockType::P2SH_LEGACY, RungBlockType::P2WSH_LEGACY,
         RungBlockType::P2TR_SCRIPT_LEGACY,
         RungBlockType::EPOCH_GATE, RungBlockType::ANCHOR_SEAL,
         RungBlockType::AMOUNT_LOCK, RungBlockType::CTV,
         RungBlockType::DATA_RETURN,
+        // Newly added conditions layouts (witness layouts not yet defined)
+        RungBlockType::MULTISIG, RungBlockType::KEY_REF_SIG,
+        RungBlockType::VAULT_LOCK,
+        RungBlockType::RECURSE_SAME, RungBlockType::RECURSE_UNTIL,
+        RungBlockType::RECURSE_COUNT, RungBlockType::RECURSE_SPLIT,
+        RungBlockType::ANCHOR_CHANNEL, RungBlockType::ANCHOR_POOL,
+        RungBlockType::ANCHOR_RESERVE, RungBlockType::ANCHOR_ORACLE,
+        RungBlockType::HYSTERESIS_FEE, RungBlockType::HYSTERESIS_VALUE,
+        RungBlockType::TIMER_CONTINUOUS, RungBlockType::TIMER_OFF_DELAY,
+        RungBlockType::LATCH_SET, RungBlockType::LATCH_RESET,
+        RungBlockType::COUNTER_DOWN, RungBlockType::COUNTER_PRESET,
+        RungBlockType::COUNTER_UP, RungBlockType::SEQUENCER,
+        RungBlockType::ONE_SHOT, RungBlockType::RATE_LIMIT,
+        RungBlockType::PTLC, RungBlockType::TIMELOCKED_MULTISIG,
+        RungBlockType::WEIGHT_LIMIT, RungBlockType::INPUT_COUNT,
+        RungBlockType::OUTPUT_COUNT, RungBlockType::RELATIVE_VALUE,
+        RungBlockType::ACCUMULATOR,
     };
 
     for (uint32_t code = 0; code <= 0x0FFF; ++code) {

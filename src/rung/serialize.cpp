@@ -444,26 +444,11 @@ bool DeserializeLadderWitness(const std::vector<uint8_t>& witness_bytes,
                 ss.read(MakeWritableByteSpan(ladder_out.coil.address));
             }
 
-            // Read coil condition rungs (always CONDITIONS context)
+            // Read coil condition rungs — must be 0 (coil conditions reserved, never evaluated)
             uint64_t n_coil_rungs = ReadCompactSize(ss);
-            if (n_coil_rungs > MAX_RUNGS) {
-                error = "too many coil condition rungs: " + std::to_string(n_coil_rungs);
+            if (n_coil_rungs > MAX_COIL_CONDITION_RUNGS) {
+                error = "coil conditions are reserved: n_coil_conditions must be 0, got " + std::to_string(n_coil_rungs);
                 return false;
-            }
-            ladder_out.coil.conditions.resize(n_coil_rungs);
-            for (uint64_t cr = 0; cr < n_coil_rungs; ++cr) {
-                uint64_t n_cblocks = ReadCompactSize(ss);
-                if (n_cblocks == 0 || n_cblocks > MAX_BLOCKS_PER_RUNG) {
-                    error = "coil condition rung block count invalid: " + std::to_string(n_cblocks);
-                    return false;
-                }
-                ladder_out.coil.conditions[cr].blocks.resize(n_cblocks);
-                for (uint64_t cb = 0; cb < n_cblocks; ++cb) {
-                    if (!DeserializeBlock(ss, ladder_out.coil.conditions[cr].blocks[cb],
-                                         static_cast<uint8_t>(SerializationContext::CONDITIONS), error)) {
-                        return false;
-                    }
-                }
             }
 
             // No relays section — inherited from source
@@ -520,31 +505,11 @@ bool DeserializeLadderWitness(const std::vector<uint8_t>& witness_bytes,
             ss.read(MakeWritableByteSpan(ladder_out.coil.address));
         }
 
-        // Read coil condition rungs (always use CONDITIONS context)
+        // Read coil condition rungs — must be 0 (coil conditions reserved, never evaluated)
         uint64_t n_coil_rungs = ReadCompactSize(ss);
-        if (n_coil_rungs > MAX_RUNGS) {
-            error = "too many coil condition rungs: " + std::to_string(n_coil_rungs);
+        if (n_coil_rungs > MAX_COIL_CONDITION_RUNGS) {
+            error = "coil conditions are reserved: n_coil_conditions must be 0, got " + std::to_string(n_coil_rungs);
             return false;
-        }
-        ladder_out.coil.conditions.resize(n_coil_rungs);
-        for (uint64_t cr = 0; cr < n_coil_rungs; ++cr) {
-            uint64_t n_cblocks = ReadCompactSize(ss);
-            if (n_cblocks == 0) {
-                error = "coil condition rung " + std::to_string(cr) + " has zero blocks";
-                return false;
-            }
-            if (n_cblocks > MAX_BLOCKS_PER_RUNG) {
-                error = "coil condition rung has too many blocks: " + std::to_string(n_cblocks);
-                return false;
-            }
-            ladder_out.coil.conditions[cr].blocks.resize(n_cblocks);
-            for (uint64_t cb = 0; cb < n_cblocks; ++cb) {
-                // Coil conditions always use CONDITIONS context
-                if (!DeserializeBlock(ss, ladder_out.coil.conditions[cr].blocks[cb],
-                                     static_cast<uint8_t>(SerializationContext::CONDITIONS), error)) {
-                    return false;
-                }
-            }
         }
 
         // Read relays (optional — backward compatible, 0 relays if EOF)

@@ -325,32 +325,29 @@ static RungBlock ParseBlockSpec(const UniValue& block_obj, bool conditions_only,
         if (!field.IsValid(reason)) {
             throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid field: " + reason);
         }
-        // Reject raw hash fields for block types where the node computes the hash.
-        // Users must provide the source data (PUBKEY or PREIMAGE) instead.
+        // Reject raw hash fields in conditions — users must provide source data
+        // (PUBKEY or PREIMAGE) and the node computes the hash. Default-deny for
+        // HASH256: only whitelisted block types may accept raw hashes.
         if (conditions_only) {
-            if (field.type == RungDataType::HASH160 &&
-                (block.type == RungBlockType::P2PKH_LEGACY ||
-                 block.type == RungBlockType::P2WPKH_LEGACY)) {
+            if (field.type == RungDataType::HASH160) {
+                if (block.type == RungBlockType::P2PKH_LEGACY ||
+                    block.type == RungBlockType::P2WPKH_LEGACY) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER,
+                        "Use PUBKEY instead of HASH160 for P2PKH/P2WPKH; the node computes HASH160 automatically");
+                }
                 throw JSONRPCError(RPC_INVALID_PARAMETER,
-                    "Use PUBKEY instead of HASH160 for P2PKH/P2WPKH; the node computes HASH160 automatically");
+                    "Use PREIMAGE instead of HASH160 for " + type_str + "; the node computes the hash automatically");
             }
-            if (field.type == RungDataType::HASH160 &&
-                block.type == RungBlockType::P2SH_LEGACY) {
-                throw JSONRPCError(RPC_INVALID_PARAMETER,
-                    "Use PREIMAGE instead of HASH160 for P2SH; the node computes the hash automatically");
-            }
-            if (field.type == RungDataType::HASH256 &&
-                (block.type == RungBlockType::P2WSH_LEGACY ||
-                 block.type == RungBlockType::P2TR_SCRIPT_LEGACY)) {
-                throw JSONRPCError(RPC_INVALID_PARAMETER,
-                    "Use PREIMAGE instead of HASH256 for P2WSH/P2TR_SCRIPT; the node computes the hash automatically");
-            }
-            if (field.type == RungDataType::HASH256 &&
-                (block.type == RungBlockType::HASH_SIG ||
-                 block.type == RungBlockType::HTLC ||
-                 block.type == RungBlockType::ANCHOR_SEAL)) {
-                throw JSONRPCError(RPC_INVALID_PARAMETER,
-                    "Use PREIMAGE instead of HASH256; the node computes the hash commitment automatically");
+            // HASH256: blanket rejection with whitelist for block types where
+            // the hash is an external commitment (not a preimage hash).
+            if (field.type == RungDataType::HASH256) {
+                if (block.type != RungBlockType::CTV &&
+                    block.type != RungBlockType::TAGGED_HASH &&
+                    block.type != RungBlockType::ACCUMULATOR) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER,
+                        "Use PREIMAGE instead of HASH256 for " + type_str +
+                        "; the node computes the hash commitment automatically");
+                }
             }
         }
         // Auto-convert PUBKEY in conditions:
@@ -442,17 +439,10 @@ static RungCoil ParseCoil(const UniValue& obj)
     if (obj.exists("address")) {
         coil.address = ParseHex(obj["address"].get_str());
     }
-    if (obj.exists("conditions")) {
-        const UniValue& cond_arr = obj["conditions"].get_array();
-        for (size_t i = 0; i < cond_arr.size(); ++i) {
-            const UniValue& crung_obj = cond_arr[i];
-            Rung crung;
-            const UniValue& cblocks_arr = crung_obj["blocks"].get_array();
-            for (size_t b = 0; b < cblocks_arr.size(); ++b) {
-                crung.blocks.push_back(ParseBlockSpec(cblocks_arr[b], false));
-            }
-            coil.conditions.push_back(std::move(crung));
-        }
+    if (obj.exists("conditions") && !obj["conditions"].get_array().empty()) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER,
+            "Coil conditions are reserved and not currently active. "
+            "Use covenant/recursion block types (CTV, RECURSE_*, VAULT_LOCK, AMOUNT_LOCK) on rungs instead.");
     }
     return coil;
 }
