@@ -3,6 +3,7 @@
 // file COPYING or https://opensource.org/license/mit/.
 
 #include <rung/serialize.h>
+#include <rung/conditions.h>
 
 #include <streams.h>
 #include <util/strencodings.h>
@@ -196,8 +197,8 @@ static bool DeserializeField(DataStream& ss, RungField& field_out,
 // Helper: deserialize a block (micro-header + implicit fields)
 // ============================================================================
 
-static bool DeserializeBlock(DataStream& ss, RungBlock& block_out,
-                             uint8_t ctx, std::string& error)
+bool DeserializeBlock(DataStream& ss, RungBlock& block_out,
+                      uint8_t ctx, std::string& error)
 {
     uint8_t first_byte;
     ss >> first_byte;
@@ -299,6 +300,13 @@ static bool DeserializeBlock(DataStream& ss, RungBlock& block_out,
                 return false;
             }
             RungDataType dtype = static_cast<RungDataType>(data_type_byte);
+
+            // CONDITIONS context: reject witness-only data types
+            if (ctx == static_cast<uint8_t>(SerializationContext::CONDITIONS) &&
+                !IsConditionDataType(dtype)) {
+                error = "witness-only data type in conditions: " + DataTypeName(dtype);
+                return false;
+            }
 
             // Consensus: for blocks with NO implicit layout (any context), reject
             // high-bandwidth data types that could carry unvalidated payload.

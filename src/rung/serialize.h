@@ -8,6 +8,7 @@
 #include <rung/types.h>
 #include <serialize.h>
 #include <span.h>
+#include <streams.h>
 
 #include <cstdint>
 #include <string>
@@ -91,6 +92,14 @@ bool DeserializeLadderWitness(const std::vector<uint8_t>& witness_bytes,
 /** Serialize a LadderWitness to raw bytes. */
 std::vector<uint8_t> SerializeLadderWitness(const LadderWitness& ladder,
                                              SerializationContext ctx = SerializationContext::WITNESS);
+
+/** Deserialize a single block from a DataStream.
+ *  Handles micro-headers, implicit field layouts, strict field enforcement,
+ *  IsConditionDataType gating (CONDITIONS context), IsDataEmbeddingType
+ *  rejection for layout-less blocks, and DATA-type restriction.
+ *  Shared by DeserializeLadderWitness and DeserializeMLSCProof. */
+bool DeserializeBlock(DataStream& ss, RungBlock& block_out,
+                      uint8_t ctx, std::string& error);
 
 /** Serialize a single rung's blocks + relay_refs to bytes (for MLSC Merkle leaf computation).
  *  Format: CompactSize(n_blocks) + blocks + CompactSize(n_relay_refs) + relay_ref indices.

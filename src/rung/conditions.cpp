@@ -553,169 +553,15 @@ bool DeserializeMLSCProof(const std::vector<uint8_t>& data, MLSCProof& proof, st
         if (n_blocks == 0) {
             error = "MLSC proof: compact rungs deprecated";
             return false;
-        } else {
-            // Normal rung: deserialize blocks
-            proof.revealed_rung.blocks.resize(n_blocks);
-            for (uint64_t b = 0; b < n_blocks; ++b) {
-                uint8_t first_byte;
-                ss >> first_byte;
+        }
 
-                RungBlock& block = proof.revealed_rung.blocks[b];
-
-                if (first_byte < MICRO_HEADER_ESCAPE) {
-                    if (MICRO_HEADER_TABLE[first_byte] == 0xFFFF) {
-                        error = "MLSC proof: unused micro-header slot";
-                        return false;
-                    }
-                    uint16_t btype = MICRO_HEADER_TABLE[first_byte];
-                    if (!IsKnownBlockType(btype)) {
-                        error = "MLSC proof: unknown block type from micro-header";
-                        return false;
-                    }
-                    block.type = static_cast<RungBlockType>(btype);
-                    block.inverted = false;
-
-                    // Reject deprecated block types
-                    if (block.type == RungBlockType::HASH_PREIMAGE ||
-                        block.type == RungBlockType::HASH160_PREIMAGE) {
-                        error = "MLSC proof: deprecated block type: use HTLC or HASH_SIG";
-                        return false;
-                    }
-
-                    // Check for implicit layout
-                    const auto& layout = GetImplicitLayout(block.type, cond_ctx);
-                    if (layout.count > 0) {
-                        block.fields.resize(layout.count);
-                        for (uint8_t fi = 0; fi < layout.count; ++fi) {
-                            block.fields[fi].type = layout.fields[fi].type;
-                            if (layout.fields[fi].type == RungDataType::NUMERIC) {
-                                uint64_t val = ReadCompactSize(ss, false);
-                                if (val > 0xFFFFFFFF) { error = "NUMERIC overflow in MLSC proof"; return false; }
-                                block.fields[fi].data.resize(4);
-                                block.fields[fi].data[0] = static_cast<uint8_t>(val & 0xFF);
-                                block.fields[fi].data[1] = static_cast<uint8_t>((val >> 8) & 0xFF);
-                                block.fields[fi].data[2] = static_cast<uint8_t>((val >> 16) & 0xFF);
-                                block.fields[fi].data[3] = static_cast<uint8_t>((val >> 24) & 0xFF);
-                            } else if (layout.fields[fi].fixed_size > 0) {
-                                block.fields[fi].data.resize(layout.fields[fi].fixed_size);
-                                ss.read(MakeWritableByteSpan(block.fields[fi].data));
-                            } else {
-                                uint64_t dlen = ReadCompactSize(ss);
-                                if (dlen < FieldMinSize(layout.fields[fi].type) ||
-                                    dlen > FieldMaxSize(layout.fields[fi].type)) {
-                                    error = "MLSC proof field size out of range";
-                                    return false;
-                                }
-                                block.fields[fi].data.resize(dlen);
-                                if (dlen > 0) ss.read(MakeWritableByteSpan(block.fields[fi].data));
-                            }
-                        }
-                    } else {
-                        // No implicit layout — read explicit fields
-                        uint64_t nf = ReadCompactSize(ss);
-                        if (nf > MAX_FIELDS_PER_BLOCK) { error = "MLSC proof too many fields"; return false; }
-                        block.fields.resize(nf);
-                        for (uint64_t fi = 0; fi < nf; ++fi) {
-                            uint8_t dtype;
-                            ss >> dtype;
-                            if (!IsKnownDataType(dtype)) { error = "MLSC proof unknown data type"; return false; }
-                            block.fields[fi].type = static_cast<RungDataType>(dtype);
-                            if (block.fields[fi].type == RungDataType::NUMERIC) {
-                                uint64_t val = ReadCompactSize(ss, false);
-                                if (val > 0xFFFFFFFF) { error = "NUMERIC overflow"; return false; }
-                                block.fields[fi].data.resize(4);
-                                block.fields[fi].data[0] = static_cast<uint8_t>(val & 0xFF);
-                                block.fields[fi].data[1] = static_cast<uint8_t>((val >> 8) & 0xFF);
-                                block.fields[fi].data[2] = static_cast<uint8_t>((val >> 16) & 0xFF);
-                                block.fields[fi].data[3] = static_cast<uint8_t>((val >> 24) & 0xFF);
-                            } else {
-                                uint64_t dlen = ReadCompactSize(ss);
-                                if (dlen < FieldMinSize(block.fields[fi].type) ||
-                                    dlen > FieldMaxSize(block.fields[fi].type)) {
-                                    error = "MLSC proof explicit field size out of range";
-                                    return false;
-                                }
-                                block.fields[fi].data.resize(dlen);
-                                if (dlen > 0) ss.read(MakeWritableByteSpan(block.fields[fi].data));
-                            }
-                        }
-                    }
-                } else if (first_byte == MICRO_HEADER_ESCAPE || first_byte == MICRO_HEADER_ESCAPE_INV) {
-                    uint8_t lo, hi;
-                    ss >> lo >> hi;
-                    uint16_t btype = static_cast<uint16_t>(lo) | (static_cast<uint16_t>(hi) << 8);
-                    if (!IsKnownBlockType(btype)) { error = "MLSC proof unknown block type"; return false; }
-                    block.type = static_cast<RungBlockType>(btype);
-                    block.inverted = (first_byte == MICRO_HEADER_ESCAPE_INV);
-
-                    // Reject deprecated block types
-                    if (block.type == RungBlockType::HASH_PREIMAGE ||
-                        block.type == RungBlockType::HASH160_PREIMAGE) {
-                        error = "MLSC proof: deprecated block type: use HTLC or HASH_SIG";
-                        return false;
-                    }
-                    // Reject inverted key-consuming blocks
-                    if (block.inverted && !IsInvertibleBlockType(block.type)) {
-                        error = "MLSC proof: block type cannot be inverted: " + BlockTypeName(block.type);
-                        return false;
-                    }
-
-                    uint64_t nf = ReadCompactSize(ss);
-                    if (nf > MAX_FIELDS_PER_BLOCK) { error = "MLSC proof too many fields"; return false; }
-                    block.fields.resize(nf);
-                    for (uint64_t fi = 0; fi < nf; ++fi) {
-                        uint8_t dtype;
-                        ss >> dtype;
-                        if (!IsKnownDataType(dtype)) { error = "MLSC proof unknown data type"; return false; }
-                        block.fields[fi].type = static_cast<RungDataType>(dtype);
-                        if (block.fields[fi].type == RungDataType::NUMERIC) {
-                            uint64_t val = ReadCompactSize(ss, false);
-                            if (val > 0xFFFFFFFF) { error = "NUMERIC overflow"; return false; }
-                            block.fields[fi].data.resize(4);
-                            block.fields[fi].data[0] = static_cast<uint8_t>(val & 0xFF);
-                            block.fields[fi].data[1] = static_cast<uint8_t>((val >> 8) & 0xFF);
-                            block.fields[fi].data[2] = static_cast<uint8_t>((val >> 16) & 0xFF);
-                            block.fields[fi].data[3] = static_cast<uint8_t>((val >> 24) & 0xFF);
-                        } else {
-                            uint64_t dlen = ReadCompactSize(ss);
-                            if (dlen < FieldMinSize(block.fields[fi].type) ||
-                                dlen > FieldMaxSize(block.fields[fi].type)) {
-                                error = "MLSC proof escape field size out of range";
-                                return false;
-                            }
-                            block.fields[fi].data.resize(dlen);
-                            if (dlen > 0) ss.read(MakeWritableByteSpan(block.fields[fi].data));
-                        }
-                    }
-                } else {
-                    error = "MLSC proof invalid header byte";
-                    return false;
-                }
-
-                // Validate condition fields
-                const auto& rung_layout = GetImplicitLayout(block.type, cond_ctx);
-                for (const auto& field : block.fields) {
-                    if (!IsConditionDataType(field.type)) {
-                        error = "MLSC proof contains witness-only field: " + DataTypeName(field.type);
-                        return false;
-                    }
-                    // Block data-embedding types for blocks without implicit layouts
-                    if (rung_layout.count == 0 && IsDataEmbeddingType(field.type)) {
-                        error = "MLSC proof: data-embedding type " + DataTypeName(field.type) +
-                                " not allowed in block without implicit layout: " + BlockTypeName(block.type);
-                        return false;
-                    }
-                    // DATA type restricted to DATA_RETURN blocks only
-                    if (field.type == RungDataType::DATA && block.type != RungBlockType::DATA_RETURN) {
-                        error = "MLSC proof: DATA type only allowed in DATA_RETURN blocks";
-                        return false;
-                    }
-                    std::string field_reason;
-                    if (!field.IsValid(field_reason)) {
-                        error = "MLSC proof invalid field: " + field_reason;
-                        return false;
-                    }
-                }
+        // Deserialize rung blocks via shared DeserializeBlock (CONDITIONS context)
+        proof.revealed_rung.blocks.resize(n_blocks);
+        for (uint64_t b = 0; b < n_blocks; ++b) {
+            std::string block_error;
+            if (!DeserializeBlock(ss, proof.revealed_rung.blocks[b], cond_ctx, block_error)) {
+                error = "MLSC proof rung: " + block_error;
+                return false;
             }
         }
 
@@ -745,7 +591,7 @@ bool DeserializeMLSCProof(const std::vector<uint8_t>& data, MLSCProof& proof, st
             }
             proof.revealed_relays[rl].first = static_cast<uint16_t>(relay_idx);
 
-            // Read relay blocks (same format as rung blocks above)
+            // Deserialize relay blocks via shared DeserializeBlock (CONDITIONS context)
             uint64_t rnb = ReadCompactSize(ss);
             if (rnb == 0 || rnb > MAX_BLOCKS_PER_RUNG) {
                 error = "MLSC proof relay block count invalid";
@@ -753,123 +599,11 @@ bool DeserializeMLSCProof(const std::vector<uint8_t>& data, MLSCProof& proof, st
             }
             Relay& relay = proof.revealed_relays[rl].second;
             relay.blocks.resize(rnb);
-
-            // Simplified: use explicit format for relay blocks to avoid code duplication
             for (uint64_t rb = 0; rb < rnb; ++rb) {
-                uint8_t fb;
-                ss >> fb;
-                RungBlock& rblock = relay.blocks[rb];
-
-                if (fb < MICRO_HEADER_ESCAPE) {
-                    if (MICRO_HEADER_TABLE[fb] == 0xFFFF) { error = "MLSC proof relay: unused micro-header"; return false; }
-                    uint16_t bt = MICRO_HEADER_TABLE[fb];
-                    if (!IsKnownBlockType(bt)) { error = "MLSC proof relay: unknown block type"; return false; }
-                    rblock.type = static_cast<RungBlockType>(bt);
-                    rblock.inverted = false;
-                } else if (fb == MICRO_HEADER_ESCAPE || fb == MICRO_HEADER_ESCAPE_INV) {
-                    uint8_t lo2, hi2;
-                    ss >> lo2 >> hi2;
-                    uint16_t bt = static_cast<uint16_t>(lo2) | (static_cast<uint16_t>(hi2) << 8);
-                    if (!IsKnownBlockType(bt)) { error = "MLSC proof relay: unknown block type"; return false; }
-                    rblock.type = static_cast<RungBlockType>(bt);
-                    rblock.inverted = (fb == MICRO_HEADER_ESCAPE_INV);
-                } else {
-                    error = "MLSC proof relay: invalid header byte";
+                std::string block_error;
+                if (!DeserializeBlock(ss, relay.blocks[rb], cond_ctx, block_error)) {
+                    error = "MLSC proof relay: " + block_error;
                     return false;
-                }
-                // Reject deprecated block types
-                if (rblock.type == RungBlockType::HASH_PREIMAGE ||
-                    rblock.type == RungBlockType::HASH160_PREIMAGE) {
-                    error = "MLSC proof relay: deprecated block type: use HTLC or HASH_SIG";
-                    return false;
-                }
-                // Reject inverted key-consuming blocks
-                if (rblock.inverted && !IsInvertibleBlockType(rblock.type)) {
-                    error = "MLSC proof relay: block type cannot be inverted: " + BlockTypeName(rblock.type);
-                    return false;
-                }
-
-                // For relay blocks, always use explicit field format
-                const auto& layout = GetImplicitLayout(rblock.type, cond_ctx);
-                if (layout.count > 0 && fb < MICRO_HEADER_ESCAPE) {
-                    rblock.fields.resize(layout.count);
-                    for (uint8_t fi = 0; fi < layout.count; ++fi) {
-                        rblock.fields[fi].type = layout.fields[fi].type;
-                        if (layout.fields[fi].type == RungDataType::NUMERIC) {
-                            uint64_t val = ReadCompactSize(ss, false);
-                            if (val > 0xFFFFFFFF) { error = "NUMERIC overflow in relay"; return false; }
-                            rblock.fields[fi].data.resize(4);
-                            rblock.fields[fi].data[0] = static_cast<uint8_t>(val & 0xFF);
-                            rblock.fields[fi].data[1] = static_cast<uint8_t>((val >> 8) & 0xFF);
-                            rblock.fields[fi].data[2] = static_cast<uint8_t>((val >> 16) & 0xFF);
-                            rblock.fields[fi].data[3] = static_cast<uint8_t>((val >> 24) & 0xFF);
-                        } else if (layout.fields[fi].fixed_size > 0) {
-                            rblock.fields[fi].data.resize(layout.fields[fi].fixed_size);
-                            ss.read(MakeWritableByteSpan(rblock.fields[fi].data));
-                        } else {
-                            uint64_t dlen = ReadCompactSize(ss);
-                            if (dlen < FieldMinSize(layout.fields[fi].type) ||
-                                dlen > FieldMaxSize(layout.fields[fi].type)) {
-                                error = "MLSC proof relay field size out of range";
-                                return false;
-                            }
-                            rblock.fields[fi].data.resize(dlen);
-                            if (dlen > 0) ss.read(MakeWritableByteSpan(rblock.fields[fi].data));
-                        }
-                    }
-                } else {
-                    uint64_t nf = ReadCompactSize(ss);
-                    if (nf > MAX_FIELDS_PER_BLOCK) { error = "MLSC proof relay too many fields"; return false; }
-                    rblock.fields.resize(nf);
-                    for (uint64_t fi = 0; fi < nf; ++fi) {
-                        uint8_t dtype;
-                        ss >> dtype;
-                        if (!IsKnownDataType(dtype)) { error = "MLSC proof relay unknown dtype"; return false; }
-                        rblock.fields[fi].type = static_cast<RungDataType>(dtype);
-                        if (rblock.fields[fi].type == RungDataType::NUMERIC) {
-                            uint64_t val = ReadCompactSize(ss, false);
-                            if (val > 0xFFFFFFFF) { error = "NUMERIC overflow"; return false; }
-                            rblock.fields[fi].data.resize(4);
-                            rblock.fields[fi].data[0] = static_cast<uint8_t>(val & 0xFF);
-                            rblock.fields[fi].data[1] = static_cast<uint8_t>((val >> 8) & 0xFF);
-                            rblock.fields[fi].data[2] = static_cast<uint8_t>((val >> 16) & 0xFF);
-                            rblock.fields[fi].data[3] = static_cast<uint8_t>((val >> 24) & 0xFF);
-                        } else {
-                            uint64_t dlen = ReadCompactSize(ss);
-                            if (dlen < FieldMinSize(rblock.fields[fi].type) ||
-                                dlen > FieldMaxSize(rblock.fields[fi].type)) {
-                                error = "MLSC proof relay explicit field size out of range";
-                                return false;
-                            }
-                            rblock.fields[fi].data.resize(dlen);
-                            if (dlen > 0) ss.read(MakeWritableByteSpan(rblock.fields[fi].data));
-                        }
-                    }
-                }
-            }
-
-            // Validate ALL relay block fields (same checks as rung blocks)
-            for (const auto& rblk : relay.blocks) {
-                const auto& rl = GetImplicitLayout(rblk.type, cond_ctx);
-                for (const auto& field : rblk.fields) {
-                    if (!IsConditionDataType(field.type)) {
-                        error = "MLSC proof relay contains witness-only field: " + DataTypeName(field.type);
-                        return false;
-                    }
-                    if (rl.count == 0 && IsDataEmbeddingType(field.type)) {
-                        error = "MLSC proof relay: data-embedding type " + DataTypeName(field.type) +
-                                " not allowed in block without implicit layout: " + BlockTypeName(rblk.type);
-                        return false;
-                    }
-                    if (field.type == RungDataType::DATA && rblk.type != RungBlockType::DATA_RETURN) {
-                        error = "MLSC proof relay: DATA type only allowed in DATA_RETURN blocks";
-                        return false;
-                    }
-                    std::string field_reason;
-                    if (!field.IsValid(field_reason)) {
-                        error = "MLSC proof relay invalid field: " + field_reason;
-                        return false;
-                    }
                 }
             }
 
