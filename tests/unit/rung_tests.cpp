@@ -350,7 +350,7 @@ BOOST_AUTO_TEST_CASE(serialize_roundtrip_multi_rung)
     hash_block.type = RungBlockType::TAGGED_HASH;
     hash_block.fields.push_back({RungDataType::HASH256, MakeHash256()});
     hash_block.fields.push_back({RungDataType::HASH256, MakeHash256()});
-    hash_block.fields.push_back({RungDataType::PREIMAGE, std::vector<uint8_t>(16, 0xEE)});
+    hash_block.fields.push_back({RungDataType::PREIMAGE, std::vector<uint8_t>(32, 0xEE)});
     rung1.blocks.push_back(hash_block);
     ladder.rungs.push_back(rung1);
 
@@ -1811,6 +1811,18 @@ BOOST_AUTO_TEST_CASE(serialize_roundtrip_all_59_types_witness)
     }
 }
 
+BOOST_AUTO_TEST_CASE(debug_recurse_modified_layout)
+{
+    uint8_t cond_ctx = static_cast<uint8_t>(SerializationContext::CONDITIONS);
+    const auto& layout = GetImplicitLayout(RungBlockType::RECURSE_MODIFIED, cond_ctx);
+    BOOST_TEST_MESSAGE("RECURSE_MODIFIED CONDITIONS layout count: " << static_cast<int>(layout.count));
+    BOOST_CHECK_EQUAL(layout.count, 0u); // Should be NO_IMPLICIT
+
+    const auto& layout2 = GetImplicitLayout(RungBlockType::RECURSE_DECAY, cond_ctx);
+    BOOST_TEST_MESSAGE("RECURSE_DECAY CONDITIONS layout count: " << static_cast<int>(layout2.count));
+    BOOST_CHECK_EQUAL(layout2.count, 0u);
+}
+
 BOOST_AUTO_TEST_CASE(serialize_roundtrip_all_59_types_conditions)
 {
     // Test CONDITIONS context round-trip for all 60 block types.
@@ -2038,13 +2050,13 @@ BOOST_AUTO_TEST_CASE(serialize_roundtrip_multifield_multirung)
         ladder.rungs.push_back(rung);
     }
 
-    // Rung 2: TAGGED_HASH (replaces deprecated HASH_PREIMAGE)
+    // Rung 2: CLTV (timelock, no preimage — MAX_PREIMAGE_FIELDS = 1)
     {
         Rung rung;
-        RungBlock hash_block;
-        hash_block.type = RungBlockType::TAGGED_HASH;
-        hash_block.fields = {{RungDataType::HASH256, h256}, {RungDataType::HASH256, h256}, {RungDataType::PREIMAGE, preimage}};
-        rung.blocks.push_back(hash_block);
+        RungBlock cltv_block;
+        cltv_block.type = RungBlockType::CLTV;
+        cltv_block.fields = {{RungDataType::NUMERIC, MakeNumeric(800000)}};
+        rung.blocks.push_back(cltv_block);
         ladder.rungs.push_back(rung);
     }
 
@@ -2071,10 +2083,10 @@ BOOST_AUTO_TEST_CASE(serialize_roundtrip_multifield_multirung)
     BOOST_CHECK(decoded.rungs[1].blocks[0].type == RungBlockType::HTLC);
     BOOST_CHECK_EQUAL(decoded.rungs[1].blocks[0].fields.size(), 4u);
 
-    // Rung 2: TAGGED_HASH with 3 fields (2xHASH256 + PREIMAGE)
+    // Rung 2: CLTV with 1 field
     BOOST_CHECK_EQUAL(decoded.rungs[2].blocks.size(), 1u);
-    BOOST_CHECK(decoded.rungs[2].blocks[0].type == RungBlockType::TAGGED_HASH);
-    BOOST_CHECK_EQUAL(decoded.rungs[2].blocks[0].fields.size(), 3u);
+    BOOST_CHECK(decoded.rungs[2].blocks[0].type == RungBlockType::CLTV);
+    BOOST_CHECK_EQUAL(decoded.rungs[2].blocks[0].fields.size(), 1u);
 
     // Verify coil
     BOOST_CHECK(decoded.coil.attestation == RungAttestationMode::INLINE);
@@ -4391,6 +4403,8 @@ BOOST_AUTO_TEST_CASE(eval_recurse_modified_cross_rung)
         RungBlock b1;
         b1.type = RungBlockType::COMPARE;
         b1.fields.push_back({RungDataType::NUMERIC, MakeNumeric(50)});
+        b1.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
+        b1.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
         r1.blocks.push_back(std::move(b1));
         input_conds.rungs.push_back(std::move(r1));
     }
@@ -4409,6 +4423,8 @@ BOOST_AUTO_TEST_CASE(eval_recurse_modified_cross_rung)
         RungBlock b1;
         b1.type = RungBlockType::COMPARE;
         b1.fields.push_back({RungDataType::NUMERIC, MakeNumeric(53)}); // 50 + 3
+        b1.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
+        b1.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
         r1.blocks.push_back(std::move(b1));
         output_conds.rungs.push_back(std::move(r1));
     }
@@ -4446,6 +4462,8 @@ BOOST_AUTO_TEST_CASE(eval_recurse_modified_multi_mutation)
         RungBlock b0;
         b0.type = RungBlockType::COMPARE;
         b0.fields.push_back({RungDataType::NUMERIC, MakeNumeric(100)});
+        b0.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
+        b0.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
         r0.blocks.push_back(std::move(b0));
         input_conds.rungs.push_back(std::move(r0));
 
@@ -4453,6 +4471,8 @@ BOOST_AUTO_TEST_CASE(eval_recurse_modified_multi_mutation)
         RungBlock b1;
         b1.type = RungBlockType::COMPARE;
         b1.fields.push_back({RungDataType::NUMERIC, MakeNumeric(200)});
+        b1.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
+        b1.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
         r1.blocks.push_back(std::move(b1));
         input_conds.rungs.push_back(std::move(r1));
     }
@@ -4464,6 +4484,8 @@ BOOST_AUTO_TEST_CASE(eval_recurse_modified_multi_mutation)
         RungBlock b0;
         b0.type = RungBlockType::COMPARE;
         b0.fields.push_back({RungDataType::NUMERIC, MakeNumeric(105)});
+        b0.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
+        b0.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
         r0.blocks.push_back(std::move(b0));
         output_conds.rungs.push_back(std::move(r0));
 
@@ -4471,6 +4493,8 @@ BOOST_AUTO_TEST_CASE(eval_recurse_modified_multi_mutation)
         RungBlock b1;
         b1.type = RungBlockType::COMPARE;
         b1.fields.push_back({RungDataType::NUMERIC, MakeNumeric(210)});
+        b1.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
+        b1.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
         r1.blocks.push_back(std::move(b1));
         output_conds.rungs.push_back(std::move(r1));
     }
@@ -4507,6 +4531,8 @@ BOOST_AUTO_TEST_CASE(eval_recurse_modified_multi_mutation)
         RungBlock b0;
         b0.type = RungBlockType::COMPARE;
         b0.fields.push_back({RungDataType::NUMERIC, MakeNumeric(105)});
+        b0.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
+        b0.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
         r0.blocks.push_back(std::move(b0));
         bad_output_conds.rungs.push_back(std::move(r0));
 
@@ -4514,6 +4540,8 @@ BOOST_AUTO_TEST_CASE(eval_recurse_modified_multi_mutation)
         RungBlock b1;
         b1.type = RungBlockType::COMPARE;
         b1.fields.push_back({RungDataType::NUMERIC, MakeNumeric(215)}); // wrong: expected 210
+        b1.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
+        b1.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
         r1.blocks.push_back(std::move(b1));
         bad_output_conds.rungs.push_back(std::move(r1));
     }
@@ -4652,6 +4680,8 @@ BOOST_AUTO_TEST_CASE(eval_recurse_decay_legacy_compat)
         RungBlock b;
         b.type = RungBlockType::COMPARE;
         b.fields.push_back({RungDataType::NUMERIC, MakeNumeric(100)});
+        b.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
+        b.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
         r.blocks.push_back(std::move(b));
         input_conds.rungs.push_back(std::move(r));
     }
@@ -4663,6 +4693,8 @@ BOOST_AUTO_TEST_CASE(eval_recurse_decay_legacy_compat)
         RungBlock b;
         b.type = RungBlockType::COMPARE;
         b.fields.push_back({RungDataType::NUMERIC, MakeNumeric(93)});
+        b.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
+        b.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
         r.blocks.push_back(std::move(b));
         output_conds.rungs.push_back(std::move(r));
     }
@@ -4696,6 +4728,8 @@ BOOST_AUTO_TEST_CASE(eval_recurse_decay_multi_mutation)
         RungBlock b0;
         b0.type = RungBlockType::COMPARE;
         b0.fields.push_back({RungDataType::NUMERIC, MakeNumeric(100)});
+        b0.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
+        b0.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
         r0.blocks.push_back(std::move(b0));
         input_conds.rungs.push_back(std::move(r0));
 
@@ -4703,6 +4737,8 @@ BOOST_AUTO_TEST_CASE(eval_recurse_decay_multi_mutation)
         RungBlock b1;
         b1.type = RungBlockType::COMPARE;
         b1.fields.push_back({RungDataType::NUMERIC, MakeNumeric(200)});
+        b1.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
+        b1.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
         r1.blocks.push_back(std::move(b1));
         input_conds.rungs.push_back(std::move(r1));
     }
@@ -4714,6 +4750,8 @@ BOOST_AUTO_TEST_CASE(eval_recurse_decay_multi_mutation)
         RungBlock b0;
         b0.type = RungBlockType::COMPARE;
         b0.fields.push_back({RungDataType::NUMERIC, MakeNumeric(95)});
+        b0.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
+        b0.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
         r0.blocks.push_back(std::move(b0));
         output_conds.rungs.push_back(std::move(r0));
 
@@ -4721,6 +4759,8 @@ BOOST_AUTO_TEST_CASE(eval_recurse_decay_multi_mutation)
         RungBlock b1;
         b1.type = RungBlockType::COMPARE;
         b1.fields.push_back({RungDataType::NUMERIC, MakeNumeric(190)});
+        b1.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
+        b1.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)}); // COMPARE layout pad
         r1.blocks.push_back(std::move(b1));
         output_conds.rungs.push_back(std::move(r1));
     }
@@ -7189,7 +7229,7 @@ BOOST_AUTO_TEST_CASE(micro_header_hash_preimage_rejected)
     RungBlock block;
     block.type = RungBlockType::HASH_PREIMAGE;
     block.fields.push_back({RungDataType::HASH256, MakeHash256()});
-    block.fields.push_back({RungDataType::PREIMAGE, std::vector<uint8_t>(16, 0xEE)});
+    block.fields.push_back({RungDataType::PREIMAGE, std::vector<uint8_t>(32, 0xEE)});
     rung.blocks.push_back(block);
     ladder.rungs.push_back(rung);
 
@@ -7502,7 +7542,7 @@ BOOST_AUTO_TEST_CASE(multi_block_multi_rung_optimized_roundtrip)
     hash_block.type = RungBlockType::TAGGED_HASH;
     hash_block.fields.push_back({RungDataType::HASH256, MakeHash256()});
     hash_block.fields.push_back({RungDataType::HASH256, MakeHash256()});
-    hash_block.fields.push_back({RungDataType::PREIMAGE, std::vector<uint8_t>(16, 0xEE)});
+    hash_block.fields.push_back({RungDataType::PREIMAGE, std::vector<uint8_t>(32, 0xEE)});
     rung1.blocks.push_back(hash_block);
     ladder.rungs.push_back(rung1);
 
@@ -8091,9 +8131,9 @@ BOOST_AUTO_TEST_CASE(mlsc_data_return_payload)
     CSHA256().Write(reinterpret_cast<const unsigned char*>("test"), 4).Finalize(root.data());
 
     // MLSC with DATA_RETURN payload
-    std::vector<uint8_t> data(40, 0xAB);
+    std::vector<uint8_t> data(20, 0xAB);
     CScript script = CreateMLSCScript(root, data);
-    BOOST_CHECK_EQUAL(script.size(), 73u); // 1 + 32 + 40
+    BOOST_CHECK_EQUAL(script.size(), 53u); // 1 + 32 + 20
     BOOST_CHECK(IsMLSCScript(script));
     BOOST_CHECK(IsLadderScript(script));
     BOOST_CHECK(HasMLSCData(script));
@@ -8105,7 +8145,7 @@ BOOST_AUTO_TEST_CASE(mlsc_data_return_payload)
 
     // Extract data payload
     auto extracted_data = GetMLSCData(script);
-    BOOST_CHECK_EQUAL(extracted_data.size(), 40u);
+    BOOST_CHECK_EQUAL(extracted_data.size(), 20u);
     BOOST_CHECK(extracted_data == data);
 }
 
@@ -8114,13 +8154,13 @@ BOOST_AUTO_TEST_CASE(mlsc_data_return_max_payload)
     uint256 root;
     CSHA256().Write(reinterpret_cast<const unsigned char*>("test"), 4).Finalize(root.data());
 
-    // 80 bytes (maximum DATA field size)
-    std::vector<uint8_t> data(80, 0xFF);
+    // 32 bytes (maximum DATA field size)
+    std::vector<uint8_t> data(32, 0xFF);
     CScript script = CreateMLSCScript(root, data);
-    BOOST_CHECK_EQUAL(script.size(), 113u); // 1 + 32 + 80
+    BOOST_CHECK_EQUAL(script.size(), 65u); // 1 + 32 + 32
     BOOST_CHECK(IsMLSCScript(script));
     BOOST_CHECK(HasMLSCData(script));
-    BOOST_CHECK_EQUAL(GetMLSCData(script).size(), 80u);
+    BOOST_CHECK_EQUAL(GetMLSCData(script).size(), 32u);
 }
 
 BOOST_AUTO_TEST_CASE(mlsc_data_return_too_large)
@@ -8128,11 +8168,11 @@ BOOST_AUTO_TEST_CASE(mlsc_data_return_too_large)
     uint256 root;
     CSHA256().Write(reinterpret_cast<const unsigned char*>("test"), 4).Finalize(root.data());
 
-    // 81 bytes exceeds DATA max — scriptPubKey is 114 bytes, exceeds 113 limit
-    std::vector<uint8_t> data(81, 0xFF);
+    // 33 bytes exceeds DATA max — scriptPubKey is 66 bytes, exceeds 65 limit
+    std::vector<uint8_t> data(33, 0xFF);
     CScript script = CreateMLSCScript(root, data);
-    BOOST_CHECK_EQUAL(script.size(), 114u);
-    BOOST_CHECK(!IsMLSCScript(script)); // Rejected: > 113 bytes
+    BOOST_CHECK_EQUAL(script.size(), 66u);
+    BOOST_CHECK(!IsMLSCScript(script)); // Rejected: > 65 bytes
 }
 
 BOOST_AUTO_TEST_CASE(mlsc_data_return_min_payload)
@@ -8892,41 +8932,32 @@ BOOST_AUTO_TEST_CASE(serialize_roundtrip_coil_unlock_to)
 
 BOOST_AUTO_TEST_CASE(serialize_roundtrip_coil_covenant)
 {
+    // Coil conditions are now banned (MAX_COIL_CONDITION_RUNGS = 0)
+    // Verify that a coil with conditions is rejected at deserialization
     LadderWitness ladder;
     Rung rung;
     RungBlock block;
     block.type = RungBlockType::SIG;
-    block.fields.push_back({RungDataType::PUBKEY, MakePubkey()});
-    block.fields.push_back({RungDataType::SIGNATURE, MakeSignature(64)});
+    block.fields.push_back({RungDataType::SCHEME, std::vector<uint8_t>{0x01}});
     rung.blocks.push_back(block);
     ladder.rungs.push_back(rung);
 
-    // Set coil to COVENANT with conditions
+    // Add a coil condition (should be rejected)
+    Rung coil_rung;
+    RungBlock coil_block;
+    coil_block.type = RungBlockType::CSV;
+    coil_block.fields.push_back({RungDataType::NUMERIC, MakeNumeric(100)});
+    coil_rung.blocks.push_back(coil_block);
+    ladder.coil.conditions.push_back(coil_rung);
     ladder.coil.coil_type = RungCoilType::COVENANT;
-    ladder.coil.scheme = RungScheme::SCHNORR;
-    ladder.coil.attestation = RungAttestationMode::INLINE;
 
-    // Add covenant conditions: a simple AMOUNT_LOCK block
-    Rung cov_rung;
-    RungBlock amt_block;
-    amt_block.type = RungBlockType::AMOUNT_LOCK;
-    amt_block.fields.push_back({RungDataType::NUMERIC, MakeNumeric(10000)});
-    amt_block.fields.push_back({RungDataType::NUMERIC, MakeNumeric(100000)});
-    cov_rung.blocks.push_back(amt_block);
-    ladder.coil.conditions.push_back(cov_rung);
-
-    auto bytes = SerializeLadderWitness(ladder);
+    auto bytes = SerializeLadderWitness(ladder, SerializationContext::CONDITIONS);
     LadderWitness decoded;
     std::string error;
-    BOOST_CHECK_MESSAGE(DeserializeLadderWitness(bytes, decoded, error),
-        "COVENANT roundtrip failed: " + error);
-    BOOST_CHECK(decoded.coil.coil_type == RungCoilType::COVENANT);
-    BOOST_CHECK(decoded.coil.conditions.size() == 1);
-    BOOST_CHECK(decoded.coil.conditions[0].blocks.size() == 1);
-    BOOST_CHECK(decoded.coil.conditions[0].blocks[0].type == RungBlockType::AMOUNT_LOCK);
+    BOOST_CHECK(!DeserializeLadderWitness(bytes, decoded, error, SerializationContext::CONDITIONS));
+    BOOST_CHECK(!error.empty());
 }
 
-// Gap 6b: COVENANT coil conditions reject witness-only field types via policy
 BOOST_AUTO_TEST_CASE(coil_covenant_conditions_reject_witness_types)
 {
     LadderWitness ladder;
@@ -10210,7 +10241,7 @@ BOOST_AUTO_TEST_CASE(script_body_is_not_condition_data_type)
 BOOST_AUTO_TEST_CASE(script_body_size_bounds)
 {
     BOOST_CHECK_EQUAL(FieldMinSize(RungDataType::SCRIPT_BODY), 1u);
-    BOOST_CHECK_EQUAL(FieldMaxSize(RungDataType::SCRIPT_BODY), 520u);
+    BOOST_CHECK_EQUAL(FieldMaxSize(RungDataType::SCRIPT_BODY), 80u);
 }
 
 BOOST_AUTO_TEST_CASE(script_body_data_type_name)
@@ -10226,7 +10257,7 @@ BOOST_AUTO_TEST_CASE(script_body_field_validation)
     BOOST_CHECK(f1.IsValid(reason));
 
     // Valid: 520 bytes (max — P2SH-compatible limit)
-    RungField f2{RungDataType::SCRIPT_BODY, std::vector<uint8_t>(520, 0xBB)};
+    RungField f2{RungDataType::SCRIPT_BODY, std::vector<uint8_t>(80, 0xBB)};
     BOOST_CHECK(f2.IsValid(reason));
 
     // Invalid: 0 bytes
@@ -10234,7 +10265,7 @@ BOOST_AUTO_TEST_CASE(script_body_field_validation)
     BOOST_CHECK(!f3.IsValid(reason));
 
     // Invalid: 521 bytes (over max)
-    RungField f4{RungDataType::SCRIPT_BODY, std::vector<uint8_t>(521, 0xCC)};
+    RungField f4{RungDataType::SCRIPT_BODY, std::vector<uint8_t>(81, 0xCC)};
     BOOST_CHECK(!f4.IsValid(reason));
 }
 
@@ -10321,20 +10352,17 @@ BOOST_AUTO_TEST_CASE(eval_p2wsh_legacy_script_body)
 
 BOOST_AUTO_TEST_CASE(script_body_exceeds_preimage_limit)
 {
-    // Verify that SCRIPT_BODY allows data larger than PREIMAGE's 252-byte limit
-    RungField preimage_field{RungDataType::PREIMAGE, std::vector<uint8_t>(253, 0xAA)};
+    // PREIMAGE is exactly 32 bytes
+    RungField preimage_field{RungDataType::PREIMAGE, std::vector<uint8_t>(33, 0xAA)};
     std::string reason;
-    BOOST_CHECK(!preimage_field.IsValid(reason)); // PREIMAGE rejects 253 bytes
+    BOOST_CHECK(!preimage_field.IsValid(reason)); // PREIMAGE rejects 33 bytes
 
-    RungField script_field{RungDataType::SCRIPT_BODY, std::vector<uint8_t>(253, 0xAA)};
-    BOOST_CHECK(script_field.IsValid(reason)); // SCRIPT_BODY accepts 253 bytes
+    // SCRIPT_BODY max is 80 bytes
+    RungField script_field{RungDataType::SCRIPT_BODY, std::vector<uint8_t>(80, 0xAA)};
+    BOOST_CHECK(script_field.IsValid(reason)); // 80 bytes OK
 
-    // Up to 520 bytes (P2SH-compatible limit)
-    RungField max_script{RungDataType::SCRIPT_BODY, std::vector<uint8_t>(520, 0xBB)};
-    BOOST_CHECK(max_script.IsValid(reason));
-
-    // 521 bytes exceeds SCRIPT_BODY limit
-    RungField over_script{RungDataType::SCRIPT_BODY, std::vector<uint8_t>(521, 0xCC)};
+    // 81 bytes exceeds SCRIPT_BODY limit
+    RungField over_script{RungDataType::SCRIPT_BODY, std::vector<uint8_t>(81, 0xCC)};
     BOOST_CHECK(!over_script.IsValid(reason));
 }
 
@@ -10372,21 +10400,21 @@ BOOST_AUTO_TEST_CASE(data_return_field_valid_range)
     RungField field_1{RungDataType::DATA, std::vector<uint8_t>(1, 0xAA)};
     BOOST_CHECK(field_1.IsValid(reason));
 
-    // Valid: 40 bytes (mid-range)
-    RungField field_40{RungDataType::DATA, std::vector<uint8_t>(40, 0xBB)};
-    BOOST_CHECK(field_40.IsValid(reason));
+    // Valid: 16 bytes (mid-range)
+    RungField field_16{RungDataType::DATA, std::vector<uint8_t>(16, 0xBB)};
+    BOOST_CHECK(field_16.IsValid(reason));
 
-    // Valid: 80 bytes (maximum)
-    RungField field_80{RungDataType::DATA, std::vector<uint8_t>(80, 0xCC)};
-    BOOST_CHECK(field_80.IsValid(reason));
+    // Valid: 32 bytes (maximum)
+    RungField field_32{RungDataType::DATA, std::vector<uint8_t>(32, 0xCC)};
+    BOOST_CHECK(field_32.IsValid(reason));
 
     // Invalid: 0 bytes (below minimum)
     RungField field_0{RungDataType::DATA, std::vector<uint8_t>()};
     BOOST_CHECK(!field_0.IsValid(reason));
 
-    // Invalid: 81 bytes (above maximum)
-    RungField field_81{RungDataType::DATA, std::vector<uint8_t>(81, 0xDD)};
-    BOOST_CHECK(!field_81.IsValid(reason));
+    // Invalid: 33 bytes (above maximum)
+    RungField field_33{RungDataType::DATA, std::vector<uint8_t>(33, 0xDD)};
+    BOOST_CHECK(!field_33.IsValid(reason));
 }
 
 BOOST_AUTO_TEST_CASE(data_return_is_base_block_type)
@@ -10405,7 +10433,7 @@ BOOST_AUTO_TEST_CASE(data_return_serialize_roundtrip_conditions)
     Rung rung;
     RungBlock block;
     block.type = RungBlockType::DATA_RETURN;
-    block.fields.push_back({RungDataType::DATA, std::vector<uint8_t>(80, 0xFF)});
+    block.fields.push_back({RungDataType::DATA, std::vector<uint8_t>(32, 0xFF)});
     rung.blocks.push_back(block);
     ladder.rungs.push_back(rung);
 
@@ -10416,7 +10444,7 @@ BOOST_AUTO_TEST_CASE(data_return_serialize_roundtrip_conditions)
     BOOST_CHECK(decoded.rungs.size() == 1);
     BOOST_CHECK(decoded.rungs[0].blocks[0].type == RungBlockType::DATA_RETURN);
     BOOST_CHECK(decoded.rungs[0].blocks[0].fields[0].type == RungDataType::DATA);
-    BOOST_CHECK_EQUAL(decoded.rungs[0].blocks[0].fields[0].data.size(), 80u);
+    BOOST_CHECK_EQUAL(decoded.rungs[0].blocks[0].fields[0].data.size(), 32u);
 }
 
 BOOST_AUTO_TEST_CASE(data_return_micro_header_lookup)

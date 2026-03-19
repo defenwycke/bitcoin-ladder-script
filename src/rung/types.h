@@ -1033,16 +1033,8 @@ inline constexpr ImplicitFieldLayout ACCUMULATOR_CONDITIONS = {1, {
 
 // -- Previously variable-length blocks, now capped --
 
-/** RECURSE_MODIFIED conditions: [NUMERIC(max_depth), NUMERIC x7 (mutation specs)] — max 8 NUMERICs */
-inline constexpr ImplicitFieldLayout RECURSE_MODIFIED_CONDITIONS = {8, {
-    {RungDataType::NUMERIC, 0}, {RungDataType::NUMERIC, 0},
-    {RungDataType::NUMERIC, 0}, {RungDataType::NUMERIC, 0},
-    {RungDataType::NUMERIC, 0}, {RungDataType::NUMERIC, 0},
-    {RungDataType::NUMERIC, 0}, {RungDataType::NUMERIC, 0},
-}};
-
-/** RECURSE_DECAY conditions: [NUMERIC x8 (depth + decay specs)] — same as RECURSE_MODIFIED */
-inline constexpr ImplicitFieldLayout RECURSE_DECAY_CONDITIONS = RECURSE_MODIFIED_CONDITIONS;
+// RECURSE_MODIFIED/RECURSE_DECAY: variable field count (2+4*N mutations).
+// No implicit layout — protected by IsDataEmbeddingType in DeserializeBlock.
 
 /** ANCHOR conditions: [NUMERIC(anchor_id)] — marker block, single field */
 inline constexpr ImplicitFieldLayout ANCHOR_CONDITIONS = {1, {
