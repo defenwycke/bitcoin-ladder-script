@@ -1869,14 +1869,14 @@ BOOST_AUTO_TEST_CASE(serialize_roundtrip_all_59_types_conditions)
 
         // === Recursion family ===
         {RungBlockType::RECURSE_SAME, {{RungDataType::NUMERIC, num1}}},
-        // RECURSE_MODIFIED conditions: [NUMERIC x8]
-        {RungBlockType::RECURSE_MODIFIED, {{RungDataType::NUMERIC, num1}, {RungDataType::NUMERIC, num2}, {RungDataType::NUMERIC, num3}, {RungDataType::NUMERIC, num1}, {RungDataType::NUMERIC, num2}, {RungDataType::NUMERIC, num3}, {RungDataType::NUMERIC, num1}, {RungDataType::NUMERIC, num2}}},
+        // RECURSE_MODIFIED conditions: variable (NO_IMPLICIT, protected by IsDataEmbeddingType)
+        {RungBlockType::RECURSE_MODIFIED, {{RungDataType::NUMERIC, num1}, {RungDataType::NUMERIC, num2}, {RungDataType::NUMERIC, num3}}},
         {RungBlockType::RECURSE_UNTIL, {{RungDataType::NUMERIC, num100}}},
         {RungBlockType::RECURSE_COUNT, {{RungDataType::NUMERIC, num10}}},
         // RECURSE_SPLIT conditions: [NUMERIC, NUMERIC]
         {RungBlockType::RECURSE_SPLIT, {{RungDataType::NUMERIC, num100}, {RungDataType::NUMERIC, num10}}},
-        // RECURSE_DECAY conditions: [NUMERIC x8]
-        {RungBlockType::RECURSE_DECAY, {{RungDataType::NUMERIC, num1}, {RungDataType::NUMERIC, num2}, {RungDataType::NUMERIC, num3}, {RungDataType::NUMERIC, num1}, {RungDataType::NUMERIC, num2}, {RungDataType::NUMERIC, num3}, {RungDataType::NUMERIC, num1}, {RungDataType::NUMERIC, num2}}},
+        // RECURSE_DECAY conditions: variable (NO_IMPLICIT, protected by IsDataEmbeddingType)
+        {RungBlockType::RECURSE_DECAY, {{RungDataType::NUMERIC, num1}, {RungDataType::NUMERIC, num2}}},
 
         // === Anchor family ===
         // ANCHOR conditions: [NUMERIC(anchor_id)]
@@ -4365,10 +4365,6 @@ BOOST_AUTO_TEST_CASE(eval_recurse_modified_legacy_compat)
     rm_block.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)});   // block_idx
     rm_block.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)});   // param_idx
     rm_block.fields.push_back({RungDataType::NUMERIC, MakeNumeric(5)});   // delta
-    rm_block.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)});
-    rm_block.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)});
-    rm_block.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)});
-    rm_block.fields.push_back({RungDataType::NUMERIC, MakeNumeric(0)});
 
     BOOST_CHECK(EvalBlock(rm_block, checker, SigVersion::LADDER, execdata, ctx) == EvalResult::SATISFIED);
 }

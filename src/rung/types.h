@@ -1143,8 +1143,8 @@ inline const ImplicitFieldLayout& GetImplicitLayout(RungBlockType type, uint8_t 
         case RungBlockType::VAULT_LOCK:       return VAULT_LOCK_CONDITIONS;
         // Recursion family
         case RungBlockType::RECURSE_SAME:     return RECURSE_SAME_CONDITIONS;
-        case RungBlockType::RECURSE_MODIFIED: return RECURSE_MODIFIED_CONDITIONS;
-        case RungBlockType::RECURSE_DECAY:    return RECURSE_DECAY_CONDITIONS;
+        // RECURSE_MODIFIED/RECURSE_DECAY: variable field count (2+4*N mutations)
+        // Stay NO_IMPLICIT — protected by IsDataEmbeddingType in DeserializeBlock
         case RungBlockType::RECURSE_UNTIL:    return RECURSE_UNTIL_CONDITIONS;
         case RungBlockType::RECURSE_COUNT:    return RECURSE_COUNT_CONDITIONS;
         case RungBlockType::RECURSE_SPLIT:    return RECURSE_SPLIT_CONDITIONS;
@@ -1260,7 +1260,6 @@ inline bool VerifyImplicitLayoutPairing()
         RungBlockType::WEIGHT_LIMIT, RungBlockType::INPUT_COUNT,
         RungBlockType::OUTPUT_COUNT, RungBlockType::RELATIVE_VALUE,
         RungBlockType::ACCUMULATOR,
-        RungBlockType::RECURSE_MODIFIED, RungBlockType::RECURSE_DECAY,
         RungBlockType::ANCHOR, RungBlockType::COMPARE,
     };
 
