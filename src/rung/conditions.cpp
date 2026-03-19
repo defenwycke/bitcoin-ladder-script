@@ -369,7 +369,10 @@ bool IsMLSCScript(const CScript& scriptPubKey)
            scriptPubKey[0] == RUNG_MLSC_PREFIX;
 }
 
-// IsLadderScript is now inline in conditions.h (just calls IsMLSCScript)
+bool IsLadderScript(const CScript& scriptPubKey)
+{
+    return IsMLSCScript(scriptPubKey);
+}
 
 bool GetMLSCRoot(const CScript& scriptPubKey, uint256& root_out)
 {

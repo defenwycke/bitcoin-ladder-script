@@ -63,7 +63,10 @@ struct RungConditions {
     bool IsMLSC() const { return conditions_root.has_value(); }
 };
 
-// Inline conditions (0xC1) removed. All outputs use MLSC (0xC2).
+// Inline conditions (0xC1) removed. These stubs always return false.
+bool IsRungConditionsScript(const CScript& scriptPubKey);
+bool DeserializeRungConditions(const CScript& scriptPubKey, RungConditions& out, std::string& error);
+CScript SerializeRungConditions(const RungConditions& conditions);
 
 /** Resolve a template reference: copy conditions from the referenced input
  *  and apply field-level diffs.
@@ -93,7 +96,7 @@ inline bool IsConditionFieldType(RungDataType type) { return IsConditionDataType
 bool IsMLSCScript(const CScript& scriptPubKey);
 
 /** Check if scriptPubKey is a Ladder Script output (MLSC 0xC2). */
-inline bool IsLadderScript(const CScript& scriptPubKey) { return IsMLSCScript(scriptPubKey); }
+bool IsLadderScript(const CScript& scriptPubKey);
 
 /** Extract the 32-byte conditions root from an MLSC scriptPubKey. */
 bool GetMLSCRoot(const CScript& scriptPubKey, uint256& root_out);
