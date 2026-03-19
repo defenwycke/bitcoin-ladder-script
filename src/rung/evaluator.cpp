@@ -167,12 +167,25 @@ static bool FullConditionsEqual(const RungConditions& a, const RungConditions& b
     return true;
 }
 
-/** Helper: try to deserialize a CTxOut's scriptPubKey as rung conditions.
- *  Returns true on success. */
+/** Helper: check if an output's MLSC root matches given conditions.
+ *  With MLSC-only, we can't deserialise output conditions — the output
+ *  only contains the Merkle root. Compare roots instead. */
+static bool OutputRootMatchesConditions(const CTxOut& output, const RungConditions& conditions)
+{
+    uint256 output_root;
+    if (!GetMLSCRoot(output.scriptPubKey, output_root)) {
+        return false; // not an MLSC output
+    }
+    uint256 expected_root = ComputeConditionsRoot(conditions);
+    return output_root == expected_root;
+}
+
+/** Legacy helper: try to deserialise output conditions from inline scriptPubKey.
+ *  Returns false always — inline removed. Use OutputRootMatchesConditions instead. */
 static bool TryDeserializeOutputConditions(const CTxOut& output, RungConditions& out)
 {
-    std::string error;
-    return DeserializeRungConditions(output.scriptPubKey, out, error);
+    // Inline conditions removed. Cannot deserialise MLSC outputs (root only).
+    return false;
 }
 
 EvalResult ApplyInversion(EvalResult raw, bool inverted)
@@ -985,12 +998,8 @@ EvalResult EvalRecurseSameBlock(const RungBlock& block, const RungEvalContext& c
 
     // If we have both input conditions and a spending output, verify the covenant
     if (ctx.input_conditions && ctx.spending_output) {
-        RungConditions output_conds;
-        if (!TryDeserializeOutputConditions(*ctx.spending_output, output_conds)) {
-            return EvalResult::UNSATISFIED; // output must be a valid rung script
-        }
-        // Output conditions must be identical to input conditions
-        if (!FullConditionsEqual(*ctx.input_conditions, output_conds)) {
+        // MLSC: compare roots (output conditions not deserializable — root only)
+        if (!OutputRootMatchesConditions(*ctx.spending_output, *ctx.input_conditions)) {
             return EvalResult::UNSATISFIED;
         }
     }
@@ -1154,11 +1163,8 @@ EvalResult EvalRecurseUntilBlock(const RungBlock& block, const RungEvalContext& 
     }
     // Before until_height: must re-encumber output with same conditions
     if (ctx.input_conditions && ctx.spending_output) {
-        RungConditions output_conds;
-        if (!TryDeserializeOutputConditions(*ctx.spending_output, output_conds)) {
-            return EvalResult::UNSATISFIED;
-        }
-        if (!FullConditionsEqual(*ctx.input_conditions, output_conds)) {
+        // MLSC: compare roots
+        if (!OutputRootMatchesConditions(*ctx.spending_output, *ctx.input_conditions)) {
             return EvalResult::UNSATISFIED;
         }
     }
@@ -3069,17 +3075,7 @@ bool ValidateRungOutputs(const CTransaction& tx, unsigned int flags, std::string
             continue;
         }
 
-        // Inline conditions: 0xC1
-        if (IsRungConditionsScript(spk)) {
-            // 0xC1 rejected on mainnet (no exceptions)
-            if (flags & RUNG_VERIFY_MLSC_ONLY) {
-                error = "output " + std::to_string(i) + ": inline conditions (0xC1) rejected on mainnet";
-                return false;
-            }
-            continue;
-        }
-
-        // Reject everything else: raw OP_RETURN, P2TR, P2WPKH, arbitrary data
+        // Reject everything else: inline (0xC1) removed, OP_RETURN, P2TR, P2WPKH, arbitrary data
         error = "output " + std::to_string(i) + ": non-Ladder Script output rejected in v4 transaction";
         return false;
     }
@@ -3132,10 +3128,7 @@ bool VerifyRungTx(const CTransaction& tx,
 
     // Exact witness stack size enforcement (prevents data stuffing via extra elements).
     // MLSC (0xC2): exactly 2 elements (LadderWitness + MLSCProof).
-    // Inline (0xC1): exactly 1 element (LadderWitness).
-    bool expects_mlsc = IsMLSCScript(spent_output.scriptPubKey);
-    size_t expected_stack_size = expects_mlsc ? 2 : 1;
-    if (witness.stack.size() != expected_stack_size) {
+    if (witness.stack.size() != 2) {
         if (serror) *serror = SCRIPT_ERR_WITNESS_PROGRAM_WITNESS_EMPTY;
         return false;
     }
@@ -3159,12 +3152,8 @@ bool VerifyRungTx(const CTransaction& tx,
         }
     }
 
-    // Check if this is an MLSC (0xC2) or inline (0xC1) output
-    bool is_mlsc = IsMLSCScript(spent_output.scriptPubKey);
-    bool is_inline = IsRungConditionsScript(spent_output.scriptPubKey);
-
-    // Consensus: reject 0xC1 inline conditions on mainnet
-    if (is_inline && (flags & RUNG_VERIFY_MLSC_ONLY)) {
+    // Only MLSC (0xC2) outputs accepted. Inline (0xC1) removed.
+    if (!IsMLSCScript(spent_output.scriptPubKey)) {
         if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
         return false;
     }
@@ -3172,7 +3161,7 @@ bool VerifyRungTx(const CTransaction& tx,
     RungConditions conditions;
     bool has_conditions = false;
 
-    if (is_mlsc) {
+    {
         // ================================================================
         // MLSC path: conditions come from witness, not scriptPubKey
         // ================================================================
@@ -3237,35 +3226,7 @@ bool VerifyRungTx(const CTransaction& tx,
 
         has_conditions = true;
 
-    } else {
-        // ================================================================
-        // Legacy path: conditions from scriptPubKey (0xC1)
-        // ================================================================
-        std::string cond_error;
-        has_conditions = DeserializeRungConditions(spent_output.scriptPubKey, conditions, cond_error);
-
-        // Resolve template references if needed
-        if (has_conditions && conditions.IsTemplateRef()) {
-            if (!txdata.m_spent_outputs_ready ||
-                conditions.template_ref->input_index >= txdata.m_spent_outputs.size()) {
-                if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
-                return false;
-            }
-
-            std::vector<RungConditions> all_conditions(txdata.m_spent_outputs.size());
-            for (size_t i = 0; i < txdata.m_spent_outputs.size(); ++i) {
-                if (i == nIn) continue;
-                std::string ref_error;
-                DeserializeRungConditions(txdata.m_spent_outputs[i].scriptPubKey, all_conditions[i], ref_error);
-            }
-
-            std::string resolve_error;
-            if (!ResolveTemplateReference(conditions, all_conditions, resolve_error)) {
-                if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
-                return false;
-            }
-        }
-    }
+    } // end MLSC block
 
     // Build evaluation context for covenant, anchor, recursion, and PLC blocks
     RungEvalContext eval_ctx;

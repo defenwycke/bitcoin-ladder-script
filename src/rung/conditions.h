@@ -16,12 +16,10 @@
 
 namespace rung {
 
-/** Magic prefix byte identifying a scriptPubKey as inline rung conditions (legacy). */
-static constexpr uint8_t RUNG_CONDITIONS_PREFIX = 0xc1;
-
-/** Magic prefix byte identifying a scriptPubKey as MLSC (Merkelized Ladder Script Conditions).
+/** Magic prefix byte identifying a scriptPubKey as MLSC (Merkelised Ladder Script Conditions).
  *  Output format: 0xC2 + conditions_root(32 bytes) = 33-byte scriptPubKey.
- *  Full conditions are revealed only at spend time in the witness. */
+ *  Full conditions are revealed only at spend time in the witness.
+ *  This is the ONLY accepted output format. Inline conditions (0xC1) are removed. */
 static constexpr uint8_t RUNG_MLSC_PREFIX = 0xc2;
 
 /** Nothing-up-my-sleeve constant for empty Merkle tree leaf padding.
@@ -65,14 +63,7 @@ struct RungConditions {
     bool IsMLSC() const { return conditions_root.has_value(); }
 };
 
-/** Quick prefix check: does this scriptPubKey start with the rung conditions prefix? */
-bool IsRungConditionsScript(const CScript& scriptPubKey);
-
-/** Deserialize rung conditions from a v4 output scriptPubKey. */
-bool DeserializeRungConditions(const CScript& scriptPubKey, RungConditions& out, std::string& error);
-
-/** Serialize rung conditions to a CScript suitable for v4 output scriptPubKey. */
-CScript SerializeRungConditions(const RungConditions& conditions);
+// Inline conditions (0xC1) removed. All outputs use MLSC (0xC2).
 
 /** Resolve a template reference: copy conditions from the referenced input
  *  and apply field-level diffs.
@@ -101,8 +92,8 @@ inline bool IsConditionFieldType(RungDataType type) { return IsConditionDataType
  *  Valid sizes: 33 bytes (standard) or 34-65 bytes (with DATA_RETURN, max 32 bytes data). */
 bool IsMLSCScript(const CScript& scriptPubKey);
 
-/** Check if scriptPubKey is either inline rung conditions (0xC1) or MLSC (0xC2). */
-bool IsLadderScript(const CScript& scriptPubKey);
+/** Check if scriptPubKey is a Ladder Script output (MLSC 0xC2). */
+inline bool IsLadderScript(const CScript& scriptPubKey) { return IsMLSCScript(scriptPubKey); }
 
 /** Extract the 32-byte conditions root from an MLSC scriptPubKey. */
 bool GetMLSCRoot(const CScript& scriptPubKey, uint256& root_out);

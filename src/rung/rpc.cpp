@@ -1007,23 +1007,19 @@ static RPCHelpMan createrungtx()
         CTxOut txout;
         txout.nValue = amount;
 
-        // MLSC: compute Merkle root and create 0xC2 output
-        if (outp.exists("mlsc") && outp["mlsc"].get_bool()) {
-            uint256 root = rung::ComputeConditionsRoot(conditions, rung_pubkeys, relay_pubkeys);
+        // Always MLSC: compute Merkle root and create 0xC2 output
+        uint256 root = rung::ComputeConditionsRoot(conditions, rung_pubkeys, relay_pubkeys);
 
-            // DATA_RETURN: append data payload to MLSC scriptPubKey
-            if (conditions.rungs.size() == 1 &&
-                conditions.rungs[0].blocks.size() == 1 &&
-                conditions.rungs[0].blocks[0].type == RungBlockType::DATA_RETURN &&
-                !conditions.rungs[0].blocks[0].fields.empty() &&
-                conditions.rungs[0].blocks[0].fields[0].type == RungDataType::DATA) {
-                const auto& data = conditions.rungs[0].blocks[0].fields[0].data;
-                txout.scriptPubKey = rung::CreateMLSCScript(root, data);
-            } else {
-                txout.scriptPubKey = rung::CreateMLSCScript(root);
-            }
+        // DATA_RETURN: append data payload to MLSC scriptPubKey
+        if (conditions.rungs.size() == 1 &&
+            conditions.rungs[0].blocks.size() == 1 &&
+            conditions.rungs[0].blocks[0].type == RungBlockType::DATA_RETURN &&
+            !conditions.rungs[0].blocks[0].fields.empty() &&
+            conditions.rungs[0].blocks[0].fields[0].type == RungDataType::DATA) {
+            const auto& data = conditions.rungs[0].blocks[0].fields[0].data;
+            txout.scriptPubKey = rung::CreateMLSCScript(root, data);
         } else {
-            txout.scriptPubKey = rung::SerializeRungConditions(conditions);
+            txout.scriptPubKey = rung::CreateMLSCScript(root);
         }
         mtx.vout.push_back(txout);
     }

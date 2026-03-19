@@ -36,18 +36,30 @@ bool IsConditionDataType(RungDataType type)
     return false;
 }
 
-bool IsRungConditionsScript(const CScript& scriptPubKey)
+// Inline conditions (0xC1) removed — all outputs must use MLSC (0xC2).
+// These functions are retained for backward compatibility but always reject.
+
+bool IsRungConditionsScript(const CScript&)
 {
-    return scriptPubKey.size() >= 2 && scriptPubKey[0] == RUNG_CONDITIONS_PREFIX;
+    return false; // Inline conditions removed
 }
 
-bool DeserializeRungConditions(const CScript& scriptPubKey, RungConditions& out, std::string& error)
+bool DeserializeRungConditions(const CScript&, RungConditions&, std::string& error)
 {
-    if (!IsRungConditionsScript(scriptPubKey)) {
-        error = "not a rung conditions script";
-        return false;
-    }
+    error = "inline conditions (0xC1) removed — use MLSC (0xC2)";
+    return false;
+}
 
+CScript SerializeRungConditions(const RungConditions&)
+{
+    // Inline conditions removed — should never be called
+    return CScript();
+}
+
+// Dead code removed — was DeserializeRungConditions and SerializeRungConditions body.
+// IsRungConditionsScript returns false, so no inline path is ever taken.
+
+#if 0
     // Strip the prefix byte
     std::vector<uint8_t> data(scriptPubKey.begin() + 1, scriptPubKey.end());
 
@@ -230,6 +242,7 @@ CScript SerializeRungConditions(const RungConditions& conditions)
 
     return result;
 }
+#endif
 
 bool ResolveTemplateReference(RungConditions& conditions,
                               const std::vector<RungConditions>& all_conditions,
@@ -356,10 +369,7 @@ bool IsMLSCScript(const CScript& scriptPubKey)
            scriptPubKey[0] == RUNG_MLSC_PREFIX;
 }
 
-bool IsLadderScript(const CScript& scriptPubKey)
-{
-    return IsRungConditionsScript(scriptPubKey) || IsMLSCScript(scriptPubKey);
-}
+// IsLadderScript is now inline in conditions.h (just calls IsMLSCScript)
 
 bool GetMLSCRoot(const CScript& scriptPubKey, uint256& root_out)
 {
