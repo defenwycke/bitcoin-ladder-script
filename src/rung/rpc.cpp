@@ -1299,7 +1299,21 @@ static RungBlock BuildWitnessBlock(const UniValue& block_spec,
         throw JSONRPCError(RPC_INVALID_PARAMETER,
             "HASH_PREIMAGE/HASH160_PREIMAGE are deprecated. Use HTLC or HASH_SIG instead");
     case RungBlockType::TAGGED_HASH: {
-        // TAGGED_HASH needs a PREIMAGE field in witness (same as HASH_PREIMAGE)
+        // TAGGED_HASH witness: [HASH256(tag), HASH256(expected), PREIMAGE]
+        // Auto-populate HASH256 fields from conditions
+        for (const auto& rung : conditions.rungs) {
+            for (const auto& cblk : rung.blocks) {
+                if (cblk.type == RungBlockType::TAGGED_HASH) {
+                    for (const auto& f : cblk.fields) {
+                        if (f.type == RungDataType::HASH256) {
+                            block.fields.push_back(f);
+                        }
+                    }
+                    goto tagged_hash_done;
+                }
+            }
+        }
+        tagged_hash_done:;
         if (block_spec.exists("preimage")) {
             std::string preimage_hex = block_spec["preimage"].get_str();
             auto preimage_data = ParseHex(preimage_hex);
@@ -1313,9 +1327,32 @@ static RungBlock BuildWitnessBlock(const UniValue& block_spec,
     case RungBlockType::CSV:
     case RungBlockType::CSV_TIME:
     case RungBlockType::CLTV:
-    case RungBlockType::CLTV_TIME:
-        // No witness fields needed — NUMERIC comes from conditions
+    case RungBlockType::CLTV_TIME: {
+        // Witness implicit layout requires [NUMERIC]. Auto-populate from
+        // conditions or user-provided value for the timelock.
+        if (block_spec.exists("value")) {
+            auto val_hex = block_spec["value"].get_str();
+            block.fields.push_back({RungDataType::NUMERIC, ParseHex(val_hex)});
+        } else {
+            // Copy NUMERIC from conditions (same value echoed in witness)
+            for (const auto& rung : conditions.rungs) {
+                for (const auto& cblk : rung.blocks) {
+                    if (cblk.type == btype) {
+                        for (const auto& f : cblk.fields) {
+                            if (f.type == RungDataType::NUMERIC) {
+                                block.fields.push_back(f);
+                                goto csv_done;
+                            }
+                        }
+                    }
+                }
+            }
+            // Fallback: add 0 if no matching condition found
+            block.fields.push_back({RungDataType::NUMERIC, {0x00, 0x00, 0x00, 0x00}});
+            csv_done:;
+        }
         break;
+    }
     case RungBlockType::TIMELOCKED_SIG: {
         // Compound SIG + CSV: PQ or Schnorr sign, CSV timelock comes from conditions
         SignSingleKey(block_spec, block, mtx, input_idx, txdata, conditions, "TIMELOCKED_SIG");
