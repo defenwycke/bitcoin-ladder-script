@@ -297,26 +297,34 @@ class LadderScriptBasicTest(BitcoinTestFramework):
             ]}]}]
             outputs.append({"amount": change, "conditions": change_conditions})
 
-        result = node.createrungtx(
-            [{"txid": input_txid, "vout": input_vout}],
-            outputs
+        # Bootstrap: use createrungtx to compute the MLSC scriptPubKey,
+        # then use MiniWallet to fund it via a standard transaction.
+        # createrungtx is only used to get the scriptPubKey — we don't broadcast it.
+        dummy_result = node.createrungtx(
+            [{"txid": "0" * 64, "vout": 0}],  # dummy input — tx won't be broadcast
+            [{"amount": output_amount, "conditions": conditions}]
         )
-        unsigned_hex = result["hex"]
+        decoded = node.decoderawtransaction(dummy_result["hex"])
+        mlsc_spk_hex = decoded["vout"][0]["scriptPubKey"]["hex"]
 
-        sign_result = node.signrungtx(
-            unsigned_hex,
-            [{"privkey": boot_wif, "input": 0}],
-            [{"amount": input_amount, "scriptPubKey": spent_spk}]
-        )
-        assert sign_result["complete"]
-
-        txid = node.sendrawtransaction(sign_result["hex"], 0, 50)
+        from test_framework.script import CScript
+        from test_framework.messages import CTxOut
+        mlsc_spk = CScript(bytes.fromhex(mlsc_spk_hex))
+        tx = self.wallet.create_self_transfer(fee_rate=0)["tx"]
+        amount_sats = int(output_amount * 100000000)
+        tx.vout[0].nValue -= (amount_sats + 1000)  # change
+        tx.vout.append(CTxOut(amount_sats, mlsc_spk))
+        self.wallet.sign_tx(tx)
+        txid = node.sendrawtransaction(tx.serialize().hex(), 0, 50)
+        self.wallet.scan_tx(node.decoderawtransaction(tx.serialize().hex()))
         self.generate(node, 1)
 
         tx_info = node.getrawtransaction(txid, True)
         assert tx_info["confirmations"] >= 1
-        spk = tx_info["vout"][0]["scriptPubKey"]["hex"]
-        return txid, 0, output_amount, spk
+        # MLSC output is the LAST vout (appended after change)
+        mlsc_vout = len(tx_info["vout"]) - 1
+        spk = tx_info["vout"][mlsc_vout]["scriptPubKey"]["hex"]
+        return txid, mlsc_vout, output_amount, spk
 
     # =========================================================================
     # Signature, Timelock, Hash tests
@@ -449,29 +457,27 @@ class LadderScriptBasicTest(BitcoinTestFramework):
 
         output_amount = Decimal(input_amount) - Decimal("0.001")
 
-        result = node.createrungtx(
-            [{"txid": input_txid, "vout": input_vout}],
-            [{"amount": output_amount, "conditions": [{
-                "blocks": [{
-                    "type": "SIG",
-                    "fields": [{"type": "PUBKEY", "hex": pubkey_hex}]
-                }]
-            }]}]
+        # Bootstrap: use createrungtx with dummy input to get MLSC scriptPubKey,
+        # then MiniWallet.send_to to create a standard tx paying to it.
+        conditions = [{"blocks": [{"type": "SIG", "fields": [{"type": "PUBKEY", "hex": pubkey_hex}]}]}]
+        dummy_result = node.createrungtx(
+            [{"txid": "0" * 64, "vout": 0}],
+            [{"amount": output_amount, "conditions": conditions}]
         )
-        unsigned_hex = result["hex"]
-        self.log.info(f"  Created unsigned v4 tx: {len(unsigned_hex)//2} bytes")
+        decoded = node.decoderawtransaction(dummy_result["hex"])
+        mlsc_spk_hex = decoded["vout"][0]["scriptPubKey"]["hex"]
 
-        sign_result = node.signrungtx(
-            unsigned_hex,
-            [{"privkey": privkey_wif, "input": 0}],
-            [{"amount": input_amount, "scriptPubKey": spent_spk}]
-        )
-        signed_hex = sign_result["hex"]
-        assert sign_result["complete"], "Transaction should be fully signed"
-        self.log.info(f"  Signed v4 tx: complete={sign_result['complete']}")
-
-        txid1 = node.sendrawtransaction(signed_hex, 0, 50)
-        self.log.info(f"  Broadcast bootstrap tx: {txid1}")
+        from test_framework.script import CScript
+        from test_framework.messages import CTxOut
+        mlsc_spk = CScript(bytes.fromhex(mlsc_spk_hex))
+        # Create standard tx paying to MLSC scriptPubKey
+        tx = self.wallet.create_self_transfer(fee_rate=0)["tx"]
+        tx.vout[0].nValue -= (int(output_amount * 100000000) + 1000)  # change
+        tx.vout.append(CTxOut(int(output_amount * 100000000), mlsc_spk))
+        self.wallet.sign_tx(tx)
+        txid1 = node.sendrawtransaction(tx.serialize().hex(), 0, 50)
+        self.wallet.scan_tx(node.decoderawtransaction(tx.serialize().hex()))
+        self.log.info(f"  Bootstrap tx (standard -> MLSC): {txid1}")
         self.generate(node, 1)
 
         tx_info = node.getrawtransaction(txid1, True)
