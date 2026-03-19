@@ -2437,10 +2437,11 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         """ANCHOR_RESERVE: 2 numerics (n <= m) + 1 hash."""
         self.log.info("Testing ANCHOR_RESERVE spend...")
 
+        reserve_preimage = os.urandom(32)
         conditions = [{"blocks": [{"type": "ANCHOR_RESERVE", "fields": [
             {"type": "NUMERIC", "hex": numeric_hex(3)},   # threshold_n
             {"type": "NUMERIC", "hex": numeric_hex(5)},   # threshold_m
-            {"type": "PREIMAGE", "hex": os.urandom(32).hex()},  # guardian set hash
+            {"type": "PREIMAGE", "hex": reserve_preimage.hex()},  # guardian set hash
         ]}]}]
 
         txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
@@ -2458,7 +2459,7 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         )
         sign_result = node.signrungtx(
             spend["hex"],
-            [{"input": 0, "blocks": [{"type": "ANCHOR_RESERVE"}]}],
+            [{"input": 0, "blocks": [{"type": "ANCHOR_RESERVE", "preimage": reserve_preimage.hex()}]}],
             [{"amount": amount, "scriptPubKey": spk}]
         )
         assert sign_result["complete"]
@@ -2473,9 +2474,11 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         """ANCHOR_SEAL: 2 hashes (asset_id + state_transition)."""
         self.log.info("Testing ANCHOR_SEAL spend...")
 
+        seal_preimage1 = os.urandom(32)
+        seal_preimage2 = os.urandom(32)
         conditions = [{"blocks": [{"type": "ANCHOR_SEAL", "fields": [
-            {"type": "PREIMAGE", "hex": os.urandom(32).hex()},  # asset_id
-            {"type": "PREIMAGE", "hex": os.urandom(32).hex()},  # state_transition
+            {"type": "PREIMAGE", "hex": seal_preimage1.hex()},  # asset_id
+            {"type": "PREIMAGE", "hex": seal_preimage2.hex()},  # state_transition
         ]}]}]
 
         txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
@@ -2493,7 +2496,7 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         )
         sign_result = node.signrungtx(
             spend["hex"],
-            [{"input": 0, "blocks": [{"type": "ANCHOR_SEAL"}]}],
+            [{"input": 0, "blocks": [{"type": "ANCHOR_SEAL", "preimages": [seal_preimage1.hex(), seal_preimage2.hex()]}]}],
             [{"amount": amount, "scriptPubKey": spk}]
         )
         assert sign_result["complete"]
@@ -2896,9 +2899,10 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         """ONE_SHOT: 1 numeric + 1 hash required, structural only."""
         self.log.info("Testing ONE_SHOT spend...")
 
+        oneshot_preimage = os.urandom(32)
         conditions = [{"blocks": [{"type": "ONE_SHOT", "fields": [
             {"type": "NUMERIC", "hex": numeric_hex(0)},  # state: 0=unfired
-            {"type": "PREIMAGE", "hex": os.urandom(32).hex()},  # commitment
+            {"type": "PREIMAGE", "hex": oneshot_preimage.hex()},  # commitment
         ]}]}]
 
         txid, vout, amount, spk = self.bootstrap_v4_output(node, conditions)
@@ -2916,7 +2920,7 @@ class LadderScriptBasicTest(BitcoinTestFramework):
         )
         sign_result = node.signrungtx(
             spend["hex"],
-            [{"input": 0, "blocks": [{"type": "ONE_SHOT"}]}],
+            [{"input": 0, "blocks": [{"type": "ONE_SHOT", "preimage": oneshot_preimage.hex()}]}],
             [{"amount": amount, "scriptPubKey": spk}]
         )
         assert sign_result["complete"]

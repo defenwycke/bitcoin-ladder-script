@@ -1611,25 +1611,18 @@ static RungBlock BuildWitnessBlock(const UniValue& block_spec,
             auto pk = ParseHex(block_spec["pubkey"].get_str());
             block.fields.push_back({RungDataType::PUBKEY, std::move(pk)});
         }
-        // Copy non-embedding condition fields to witness (NUMERIC, SCHEME, SPEND_INDEX).
-        // HASH256/HASH160 are blocked in witness for layout-less blocks (IsDataEmbeddingType).
-        // Users provide PREIMAGE via the "preimage" key instead.
-        for (const auto& rung : conditions.rungs) {
-            for (const auto& cblk : rung.blocks) {
-                if (cblk.type == btype) {
-                    for (const auto& f : cblk.fields) {
-                        if (rung::IsConditionDataType(f.type) &&
-                            !rung::IsDataEmbeddingType(f.type)) {
-                            block.fields.push_back(f);
-                        }
-                    }
-                    goto default_done;
-                }
-            }
-        }
-        default_done:;
+        // Do NOT auto-copy condition fields — MergeConditionsAndWitness combines
+        // conditions + witness, so copying would duplicate fields. Only add
+        // user-provided data (pubkeys, preimages) that the evaluator needs
+        // in addition to what's already in conditions.
         // Copy PREIMAGE fields if user provides them (for hash-bound blocks)
-        if (block_spec.exists("preimage")) {
+        if (block_spec.exists("preimages")) {
+            const UniValue& pi_arr = block_spec["preimages"].get_array();
+            for (size_t i = 0; i < pi_arr.size(); ++i) {
+                auto pi = ParseHex(pi_arr[i].get_str());
+                block.fields.push_back({RungDataType::PREIMAGE, std::move(pi)});
+            }
+        } else if (block_spec.exists("preimage")) {
             auto preimage_data = ParseHex(block_spec["preimage"].get_str());
             block.fields.push_back({RungDataType::PREIMAGE, std::move(preimage_data)});
         }
