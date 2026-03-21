@@ -484,10 +484,10 @@ bool DeserializeLadderWitness(const std::vector<uint8_t>& witness_bytes,
                 ss.read(MakeWritableByteSpan(ladder_out.coil.address_hash));
             }
 
-            // Read coil condition rungs — must be 0 (coil conditions reserved, never evaluated)
+            // Read coil condition count — must be 0 (coil conditions removed, reject non-zero)
             uint64_t n_coil_rungs = ReadCompactSize(ss);
-            if (n_coil_rungs > MAX_COIL_CONDITION_RUNGS) {
-                error = "coil conditions are reserved: n_coil_conditions must be 0, got " + std::to_string(n_coil_rungs);
+            if (n_coil_rungs != 0) {
+                error = "coil conditions not supported: n_coil_conditions must be 0, got " + std::to_string(n_coil_rungs);
                 return false;
             }
 
@@ -580,10 +580,10 @@ bool DeserializeLadderWitness(const std::vector<uint8_t>& witness_bytes,
             ss.read(MakeWritableByteSpan(ladder_out.coil.address_hash));
         }
 
-        // Read coil condition rungs — must be 0 (coil conditions reserved, never evaluated)
+        // Read coil condition count — must be 0 (coil conditions removed, reject non-zero)
         uint64_t n_coil_rungs = ReadCompactSize(ss);
-        if (n_coil_rungs > MAX_COIL_CONDITION_RUNGS) {
-            error = "coil conditions are reserved: n_coil_conditions must be 0, got " + std::to_string(n_coil_rungs);
+        if (n_coil_rungs != 0) {
+            error = "coil conditions not supported: n_coil_conditions must be 0, got " + std::to_string(n_coil_rungs);
             return false;
         }
 
@@ -768,13 +768,7 @@ std::vector<uint8_t> SerializeLadderWitness(const LadderWitness& ladder,
         if (!ladder.coil.address_hash.empty()) {
             ss.write(MakeByteSpan(ladder.coil.address_hash));
         }
-        WriteCompactSize(ss, ladder.coil.conditions.size());
-        for (const auto& crung : ladder.coil.conditions) {
-            WriteCompactSize(ss, crung.blocks.size());
-            for (const auto& cblock : crung.blocks) {
-                SerializeBlock(ss, cblock, static_cast<uint8_t>(SerializationContext::CONDITIONS));
-            }
-        }
+        WriteCompactSize(ss, 0); // n_coil_conditions: always 0 (wire format compat)
         // Write per-rung destinations
         WriteCompactSize(ss, ladder.coil.rung_destinations.size());
         for (const auto& [rung_idx, addr_hash] : ladder.coil.rung_destinations) {
@@ -809,14 +803,8 @@ std::vector<uint8_t> SerializeLadderWitness(const LadderWitness& ladder,
         ss.write(MakeByteSpan(ladder.coil.address_hash));
     }
 
-    // Write coil condition rungs (always use CONDITIONS context)
-    WriteCompactSize(ss, ladder.coil.conditions.size());
-    for (const auto& crung : ladder.coil.conditions) {
-        WriteCompactSize(ss, crung.blocks.size());
-        for (const auto& cblock : crung.blocks) {
-            SerializeBlock(ss, cblock, static_cast<uint8_t>(SerializationContext::CONDITIONS));
-        }
-    }
+    // Write coil condition count: always 0 (wire format compat)
+    WriteCompactSize(ss, 0);
 
     // Write per-rung destinations
     WriteCompactSize(ss, ladder.coil.rung_destinations.size());
@@ -899,13 +887,7 @@ std::vector<uint8_t> SerializeCoilData(const RungCoil& coil)
         ss.write(MakeByteSpan(coil.address_hash));
     }
 
-    WriteCompactSize(ss, coil.conditions.size());
-    for (const auto& crung : coil.conditions) {
-        WriteCompactSize(ss, crung.blocks.size());
-        for (const auto& cblock : crung.blocks) {
-            SerializeBlock(ss, cblock, static_cast<uint8_t>(SerializationContext::CONDITIONS));
-        }
-    }
+    WriteCompactSize(ss, 0); // n_coil_conditions: always 0 (wire format compat)
 
     // Per-rung destinations (0 = none, backward compatible)
     WriteCompactSize(ss, coil.rung_destinations.size());

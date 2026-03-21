@@ -61,8 +61,7 @@ FUZZ_TARGET(rung_deserialize)
         assert(ok2);
         assert(ladder2.rungs.size() == ladder.rungs.size());
 
-        // 5. Coil condition rungs also within limits
-        assert(ladder.coil.conditions.size() <= rung::MAX_RUNGS);
+        // 5. Coil conditions removed — no field to check
     } else {
         // If deserialization failed, error message should be non-empty
         assert(!error.empty());

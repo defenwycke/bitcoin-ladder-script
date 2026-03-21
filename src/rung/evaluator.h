@@ -21,8 +21,6 @@ class CTxOut;
 
 namespace rung {
 
-struct TxAggregateContext;
-
 /** Batch Schnorr signature verifier.
  *  Collects (sighash, pubkey, signature) tuples during evaluation and verifies
  *  them all in a single batch after all inputs pass. Falls back to individual
@@ -109,7 +107,6 @@ struct RungEvalContext {
     const std::vector<std::vector<std::vector<uint8_t>>>* rung_pubkeys{nullptr}; //!< Per-rung pubkey lists for Merkle leaf (merkle_pub_key)
     const MLSCVerifiedLeaves* verified_leaves{nullptr}; //!< Verified leaf array from VerifyMLSCProof (leaf-centric covenant checks)
     const MLSCProof* mlsc_proof{nullptr}; //!< MLSC proof (for cross-rung mutation target access)
-    struct TxAggregateContext* aggregate_ctx{nullptr}; //!< Per-tx aggregate context (for AGGREGATE attestation)
 };
 
 /** Result of evaluating a single block or rung. */

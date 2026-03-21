@@ -79,13 +79,10 @@ static UniValue CoilToJSON(const RungCoil& coil)
     switch (coil.coil_type) {
     case RungCoilType::UNLOCK:    obj.pushKV("type", "UNLOCK"); break;
     case RungCoilType::UNLOCK_TO: obj.pushKV("type", "UNLOCK_TO"); break;
-    case RungCoilType::COVENANT:  obj.pushKV("type", "COVENANT"); break;
     default: obj.pushKV("type", "UNKNOWN"); break;
     }
     switch (coil.attestation) {
     case RungAttestationMode::INLINE:    obj.pushKV("attestation", "INLINE"); break;
-    case RungAttestationMode::AGGREGATE: obj.pushKV("attestation", "AGGREGATE"); break;
-    case RungAttestationMode::DEFERRED:  obj.pushKV("attestation", "DEFERRED"); break;
     default: obj.pushKV("attestation", "UNKNOWN"); break;
     }
     switch (coil.scheme) {
@@ -99,15 +96,6 @@ static UniValue CoilToJSON(const RungCoil& coil)
     }
     if (!coil.address_hash.empty()) {
         obj.pushKV("address_hash", HexStr(coil.address_hash));
-    }
-    if (!coil.conditions.empty()) {
-        UniValue cond_arr(UniValue::VARR);
-        for (const auto& crung : coil.conditions) {
-            UniValue crung_obj(UniValue::VOBJ);
-            crung_obj.pushKV("blocks", BlocksToJSON(crung.blocks));
-            cond_arr.push_back(crung_obj);
-        }
-        obj.pushKV("conditions", cond_arr);
     }
     return obj;
 }
@@ -449,13 +437,10 @@ static RungCoil ParseCoil(const UniValue& obj)
         std::string t = obj["type"].get_str();
         if (t == "UNLOCK")    coil.coil_type = RungCoilType::UNLOCK;
         else if (t == "UNLOCK_TO") coil.coil_type = RungCoilType::UNLOCK_TO;
-        else if (t == "COVENANT")  coil.coil_type = RungCoilType::COVENANT;
     }
     if (obj.exists("attestation")) {
         std::string a = obj["attestation"].get_str();
         if (a == "INLINE")     coil.attestation = RungAttestationMode::INLINE;
-        else if (a == "AGGREGATE") coil.attestation = RungAttestationMode::AGGREGATE;
-        else if (a == "DEFERRED")  coil.attestation = RungAttestationMode::DEFERRED;
     }
     if (obj.exists("scheme")) {
         std::string s = obj["scheme"].get_str();
@@ -610,10 +595,10 @@ static RPCHelpMan createrung()
                     },
                 },
             },
-            {"coil", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "Coil metadata (default UNLOCK/INLINE/SCHNORR). For UNLOCK_TO/COVENANT, conditions array uses same block format as input rungs.",
+            {"coil", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "Coil metadata (default UNLOCK/INLINE/SCHNORR).",
                 {
-                    {"type", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "UNLOCK, UNLOCK_TO, or COVENANT"},
-                    {"attestation", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "INLINE, AGGREGATE, or DEFERRED"},
+                    {"type", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "UNLOCK or UNLOCK_TO"},
+                    {"attestation", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "INLINE"},
                     {"scheme", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "SCHNORR or ECDSA"},
                     {"address", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "Destination scriptPubKey hex"},
                 },
@@ -919,10 +904,10 @@ static RPCHelpMan createrungtx()
                                     },
                                 },
                             },
-                            {"coil", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "Coil metadata (per-output, default UNLOCK/INLINE/SCHNORR). For UNLOCK_TO/COVENANT, conditions uses same block format as input rungs.",
+                            {"coil", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "Coil metadata (per-output, default UNLOCK/INLINE/SCHNORR).",
                                 {
-                                    {"type", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "UNLOCK, UNLOCK_TO, or COVENANT"},
-                                    {"attestation", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "INLINE, AGGREGATE, or DEFERRED"},
+                                    {"type", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "UNLOCK or UNLOCK_TO"},
+                                    {"attestation", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "INLINE"},
                                     {"scheme", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "SCHNORR or ECDSA"},
                                     {"address", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "Destination scriptPubKey hex"},
                                 },

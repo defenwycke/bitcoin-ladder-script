@@ -36,10 +36,6 @@ static constexpr size_t MAX_PREIMAGE_FIELDS_PER_WITNESS = 2;
 /** Coil address is carried as SHA256(raw_address) — 32 bytes, fixed.
  *  Raw address never goes on-chain. Wire format: 0 (no address) or 32 (hash). */
 static constexpr size_t COIL_ADDRESS_HASH_SIZE = 32;
-/** Maximum coil condition rungs. Set to 0: coil conditions are reserved
- *  (never evaluated). Covenant/recursion semantics are handled by rung-level
- *  block types (CTV, RECURSE_*, VAULT_LOCK, AMOUNT_LOCK). */
-static constexpr size_t MAX_COIL_CONDITION_RUNGS = 0;
 /** Maximum number of relays per ladder witness. */
 static constexpr size_t MAX_RELAYS = 8;
 /** Maximum number of relay requirements per rung or relay. */
@@ -82,10 +78,7 @@ enum class SerializationContext : uint8_t {
  *    [scheme: uint8_t]
  *    [address_len: varint]
  *    [address: bytes]              (raw scriptPubKey, 0 len = no address)
- *    [n_coil_conditions: varint]   (0 = no coil conditions)
- *    for each coil condition rung:
- *      [n_blocks: varint]
- *      for each block: (same format as input blocks)
+ *    [n_coil_conditions: varint]   (must be 0 — coil conditions removed)
  */
 bool DeserializeLadderWitness(const std::vector<uint8_t>& witness_bytes,
                               LadderWitness& ladder_out,
@@ -111,7 +104,7 @@ std::vector<uint8_t> SerializeRungBlocks(const Rung& rung, SerializationContext 
 
 /** Serialize coil metadata to bytes (for MLSC Merkle leaf computation).
  *  Format: coil_type(1) + attestation(1) + scheme(1) + address_len(varint) + address +
- *          n_conditions(varint) + condition_rungs. */
+ *          n_conditions(varint, always 0) + rung_destinations. */
 std::vector<uint8_t> SerializeCoilData(const RungCoil& coil);
 
 /** Serialize a relay's blocks + relay_refs to bytes (for MLSC Merkle leaf computation).

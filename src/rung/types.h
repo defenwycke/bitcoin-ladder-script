@@ -479,14 +479,11 @@ inline bool IsInvertibleBlockType(RungBlockType type)
 enum class RungCoilType : uint8_t {
     UNLOCK    = 0x01, //!< Standard unlock — spend the output
     UNLOCK_TO = 0x02, //!< Unlock to a specific destination
-    COVENANT  = 0x03, //!< Covenant — constrains the spending transaction
 };
 
 /** Attestation mode for signatures in this rung. */
 enum class RungAttestationMode : uint8_t {
     INLINE    = 0x01, //!< Signatures inline in witness
-    AGGREGATE = 0x02, //!< Aggregated signature (block-level aggregate)
-    DEFERRED  = 0x03, //!< Deferred attestation (template hash)
 };
 
 /** Signature scheme for this rung. */
@@ -505,7 +502,6 @@ inline bool IsKnownCoilType(uint8_t c)
     switch (static_cast<RungCoilType>(c)) {
     case RungCoilType::UNLOCK:
     case RungCoilType::UNLOCK_TO:
-    case RungCoilType::COVENANT:
         return true;
     }
     return false;
@@ -516,8 +512,6 @@ inline bool IsKnownAttestationMode(uint8_t a)
 {
     switch (static_cast<RungAttestationMode>(a)) {
     case RungAttestationMode::INLINE:
-    case RungAttestationMode::AGGREGATE:
-    case RungAttestationMode::DEFERRED:
         return true;
     }
     return false;
@@ -546,14 +540,12 @@ inline bool IsPQScheme(RungScheme s)
 
 /** Coil metadata — attached to each output (LadderWitness), determines unlock semantics.
  *  UNLOCK:    Standard spend to an address.
- *  UNLOCK_TO: Send to an address (coil address field specifies destination).
- *  COVENANT:  Constrains the spending transaction via rung-level covenant/recursion blocks. */
+ *  UNLOCK_TO: Send to an address (coil address field specifies destination). */
 struct RungCoil {
     RungCoilType coil_type{RungCoilType::UNLOCK};
     RungAttestationMode attestation{RungAttestationMode::INLINE};
     RungScheme scheme{RungScheme::SCHNORR};
     std::vector<uint8_t> address_hash;         //!< SHA256(destination address) — raw address never on-chain. Empty if none.
-    std::vector<struct Rung> conditions;        //!< Reserved — must be empty (MAX_COIL_CONDITION_RUNGS = 0)
     std::vector<std::pair<uint16_t, std::vector<uint8_t>>> rung_destinations; //!< Per-rung destination overrides: (rung_index, address_hash). Bounded by MAX_RUNGS.
 };
 

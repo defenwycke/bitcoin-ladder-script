@@ -402,16 +402,17 @@ BOOST_AUTO_TEST_CASE(serialize_roundtrip_coil)
     block.fields.push_back({RungDataType::SIGNATURE, MakeSignature(64)});
     rung.blocks.push_back(block);
     ladder.rungs.push_back(rung);
-    ladder.coil.coil_type = RungCoilType::COVENANT;
-    ladder.coil.attestation = RungAttestationMode::AGGREGATE;
+    ladder.coil.coil_type = RungCoilType::UNLOCK_TO;
+    ladder.coil.attestation = RungAttestationMode::INLINE;
     ladder.coil.scheme = RungScheme::ECDSA;
+    ladder.coil.address_hash.resize(32, 0xAA);
 
     auto bytes = SerializeLadderWitness(ladder);
     LadderWitness decoded;
     std::string error;
     BOOST_CHECK(DeserializeLadderWitness(bytes, decoded, error));
-    BOOST_CHECK(decoded.coil.coil_type == RungCoilType::COVENANT);
-    BOOST_CHECK(decoded.coil.attestation == RungAttestationMode::AGGREGATE);
+    BOOST_CHECK(decoded.coil.coil_type == RungCoilType::UNLOCK_TO);
+    BOOST_CHECK(decoded.coil.attestation == RungAttestationMode::INLINE);
     BOOST_CHECK(decoded.coil.scheme == RungScheme::ECDSA);
 }
 
@@ -2221,12 +2222,12 @@ BOOST_AUTO_TEST_CASE(eval_pq_scheme_validation)
 }
 
 // ============================================================================
-// Aggregate attestation
+// Removed attestation modes (AGGREGATE=0x02, DEFERRED=0x03) must be rejected
 // ============================================================================
 
-BOOST_AUTO_TEST_CASE(eval_aggregate_attestation_coil)
+BOOST_AUTO_TEST_CASE(deserialize_rejects_aggregate_attestation)
 {
-    // Verify coil with AGGREGATE attestation serializes correctly
+    // Manually build wire bytes with attestation = 0x02 (removed AGGREGATE)
     LadderWitness ladder;
     Rung rung;
     RungBlock block;
@@ -2235,16 +2236,28 @@ BOOST_AUTO_TEST_CASE(eval_aggregate_attestation_coil)
     block.fields.push_back({RungDataType::SIGNATURE, MakeSignature(64)});
     rung.blocks.push_back(block);
     ladder.rungs.push_back(rung);
-    ladder.coil.attestation = RungAttestationMode::AGGREGATE;
 
     auto bytes = SerializeLadderWitness(ladder);
+    // Find the attestation byte (coil_type, attestation, scheme are 3 consecutive bytes after rungs)
+    // attestation is the second of the three. Patch it to 0x02.
+    // Coil starts after rungs. The coil bytes are: coil_type(0x01) attestation(0x01) scheme(0x01)
+    // Find the pattern 0x01 0x01 0x01 near the end and patch attestation.
+    bool patched = false;
+    for (size_t i = bytes.size(); i >= 3; --i) {
+        if (bytes[i-3] == 0x01 && bytes[i-2] == 0x01 && bytes[i-1] == 0x01) {
+            bytes[i-2] = 0x02; // attestation = AGGREGATE
+            patched = true;
+            break;
+        }
+    }
+    BOOST_CHECK(patched);
     LadderWitness decoded;
     std::string error;
-    BOOST_CHECK(DeserializeLadderWitness(bytes, decoded, error));
-    BOOST_CHECK(decoded.coil.attestation == RungAttestationMode::AGGREGATE);
+    BOOST_CHECK(!DeserializeLadderWitness(bytes, decoded, error));
+    BOOST_CHECK(error.find("attestation") != std::string::npos);
 }
 
-BOOST_AUTO_TEST_CASE(eval_deferred_attestation_coil)
+BOOST_AUTO_TEST_CASE(deserialize_rejects_deferred_attestation)
 {
     LadderWitness ladder;
     Rung rung;
@@ -2254,13 +2267,21 @@ BOOST_AUTO_TEST_CASE(eval_deferred_attestation_coil)
     block.fields.push_back({RungDataType::SIGNATURE, MakeSignature(64)});
     rung.blocks.push_back(block);
     ladder.rungs.push_back(rung);
-    ladder.coil.attestation = RungAttestationMode::DEFERRED;
 
     auto bytes = SerializeLadderWitness(ladder);
+    bool patched = false;
+    for (size_t i = bytes.size(); i >= 3; --i) {
+        if (bytes[i-3] == 0x01 && bytes[i-2] == 0x01 && bytes[i-1] == 0x01) {
+            bytes[i-2] = 0x03; // attestation = DEFERRED
+            patched = true;
+            break;
+        }
+    }
+    BOOST_CHECK(patched);
     LadderWitness decoded;
     std::string error;
-    BOOST_CHECK(DeserializeLadderWitness(bytes, decoded, error));
-    BOOST_CHECK(decoded.coil.attestation == RungAttestationMode::DEFERRED);
+    BOOST_CHECK(!DeserializeLadderWitness(bytes, decoded, error));
+    BOOST_CHECK(error.find("attestation") != std::string::npos);
 }
 
 // ============================================================================
@@ -7839,8 +7860,8 @@ BOOST_AUTO_TEST_CASE(diff_witness_fresh_coil)
     // Verify that diff witness carries its own coil, not inherited
     LadderWitness dw;
     dw.witness_ref = WitnessReference{0, {}};
-    dw.coil.coil_type = RungCoilType::COVENANT;
-    dw.coil.attestation = RungAttestationMode::DEFERRED;
+    dw.coil.coil_type = RungCoilType::UNLOCK_TO;
+    dw.coil.attestation = RungAttestationMode::INLINE;
     dw.coil.scheme = RungScheme::FALCON512;
     dw.coil.address_hash.resize(32, 0xEE); // 32-byte hash
 
@@ -7849,7 +7870,7 @@ BOOST_AUTO_TEST_CASE(diff_witness_fresh_coil)
     std::string error;
     BOOST_CHECK(DeserializeLadderWitness(bytes, decoded, error));
     BOOST_CHECK_EQUAL(static_cast<uint8_t>(decoded.coil.coil_type),
-                      static_cast<uint8_t>(RungCoilType::COVENANT));
+                      static_cast<uint8_t>(RungCoilType::UNLOCK_TO));
     BOOST_CHECK_EQUAL(static_cast<uint8_t>(decoded.coil.scheme),
                       static_cast<uint8_t>(RungScheme::FALCON512));
     BOOST_CHECK_EQUAL(decoded.coil.address_hash.size(), 32u);
@@ -8417,7 +8438,7 @@ BOOST_AUTO_TEST_CASE(mlsc_coil_leaf_deterministic)
     BOOST_CHECK(leaf1 == leaf2);
 
     // Different coil type changes leaf
-    coil.attestation = RungAttestationMode::AGGREGATE;
+    coil.coil_type = RungCoilType::UNLOCK_TO;
     uint256 leaf3 = ComputeCoilLeaf(coil);
     BOOST_CHECK(leaf3 != leaf1);
 }
@@ -9084,7 +9105,7 @@ BOOST_AUTO_TEST_CASE(serialize_roundtrip_all_pq_schemes)
     }
 }
 
-// Gap 6: Coil serialization round-trip for UNLOCK_TO and COVENANT types
+// Gap 6: Coil serialization round-trip for UNLOCK_TO
 BOOST_AUTO_TEST_CASE(serialize_roundtrip_coil_unlock_to)
 {
     LadderWitness ladder;
@@ -9111,36 +9132,9 @@ BOOST_AUTO_TEST_CASE(serialize_roundtrip_coil_unlock_to)
     BOOST_CHECK(decoded.coil.address_hash == ladder.coil.address_hash);
 }
 
-BOOST_AUTO_TEST_CASE(serialize_roundtrip_coil_covenant)
+BOOST_AUTO_TEST_CASE(deserialize_rejects_covenant_coil_type)
 {
-    // Coil conditions are now banned (MAX_COIL_CONDITION_RUNGS = 0)
-    // Verify that a coil with conditions is rejected at deserialization
-    LadderWitness ladder;
-    Rung rung;
-    RungBlock block;
-    block.type = RungBlockType::SIG;
-    block.fields.push_back({RungDataType::SCHEME, std::vector<uint8_t>{0x01}});
-    rung.blocks.push_back(block);
-    ladder.rungs.push_back(rung);
-
-    // Add a coil condition (should be rejected)
-    Rung coil_rung;
-    RungBlock coil_block;
-    coil_block.type = RungBlockType::CSV;
-    coil_block.fields.push_back({RungDataType::NUMERIC, MakeNumeric(100)});
-    coil_rung.blocks.push_back(coil_block);
-    ladder.coil.conditions.push_back(coil_rung);
-    ladder.coil.coil_type = RungCoilType::COVENANT;
-
-    auto bytes = SerializeLadderWitness(ladder, SerializationContext::CONDITIONS);
-    LadderWitness decoded;
-    std::string error;
-    BOOST_CHECK(!DeserializeLadderWitness(bytes, decoded, error, SerializationContext::CONDITIONS));
-    BOOST_CHECK(!error.empty());
-}
-
-BOOST_AUTO_TEST_CASE(coil_covenant_conditions_reject_witness_types)
-{
+    // Verify that coil_type = 0x03 (removed COVENANT) is rejected
     LadderWitness ladder;
     Rung rung;
     RungBlock block;
@@ -9150,31 +9144,53 @@ BOOST_AUTO_TEST_CASE(coil_covenant_conditions_reject_witness_types)
     rung.blocks.push_back(block);
     ladder.rungs.push_back(rung);
 
-    ladder.coil.coil_type = RungCoilType::COVENANT;
-    ladder.coil.scheme = RungScheme::SCHNORR;
-    ladder.coil.attestation = RungAttestationMode::INLINE;
-
-    // Covenant condition with witness-only PUBKEY (should be PUBKEY_COMMIT)
-    Rung cov_rung;
-    RungBlock sig_block;
-    sig_block.type = RungBlockType::SIG;
-    sig_block.fields.push_back({RungDataType::PUBKEY, MakePubkey()});
-    cov_rung.blocks.push_back(sig_block);
-    ladder.coil.conditions.push_back(cov_rung);
-
-    // Policy should reject witness-only types in covenant conditions
-    auto mtx = MakeRungTx(ladder);
-    CTransaction tx(mtx);
-    std::string reason;
-    // Either policy rejects, or the covenant conditions with PUBKEY are caught
-    // (PUBKEY is valid in witness context but covenant conditions are condition-context)
-    bool standard = IsStandardRungTx(tx, reason);
-    // We just verify it doesn't silently pass — either reject or reason explains why
-    if (standard) {
-        // If it passes policy, verify PUBKEY in coil conditions is preserved
-        // (it's witness context since it's in the witness stack)
-        BOOST_CHECK(true); // Not a policy violation in witness encoding
+    auto bytes = SerializeLadderWitness(ladder);
+    // Patch coil_type byte from 0x01 (UNLOCK) to 0x03 (removed COVENANT)
+    bool patched = false;
+    for (size_t i = bytes.size(); i >= 3; --i) {
+        if (bytes[i-3] == 0x01 && bytes[i-2] == 0x01 && bytes[i-1] == 0x01) {
+            bytes[i-3] = 0x03; // coil_type = COVENANT (removed)
+            patched = true;
+            break;
+        }
     }
+    BOOST_CHECK(patched);
+    LadderWitness decoded;
+    std::string error;
+    BOOST_CHECK(!DeserializeLadderWitness(bytes, decoded, error));
+    BOOST_CHECK(error.find("coil type") != std::string::npos);
+}
+
+BOOST_AUTO_TEST_CASE(deserialize_rejects_nonzero_coil_conditions)
+{
+    // Verify that non-zero n_coil_conditions is rejected at deserialization
+    LadderWitness ladder;
+    Rung rung;
+    RungBlock block;
+    block.type = RungBlockType::SIG;
+    block.fields.push_back({RungDataType::PUBKEY, MakePubkey()});
+    block.fields.push_back({RungDataType::SIGNATURE, MakeSignature(64)});
+    rung.blocks.push_back(block);
+    ladder.rungs.push_back(rung);
+
+    auto bytes = SerializeLadderWitness(ladder);
+    // The wire format has n_coil_conditions as a varint after address_len(0).
+    // Find the coil section: 0x01 0x01 0x01 0x00 0x00 (type att scheme addr_len=0 n_cond=0)
+    // Patch n_coil_conditions from 0 to 1
+    bool patched = false;
+    for (size_t i = 0; i + 4 < bytes.size(); ++i) {
+        if (bytes[i] == 0x01 && bytes[i+1] == 0x01 && bytes[i+2] == 0x01 &&
+            bytes[i+3] == 0x00 && bytes[i+4] == 0x00) {
+            bytes[i+4] = 0x01; // n_coil_conditions = 1
+            patched = true;
+            break;
+        }
+    }
+    BOOST_CHECK(patched);
+    LadderWitness decoded;
+    std::string error;
+    BOOST_CHECK(!DeserializeLadderWitness(bytes, decoded, error));
+    BOOST_CHECK(error.find("coil conditions") != std::string::npos);
 }
 
 // ============================================================================
