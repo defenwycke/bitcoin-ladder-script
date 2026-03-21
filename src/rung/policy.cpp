@@ -117,6 +117,12 @@ bool IsStandardRungTx(const CTransaction& tx, std::string& reason)
             return false;
         }
 
+        // MLSC ladder witnesses have exactly 2 stack elements (LadderWitness + MLSCProof).
+        // Standard inputs (P2WPKH/P2TR bootstrap) have different stack sizes — skip them.
+        if (witness.stack.size() != 2) {
+            continue;
+        }
+
         // Deserialize witness — this enforces all structural limits at the
         // consensus deserializer level: MAX_RUNGS, MAX_BLOCKS_PER_RUNG,
         // known block types, deprecated block rejection, non-invertible
