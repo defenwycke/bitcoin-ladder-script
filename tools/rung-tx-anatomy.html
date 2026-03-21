@@ -218,8 +218,8 @@ a:hover { text-decoration: underline; }
       <div class="detail-head"><div class="detail-swatch" style="background:var(--c-coil)"></div><div class="detail-title">Coil</div></div>
       <p>Defines what happens when a rung is satisfied.</p>
       <table>
-        <tr><td>coil_type</td><td>UNLOCK (0x01), UNLOCK_TO (0x02), or COVENANT (0x03)</td></tr>
-        <tr><td>attestation</td><td>INLINE (0x01), AGGREGATE (0x02), or DEFERRED (0x03)</td></tr>
+        <tr><td>coil_type</td><td>UNLOCK (0x01) or UNLOCK_TO (0x02). COVENANT (0x03) is defined but reserved; coil conditions are not implemented (MAX_COIL_CONDITION_RUNGS = 0).</td></tr>
+        <tr><td>attestation</td><td>INLINE (0x01). AGGREGATE (0x02) and DEFERRED (0x03) are defined but not yet active.</td></tr>
         <tr><td>scheme</td><td>SCHNORR, ECDSA, or PQ scheme</td></tr>
         <tr><td>address_hash</td><td>0 or 32 bytes (destination for UNLOCK_TO)</td></tr>
         <tr><td>rung_destinations</td><td>Per-rung destination overrides</td></tr>
@@ -235,7 +235,7 @@ a:hover { text-decoration: underline; }
         <p><strong>Input:</strong> any standard Bitcoin output</p>
         <p><strong>Output:</strong> <code>0xC2</code> + 32-byte Merkle root</p>
         <p><strong>Witness:</strong> standard Bitcoin witness</p>
-        <p>The wallet does not need to know about Ladder Script. It sends to a 33-byte scriptPubKey.</p>
+        <p>The funding wallet needs the Ladder Script library (or the engine/RPC) to compute the MLSC root from the desired conditions. The output itself is just 33 bytes, but constructing it requires building the Merkle tree.</p>
       </div>
       <div class="compare-card">
         <div class="compare-title" style="color:var(--c-witness)">Spending (coins leave)</div>
