@@ -188,7 +188,7 @@ a:hover { text-decoration: underline; }
     if (activeLink) activeLink.classList.add('active');
 
     try {
-      const res = await fetch(filename);
+      const res = await fetch(filename + '?v=3');
       if (!res.ok) throw new Error('Not found');
       const md = await res.text();
       loading.style.display = 'none';
