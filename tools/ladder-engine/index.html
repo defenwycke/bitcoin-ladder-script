@@ -10268,10 +10268,20 @@ function SpendPanel() {
       // 5. Sign using blocks-based signer format
       addLog('Signing with ' + signerBlocks.length + ' block(s), ' + scheme + ' scheme...');
       const signerEntry = { input: 0, blocks: signerBlocks };
-      // MLSC inputs require conditions for Merkle proof computation
+      // MLSC inputs require conditions for Merkle proof computation.
+      // Ensure scheme is set on each block's values so exportBlockFields includes it.
       if (voutRungs.length > 0) {
         signerEntry.conditions = voutRungs.map(r => ({
-          blocks: (r.blocks || []).filter(b => b.type !== 'OUTPUT_REF').map(exportBlockFields)
+          blocks: (r.blocks || []).filter(b => b.type !== 'OUTPUT_REF').map(b => {
+            if (scheme && scheme !== 'SCHNORR' && !b.values?.scheme &&
+                (b.type === 'SIG' || b.type === 'MULTISIG' || b.type === 'TIMELOCKED_SIG' ||
+                 b.type === 'HASH_SIG' || b.type === 'CLTV_SIG' || b.type === 'TIMELOCKED_MULTISIG' ||
+                 b.type === 'P2PK_LEGACY' || b.type === 'P2TR_LEGACY')) {
+              const patched = { ...b, values: { ...b.values, scheme } };
+              return exportBlockFields(patched);
+            }
+            return exportBlockFields(b);
+          })
         }));
       }
       if (rec.relays && rec.relays.length > 0) {
