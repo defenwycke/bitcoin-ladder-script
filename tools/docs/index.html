@@ -166,7 +166,7 @@ a:hover { text-decoration: underline; }
 </div>
 
 <footer class="site-footer">
-  <a href="../../ghost-labs.html">Ghost Labs</a> \&middot; <a href="https://bitcoinghost.org">Bitcoin Ghost</a>
+  <a href="../../ghost-labs.html">Ghost Labs</a> &middot; <a href="https://bitcoinghost.org">Bitcoin Ghost</a>
 </footer>
 
 <script>
@@ -203,6 +203,7 @@ a:hover { text-decoration: underline; }
 
   links.forEach(function(link) {
     link.addEventListener('click', function(e) {
+      if (!link.dataset.doc) return; // Allow normal navigation for links without data-doc
       e.preventDefault();
       var doc = link.dataset.doc;
       var title = link.dataset.title;

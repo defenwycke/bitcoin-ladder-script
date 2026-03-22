@@ -10,7 +10,7 @@
 
 <header class="site-header" style="background:#fff;border-bottom:1px solid #e0e0e0;font-family:'Inter',system-ui,sans-serif;">
   <div style="max-width:1100px;margin:0 auto;padding:0 32px;">
-    <div style="display:flex;align-items:center;justify-content:space-between;height:48px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;height:56px;">
       <a href="../../ghost-labs.html" style="font-size:14px;font-weight:700;color:#1a1a1a;text-decoration:none;">Ghost Labs</a>
       <div style="display:flex;align-items:center;gap:20px;">
         <a href="https://bitcoinghost.org" style="color:#666;font-size:12px;text-decoration:none;">Bitcoin Ghost</a>
@@ -19,7 +19,7 @@
         </a>
       </div>
     </div>
-    <nav style="display:flex;gap:24px;border-top:1px solid #eee;padding:8px 0;font-size:12px;">
+    <nav style="display:flex;gap:24px;border-top:1px solid #eee;padding:10px 0;font-size:13px;">
       <a href="../ladder-script.html" style="color:#666;text-decoration:none;">Ladder Script</a>
       <a href="../rung-tx-anatomy.html" style="color:#666;text-decoration:none;">Anatomy</a>
       <a href="./" style="color:#e67e22;text-decoration:none;border-bottom:2px solid #e67e22;padding-bottom:4px;">Blocks</a>
@@ -48,7 +48,7 @@
   <h1 class="block-title">DATA_RETURN</h1>
   <p class="block-subtitle">Typed replacement for OP_RETURN. Commits up to 40 bytes of arbitrary data in an unspendable output. Evaluator always returns ERROR &mdash; the output can never be spent, only created. Maximum one DATA_RETURN output per transaction (consensus-enforced).</p>
   <span class="block-family-badge badge-anchor">Anchor</span>
-  <span class="invertible-badge inv-no">Not Invertible</span>
+  <span class="invertible-badge inv-yes">Invertible</span>
 </div>
 
 <!-- Diagram -->
@@ -118,7 +118,7 @@
     <div class="eval-step"><span class="eval-step-num">1.</span><span class="eval-step-text"><strong>Zero value</strong> &mdash; output <code>nValue</code> must be exactly 0 satoshis</span></div>
     <div class="eval-step"><span class="eval-step-num">2.</span><span class="eval-step-text"><strong>Max one per tx</strong> &mdash; at most one DATA_RETURN output per v4 transaction</span></div>
     <div class="eval-step"><span class="eval-step-num">3.</span><span class="eval-step-text"><strong>Single rung, single block</strong> &mdash; the output conditions must contain exactly one rung with exactly one DATA_RETURN block, no relays</span></div>
-    <div class="eval-step"><span class="eval-step-num">4.</span><span class="eval-step-text"><strong>MLSC exemption</strong> &mdash; DATA_RETURN via 0xC1 inline conditions is allowed on mainnet even when RUNG_VERIFY_MLSC_ONLY is active (since MLSC trees cannot contain unspendable leaves)</span></div>
+    <div class="eval-step"><span class="eval-step-num">4.</span><span class="eval-step-text"><strong>MLSC exemption</strong> &mdash; DATA_RETURN is allowed on mainnet even when RUNG_VERIFY_MLSC_ONLY is active (since MLSC trees cannot contain unspendable leaves)</span></div>
   </div>
 </div>
 
@@ -136,7 +136,7 @@
 <!-- JSON -->
 <div class="doc-section">
   <div class="section-label">JSON Wire Format</div>
-  <div class="json-label">Output conditions (inline 0xC1 format)</div>
+  <div class="json-label">Output conditions</div>
   <div class="json-block"><pre>{
   <span class="json-key">"type"</span>: <span class="json-str">"DATA_RETURN"</span>,
   <span class="json-key">"inverted"</span>: <span class="json-num">false</span>,
