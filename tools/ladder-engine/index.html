@@ -10268,6 +10268,17 @@ function SpendPanel() {
       // 5. Sign using blocks-based signer format
       addLog('Signing with ' + signerBlocks.length + ' block(s), ' + scheme + ' scheme...');
       const signerEntry = { input: 0, blocks: signerBlocks };
+      // MLSC inputs require conditions for Merkle proof computation
+      if (voutRungs.length > 0) {
+        signerEntry.conditions = voutRungs.map(r => ({
+          blocks: (r.blocks || []).filter(b => b.type !== 'OUTPUT_REF').map(exportBlockFields)
+        }));
+      }
+      if (rec.relays && rec.relays.length > 0) {
+        signerEntry.relays = rec.relays.map(r => ({
+          blocks: (r.blocks || []).filter(b => b.type !== 'OUTPUT_REF').map(exportBlockFields)
+        }));
+      }
       if (voutRungs.length > 1) {
         signerEntry.rung = rungIdx;
         addLog('Passing rung index ' + rungIdx + ' to signrungtx (condition ' + (rungIdx + 1) + ' of ' + voutRungs.length + ')', 'info');
