@@ -576,7 +576,7 @@ bool ParseOneNumericBlock(ParseContext& ctx, RungBlock& block, RungBlockType typ
 bool ParsePubkeyNumericBlock(ParseContext& ctx, RungBlock& block, RungBlockType type,
                               std::vector<std::vector<uint8_t>>& rung_pks)
 {
-    // type(@pk, N) — latch_set, latch_reset, counter_down, counter_preset, counter_up, one_shot
+    // type(@pk, N) — latch_set, counter_down
     if (!Expect(ctx, '(')) return false;
     std::string alias = ReadAlias(ctx);
     if (alias.empty()) return false;
@@ -588,6 +588,49 @@ bool ParsePubkeyNumericBlock(ParseContext& ctx, RungBlock& block, RungBlockType 
     if (!ReadUint32(ctx, val)) return false;
     block.type = type;
     block.fields.push_back({RungDataType::NUMERIC, MakeNumericField(val)});
+    return Expect(ctx, ')');
+}
+
+bool ParsePubkeyTwoNumericBlock(ParseContext& ctx, RungBlock& block, RungBlockType type,
+                                 std::vector<std::vector<uint8_t>>& rung_pks)
+{
+    // type(@pk, N, N) — latch_reset, counter_preset, counter_up
+    if (!Expect(ctx, '(')) return false;
+    std::string alias = ReadAlias(ctx);
+    if (alias.empty()) return false;
+    std::vector<uint8_t> pk;
+    if (!LookupKey(ctx, alias, pk)) return false;
+    rung_pks.push_back(pk);
+    if (!Expect(ctx, ',')) return false;
+    uint32_t a, b;
+    if (!ReadUint32(ctx, a)) return false;
+    if (!Expect(ctx, ',')) return false;
+    if (!ReadUint32(ctx, b)) return false;
+    block.type = type;
+    block.fields.push_back({RungDataType::NUMERIC, MakeNumericField(a)});
+    block.fields.push_back({RungDataType::NUMERIC, MakeNumericField(b)});
+    return Expect(ctx, ')');
+}
+
+bool ParsePubkeyNumericHashBlock(ParseContext& ctx, RungBlock& block, RungBlockType type,
+                                  std::vector<std::vector<uint8_t>>& rung_pks)
+{
+    // type(@pk, N, hex) — one_shot
+    if (!Expect(ctx, '(')) return false;
+    std::string alias = ReadAlias(ctx);
+    if (alias.empty()) return false;
+    std::vector<uint8_t> pk;
+    if (!LookupKey(ctx, alias, pk)) return false;
+    rung_pks.push_back(pk);
+    if (!Expect(ctx, ',')) return false;
+    uint32_t val;
+    if (!ReadUint32(ctx, val)) return false;
+    if (!Expect(ctx, ',')) return false;
+    auto h = ParseHex(ReadHex(ctx));
+    if (h.size() != 32) { ctx.error = "requires 32-byte hash"; return false; }
+    block.type = type;
+    block.fields.push_back({RungDataType::NUMERIC, MakeNumericField(val)});
+    block.fields.push_back({RungDataType::HASH256, h});
     return Expect(ctx, ')');
 }
 
@@ -818,20 +861,32 @@ bool ParseLegacySingleKey(ParseContext& ctx, RungBlock& block, RungBlockType typ
     if (alias.empty()) return false;
     std::vector<uint8_t> pk;
     if (!LookupKey(ctx, alias, pk)) return false;
-    rung_pks.push_back(pk);
+
     block.type = type;
-    block.fields.push_back({RungDataType::SCHEME, {static_cast<uint8_t>(RungScheme::SCHNORR)}});
+
+    // P2PKH/P2WPKH: PUBKEY goes through ParseConditionsSpec→HASH160 auto-conversion
+    // (pubkey_count=0, NOT added to Merkle leaf)
+    // P2PK/P2TR: PUBKEY goes to rung_pubkeys (Merkle leaf) + SCHEME in conditions
+    if (type == RungBlockType::P2PKH_LEGACY || type == RungBlockType::P2WPKH_LEGACY) {
+        // PUBKEY → auto-converted to HASH160 by ParseConditionsSpec
+        block.fields.push_back({RungDataType::PUBKEY, pk});
+    } else {
+        // P2PK, P2TR: pubkey in Merkle leaf + SCHEME
+        rung_pks.push_back(pk);
+        block.fields.push_back({RungDataType::SCHEME, {static_cast<uint8_t>(RungScheme::SCHNORR)}});
+    }
     return Expect(ctx, ')');
 }
 
 bool ParseLegacyScript(ParseContext& ctx, RungBlock& block, RungBlockType type)
 {
     // p2sh(inner_hex) | p2wsh(inner_hex) | p2tr_script(inner_hex)
+    // Use PREIMAGE — the node auto-converts to HASH160 (P2SH) or HASH256 (P2WSH/P2TR_SCRIPT)
     if (!Expect(ctx, '(')) return false;
     auto bytes = ParseHex(ReadHex(ctx));
     if (bytes.empty()) { ctx.error = "legacy script block requires inner conditions hex"; return false; }
     block.type = type;
-    block.fields.push_back({RungDataType::SCRIPT_BODY, bytes});
+    block.fields.push_back({RungDataType::PREIMAGE, bytes});
     return Expect(ctx, ')');
 }
 
@@ -877,27 +932,55 @@ bool ParseBlock(ParseContext& ctx, RungBlock& block, std::vector<std::vector<uin
     else if (name == "recurse_count") ok = ParseRecurseCount(ctx, block);
     else if (name == "recurse_split") ok = ParseRecurseSplit(ctx, block);
     else if (name == "recurse_decay") ok = ParseRecurseDecay(ctx, block);
-    // Anchor family
-    else if (name == "anchor") { block.type = RungBlockType::ANCHOR; ok = Expect(ctx, '(') && Expect(ctx, ')'); }
-    else if (name == "anchor_channel") { block.type = RungBlockType::ANCHOR_CHANNEL; ok = Expect(ctx, '(') && Expect(ctx, ')'); }
-    else if (name == "anchor_pool") { block.type = RungBlockType::ANCHOR_POOL; ok = Expect(ctx, '(') && Expect(ctx, ')'); }
-    else if (name == "anchor_reserve") { block.type = RungBlockType::ANCHOR_RESERVE; ok = Expect(ctx, '(') && Expect(ctx, ')'); }
-    else if (name == "anchor_seal") { block.type = RungBlockType::ANCHOR_SEAL; ok = Expect(ctx, '(') && Expect(ctx, ')'); }
-    else if (name == "anchor_oracle") { block.type = RungBlockType::ANCHOR_ORACLE; ok = Expect(ctx, '(') && Expect(ctx, ')'); }
+    // Anchor family: each has specific conditions fields
+    else if (name == "anchor") ok = ParseOneNumericBlock(ctx, block, RungBlockType::ANCHOR);
+    else if (name == "anchor_channel") ok = ParseOneNumericBlock(ctx, block, RungBlockType::ANCHOR_CHANNEL);
+    else if (name == "anchor_pool") { // HASH256 + NUMERIC
+        if (!Expect(ctx, '(')) { ok = false; } else {
+            auto h = ParseHex(ReadHex(ctx));
+            if (h.size() != 32) { ctx.error = "anchor_pool requires 32-byte hash"; ok = false; }
+            else if (!Expect(ctx, ',')) { ok = false; }
+            else { uint32_t n; if (!ReadUint32(ctx, n)) { ok = false; }
+            else { block.type = RungBlockType::ANCHOR_POOL;
+                block.fields.push_back({RungDataType::HASH256, h});
+                block.fields.push_back({RungDataType::NUMERIC, MakeNumericField(n)});
+                ok = Expect(ctx, ')'); }}}}
+    else if (name == "anchor_reserve") { // NUMERIC + NUMERIC + HASH256
+        if (!Expect(ctx, '(')) { ok = false; } else {
+            uint32_t n1, n2;
+            if (!ReadUint32(ctx, n1) || !Expect(ctx, ',') || !ReadUint32(ctx, n2) || !Expect(ctx, ',')) { ok = false; }
+            else { auto h = ParseHex(ReadHex(ctx));
+                if (h.size() != 32) { ctx.error = "anchor_reserve requires 32-byte hash"; ok = false; }
+                else { block.type = RungBlockType::ANCHOR_RESERVE;
+                    block.fields.push_back({RungDataType::NUMERIC, MakeNumericField(n1)});
+                    block.fields.push_back({RungDataType::NUMERIC, MakeNumericField(n2)});
+                    block.fields.push_back({RungDataType::HASH256, h});
+                    ok = Expect(ctx, ')'); }}}}
+    else if (name == "anchor_seal") { // HASH256 + HASH256
+        if (!Expect(ctx, '(')) { ok = false; } else {
+            auto h1 = ParseHex(ReadHex(ctx));
+            if (h1.size() != 32 || !Expect(ctx, ',')) { ctx.error = "anchor_seal requires two 32-byte hashes"; ok = false; }
+            else { auto h2 = ParseHex(ReadHex(ctx));
+                if (h2.size() != 32) { ctx.error = "anchor_seal requires two 32-byte hashes"; ok = false; }
+                else { block.type = RungBlockType::ANCHOR_SEAL;
+                    block.fields.push_back({RungDataType::HASH256, h1});
+                    block.fields.push_back({RungDataType::HASH256, h2});
+                    ok = Expect(ctx, ')'); }}}}
+    else if (name == "anchor_oracle") ok = ParsePubkeyNumericBlock(ctx, block, RungBlockType::ANCHOR_ORACLE, rung_pks);
     else if (name == "data_return") ok = ParseDataReturn(ctx, block);
     // PLC family
     else if (name == "hysteresis_fee") ok = ParseTwoNumericBlock(ctx, block, RungBlockType::HYSTERESIS_FEE);
     else if (name == "hysteresis_value") ok = ParseTwoNumericBlock(ctx, block, RungBlockType::HYSTERESIS_VALUE);
-    else if (name == "timer_continuous") ok = ParseOneNumericBlock(ctx, block, RungBlockType::TIMER_CONTINUOUS);
-    else if (name == "timer_off_delay") ok = ParseTwoNumericBlock(ctx, block, RungBlockType::TIMER_OFF_DELAY);
+    else if (name == "timer_continuous") ok = ParseTwoNumericBlock(ctx, block, RungBlockType::TIMER_CONTINUOUS);
+    else if (name == "timer_off_delay") ok = ParseOneNumericBlock(ctx, block, RungBlockType::TIMER_OFF_DELAY);
     else if (name == "latch_set") ok = ParsePubkeyNumericBlock(ctx, block, RungBlockType::LATCH_SET, rung_pks);
-    else if (name == "latch_reset") ok = ParsePubkeyNumericBlock(ctx, block, RungBlockType::LATCH_RESET, rung_pks);
+    else if (name == "latch_reset") ok = ParsePubkeyTwoNumericBlock(ctx, block, RungBlockType::LATCH_RESET, rung_pks);
     else if (name == "counter_down") ok = ParsePubkeyNumericBlock(ctx, block, RungBlockType::COUNTER_DOWN, rung_pks);
-    else if (name == "counter_preset") ok = ParsePubkeyNumericBlock(ctx, block, RungBlockType::COUNTER_PRESET, rung_pks);
-    else if (name == "counter_up") ok = ParsePubkeyNumericBlock(ctx, block, RungBlockType::COUNTER_UP, rung_pks);
+    else if (name == "counter_preset") ok = ParsePubkeyTwoNumericBlock(ctx, block, RungBlockType::COUNTER_PRESET, rung_pks);
+    else if (name == "counter_up") ok = ParsePubkeyTwoNumericBlock(ctx, block, RungBlockType::COUNTER_UP, rung_pks);
     else if (name == "compare") ok = ParseCompare(ctx, block);
-    else if (name == "sequencer") ok = ParseOneNumericBlock(ctx, block, RungBlockType::SEQUENCER);
-    else if (name == "one_shot") ok = ParsePubkeyNumericBlock(ctx, block, RungBlockType::ONE_SHOT, rung_pks);
+    else if (name == "sequencer") ok = ParseTwoNumericBlock(ctx, block, RungBlockType::SEQUENCER);
+    else if (name == "one_shot") ok = ParsePubkeyNumericHashBlock(ctx, block, RungBlockType::ONE_SHOT, rung_pks);
     else if (name == "rate_limit") ok = ParseRateLimit(ctx, block);
     else if (name == "cosign") ok = ParseCosign(ctx, block);
     // Compound family
