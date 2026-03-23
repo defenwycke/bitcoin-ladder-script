@@ -2834,26 +2834,28 @@ static RPCHelpMan signladder()
 
             bool is_sig = rung::IsKeyConsumingBlockType(cond_block.type);
 
-            if (is_sig && n_pks >= 1 && pk_cursor < rung_pks.size()) {
-                // Find WIF for the first pubkey
-                const auto& pk_bytes = rung_pks[pk_cursor];
-                for (const auto& [alias, key] : privkey_map) {
-                    CPubKey pub = key.GetPubKey();
-                    if (std::vector<uint8_t>(pub.begin(), pub.end()) == pk_bytes) {
-                        block_spec.pushKV("privkey", EncodeSecret(key));
-                        break;
+            if (n_pks >= 1 && pk_cursor < rung_pks.size()) {
+                // Add privkey for signature blocks
+                if (is_sig) {
+                    const auto& pk_bytes = rung_pks[pk_cursor];
+                    for (const auto& [alias, key] : privkey_map) {
+                        CPubKey pub = key.GetPubKey();
+                        if (std::vector<uint8_t>(pub.begin(), pub.end()) == pk_bytes) {
+                            block_spec.pushKV("privkey", EncodeSecret(key));
+                            break;
+                        }
                     }
                 }
 
+                // Add pubkeys for ALL blocks with pubkey_count > 0
+                // (signature blocks, PLC blocks with merkle_pub_key binding, anchors, etc.)
                 if (n_pks >= 2) {
-                    // Multi-key types: collect all pubkey hexes
                     UniValue pk_arr(UniValue::VARR);
                     for (size_t p = 0; p < n_pks && (pk_cursor + p) < rung_pks.size(); ++p) {
                         pk_arr.push_back(HexStr(rung_pks[pk_cursor + p]));
                     }
                     block_spec.pushKV("pubkeys", pk_arr);
 
-                    // Multi-sig types: need privkeys array
                     if (cond_block.type == RungBlockType::MULTISIG ||
                         cond_block.type == RungBlockType::MUSIG_THRESHOLD ||
                         cond_block.type == RungBlockType::TIMELOCKED_MULTISIG) {
@@ -2869,6 +2871,9 @@ static RPCHelpMan signladder()
                         }
                         block_spec.pushKV("privkeys", privkeys_arr);
                     }
+                } else if (n_pks == 1 && !is_sig) {
+                    // Single pubkey non-sig blocks: add pubkey hex for witness
+                    block_spec.pushKV("pubkey", HexStr(rung_pks[pk_cursor]));
                 }
                 pk_cursor += n_pks;
             }
