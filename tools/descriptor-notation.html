@@ -38,7 +38,8 @@ a:hover { text-decoration: underline; }
 .page-layout { display: grid; grid-template-columns: 240px 1fr; min-height: calc(100vh - 96px); }
 
 /* -- SIDEBAR -- */
-.sidebar { background: #fff; border-right: 1px solid var(--border); padding: 24px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+.sidebar { background: #fff; border-right: 1px solid var(--border); padding: 24px 0; position: sticky; top: 0; height: 100vh; overflow-y: auto; scrollbar-width: none; -ms-overflow-style: none; }
+.sidebar::-webkit-scrollbar { display: none; }
 .sidebar-label { font-size: 10px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-light); padding: 16px 20px 6px; }
 .sidebar-label:first-child { padding-top: 8px; }
 .sidebar-link { display: block; padding: 7px 20px; font-size: 14px; color: var(--text-dim); text-decoration: none; transition: all 0.15s; border-left: 2px solid transparent; }
