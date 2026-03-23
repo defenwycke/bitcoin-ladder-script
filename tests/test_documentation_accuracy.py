@@ -49,6 +49,8 @@ def parse_types_h():
         'MICRO_HEADER_ESCAPE_INV', # internal marker, not a user-facing block
         'SCRIPT_BODY',             # data type, not a block type
         'DATA',                    # data type, not a block type
+        'RESERVED_0201',           # reserved slot, not a block type
+        'RESERVED_0202',           # reserved slot, not a block type
     }
     for m in re.finditer(r'(\w+)\s*=\s*(0x[0-9a-fA-F]+)', text):
         name, code = m.group(1), int(m.group(2), 16)
@@ -102,9 +104,9 @@ def block_family(code):
 class TestTypesH(unittest.TestCase):
     """Verify types.h internal consistency."""
 
-    def test_exactly_63_block_types(self):
-        self.assertEqual(len(CANONICAL_BLOCKS), 63,
-                         f"Expected 63 block types (61 defined + 2 deprecated), got {len(CANONICAL_BLOCKS)}: {sorted(CANONICAL_BLOCKS.keys())}")
+    def test_exactly_61_block_types(self):
+        self.assertEqual(len(CANONICAL_BLOCKS), 61,
+                         f"Expected 61 block types, got {len(CANONICAL_BLOCKS)}: {sorted(CANONICAL_BLOCKS.keys())}")
 
     def test_no_duplicate_codes(self):
         codes = list(CANONICAL_BLOCKS.values())
@@ -119,7 +121,7 @@ class TestTypesH(unittest.TestCase):
                          f"Expected 10 families, got {families_used}")
 
     def test_family_block_counts(self):
-        expected = {'Signature': 5, 'Timelock': 4, 'Hash': 4, 'Covenant': 3,
+        expected = {'Signature': 5, 'Timelock': 4, 'Hash': 2, 'Covenant': 3,
                     'Recursion': 6, 'Anchor': 7, 'PLC': 14, 'Compound': 6, 'Governance': 7,
                     'Legacy': 7}
         actual = {}
@@ -140,7 +142,6 @@ class TestTypesH(unittest.TestCase):
         critical = {
             'SIG': 0x0001, 'MULTISIG': 0x0002,
             'CSV': 0x0101, 'CLTV': 0x0103,
-            'HASH_PREIMAGE': 0x0201,
             'CTV': 0x0301, 'VAULT_LOCK': 0x0302,
             'RECURSE_SAME': 0x0401,
             'ANCHOR': 0x0501,
@@ -181,7 +182,7 @@ class TestEngineBlockDefs(unittest.TestCase):
     def setUpClass(cls):
         cls.engine_text = ENGINE.read_text()
 
-    def test_getTypeHex_has_all_60_blocks(self):
+    def test_getTypeHex_has_all_blocks(self):
         # Extract getTypeHex map entries
         m = re.search(r'function getTypeHex\(type\)\s*\{[\s\S]*?const map = \{([\s\S]*?)\};', self.engine_text)
         self.assertIsNotNone(m, "getTypeHex function not found")
@@ -211,13 +212,13 @@ class TestEngineBlockDefs(unittest.TestCase):
 
 
 class TestBlockReferencePages(unittest.TestCase):
-    """Verify all 63 HTML block reference pages match types.h (61 active + 2 deprecated)."""
+    """Verify all 61 HTML block reference pages match types.h."""
 
     BLOCK_FILE_MAP = {
         'SIG': 'sig', 'MULTISIG': 'multisig', 'ADAPTOR_SIG': 'adaptor-sig',
         'MUSIG_THRESHOLD': 'musig-threshold', 'KEY_REF_SIG': 'key-ref-sig',
         'CSV': 'csv', 'CSV_TIME': 'csv-time', 'CLTV': 'cltv', 'CLTV_TIME': 'cltv-time',
-        'HASH_PREIMAGE': 'hash-preimage', 'HASH160_PREIMAGE': 'hash160-preimage', 'TAGGED_HASH': 'tagged-hash',
+        'TAGGED_HASH': 'tagged-hash',
         'CTV': 'ctv', 'VAULT_LOCK': 'vault-lock', 'AMOUNT_LOCK': 'amount-lock',
         'RECURSE_SAME': 'recurse-same', 'RECURSE_MODIFIED': 'recurse-modified',
         'RECURSE_UNTIL': 'recurse-until', 'RECURSE_COUNT': 'recurse-count',
@@ -536,7 +537,7 @@ class TestExpandedDocAccuracy(unittest.TestCase):
 
     def test_block_pages_have_field_tables(self):
         """Every block reference page (except deprecated) should have a field table."""
-        deprecated = {'hash-preimage', 'hash160-preimage'}
+        deprecated = set()
         missing_fields = []
         for name, filename in TestBlockReferencePages.BLOCK_FILE_MAP.items():
             if filename in deprecated:
@@ -552,7 +553,7 @@ class TestExpandedDocAccuracy(unittest.TestCase):
 
     def test_block_pages_have_evaluation_logic(self):
         """Every block page should have an evaluation logic section."""
-        deprecated = {'hash-preimage', 'hash160-preimage'}
+        deprecated = set()
         missing_eval = []
         for name, filename in TestBlockReferencePages.BLOCK_FILE_MAP.items():
             if filename in deprecated:

@@ -23,7 +23,6 @@ bool IsBaseBlockType(uint16_t block_type)
     case RungBlockType::CSV_TIME:
     case RungBlockType::CLTV:
     case RungBlockType::CLTV_TIME:
-    // HASH_PREIMAGE/HASH160_PREIMAGE: deprecated (removed from IsBaseBlockType)
     case RungBlockType::TAGGED_HASH:
     // Compound family (collapsed multi-block patterns)
     case RungBlockType::TIMELOCKED_SIG:

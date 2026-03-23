@@ -235,13 +235,6 @@ bool DeserializeBlock(DataStream& ss, RungBlock& block_out,
         return false;
     }
 
-    // Reject deprecated block types at deserialization
-    if (block_out.type == RungBlockType::HASH_PREIMAGE ||
-        block_out.type == RungBlockType::HASH160_PREIMAGE) {
-        error = "deprecated block type: use HTLC or HASH_SIG";
-        return false;
-    }
-
     // Reject inverted key-consuming blocks (selective inversion removal)
     if (block_out.inverted && !IsInvertibleBlockType(block_out.type)) {
         error = "block type cannot be inverted: " + BlockTypeName(block_out.type);

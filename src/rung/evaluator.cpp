@@ -643,7 +643,7 @@ EvalResult EvalTaggedHashBlock(const RungBlock& block)
 
 EvalResult EvalHashGuardedBlock(const RungBlock& block)
 {
-    // Raw SHA256 preimage verification (non-invertible replacement for deprecated HASH_PREIMAGE).
+    // Raw SHA256 preimage verification (non-invertible).
     // Conditions: HASH256 (committed hash). Witness: PREIMAGE (raw preimage).
     // SATISFIED when SHA256(preimage) == committed_hash.
     const RungField* hash_field = FindField(block, RungDataType::HASH256);
@@ -1787,7 +1787,7 @@ EvalResult EvalHTLCBlock(const RungBlock& block,
                           SigVersion sigversion,
                           ScriptExecutionData& execdata)
 {
-    // HTLC = HASH_PREIMAGE + CSV + SIG in one block
+    // HTLC = hash preimage + CSV + SIG in one block
     // merkle_pub_key: PUBKEY in witness, bound by Merkle proof.
     // Fields: HASH256 (conditions), PREIMAGE (witness), NUMERIC (timelock),
     //         PUBKEY (witness), SIGNATURE (witness)
@@ -1851,7 +1851,7 @@ EvalResult EvalHashSigBlock(const RungBlock& block,
                              SigVersion sigversion,
                              ScriptExecutionData& execdata)
 {
-    // HASH_SIG = HASH_PREIMAGE + SIG in one block
+    // HASH_SIG = hash preimage + SIG in one block
     // merkle_pub_key: PUBKEY in witness, bound by Merkle proof.
     // Fields: HASH256 (conditions), PREIMAGE (witness),
     //         PUBKEY (witness), SIGNATURE (witness)
@@ -2762,11 +2762,7 @@ EvalResult EvalBlock(const RungBlock& block,
     case RungBlockType::CLTV_TIME:
         raw = EvalCLTVTimeBlock(block, checker);
         break;
-    // Hash (HASH_PREIMAGE/HASH160_PREIMAGE deprecated — use HTLC or HASH_SIG)
-    case RungBlockType::HASH_PREIMAGE:
-    case RungBlockType::HASH160_PREIMAGE:
-        raw = EvalResult::ERROR;
-        break;
+    // Hash
     case RungBlockType::TAGGED_HASH:
         raw = EvalTaggedHashBlock(block);
         break;

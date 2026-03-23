@@ -187,10 +187,6 @@ static bool ParseBlockType(const std::string& name, RungBlockType& out)
     if (name == "CLTV")             { out = RungBlockType::CLTV; return true; }
     if (name == "CLTV_TIME")        { out = RungBlockType::CLTV_TIME; return true; }
     // Hash family
-    if (name == "HASH_PREIMAGE" || name == "HASH160_PREIMAGE") {
-        throw JSONRPCError(RPC_INVALID_PARAMETER,
-            "HASH_PREIMAGE/HASH160_PREIMAGE are deprecated. Use HTLC (hash+timelock+sig) or HASH_SIG (hash+sig) instead");
-    }
     if (name == "TAGGED_HASH")      { out = RungBlockType::TAGGED_HASH; return true; }
     if (name == "HASH_GUARDED")     { out = RungBlockType::HASH_GUARDED; return true; }
     // Compound family
@@ -254,7 +250,7 @@ static bool ParseBlockType(const std::string& name, RungBlockType& out)
     // Backward compat aliases
     if (name == "HASHLOCK") {
         throw JSONRPCError(RPC_INVALID_PARAMETER,
-            "HASHLOCK (HASH_PREIMAGE) is deprecated. Use HTLC or HASH_SIG instead");
+            "HASHLOCK is removed. Use HTLC or HASH_SIG instead");
     }
     if (name == "ANCHOR_BOND")      { out = RungBlockType::ANCHOR_SEAL; return true; }
     if (name == "ANCHOR_ESCROW")    { out = RungBlockType::ANCHOR_ORACLE; return true; }
@@ -361,8 +357,8 @@ static RungBlock ParseBlockSpec(const UniValue& block_obj, bool conditions_only,
         }
         // Auto-convert PREIMAGE to hash commitment in conditions (node-computed, closes data-stuffing vector).
         // User provides the preimage, node computes the hash — user never writes to the hash field directly.
-        // P2SH/HASH160_PREIMAGE: PREIMAGE → HASH160 (RIPEMD160(SHA256(preimage)))
-        // P2WSH/P2TR_SCRIPT/HASH_PREIMAGE/HASH_SIG/HTLC/TAGGED_HASH: PREIMAGE → HASH256 (SHA256(preimage))
+        // P2SH: PREIMAGE → HASH160 (RIPEMD160(SHA256(preimage)))
+        // P2WSH/P2TR_SCRIPT/HASH_SIG/HTLC/TAGGED_HASH/HASH_GUARDED: PREIMAGE → HASH256 (SHA256(preimage))
         if (conditions_only && field.type == RungDataType::PREIMAGE) {
             RungField hash_field;
             if (block.type == RungBlockType::P2SH_LEGACY) {
@@ -1359,10 +1355,6 @@ static RungBlock BuildWitnessBlock(const UniValue& block_spec,
         }
         break;
     }
-    case RungBlockType::HASH_PREIMAGE:
-    case RungBlockType::HASH160_PREIMAGE:
-        throw JSONRPCError(RPC_INVALID_PARAMETER,
-            "HASH_PREIMAGE/HASH160_PREIMAGE are deprecated. Use HTLC or HASH_SIG instead");
     case RungBlockType::TAGGED_HASH: {
         // TAGGED_HASH witness: [HASH256(tag), HASH256(expected), PREIMAGE]
         // Auto-populate HASH256 fields from conditions
@@ -1742,7 +1734,7 @@ static RPCHelpMan signrungtx()
                                             {"privkeys", RPCArg::Type::ARR, RPCArg::Optional::OMITTED, "WIF keys for MULTISIG",
                                                 {{"key", RPCArg::Type::STR, RPCArg::Optional::NO, "A WIF key"}},
                                             },
-                                            {"preimage", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "Preimage hex for HASH_PREIMAGE/HASH160_PREIMAGE"},
+                                            {"preimage", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "Preimage hex for hash-based blocks (HTLC, HASH_SIG, HASH_GUARDED)"},
                                         },
                                     },
                                 },

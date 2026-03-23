@@ -16,10 +16,10 @@ namespace rung {
  *  Each block evaluates a single spending condition within a rung.
  *  Encoded as uint16_t in the wire format (little-endian 2 bytes).
  *
- *  Ranges (10 families, 63 block types):
+ *  Ranges (10 families, 61 block types):
  *    0x0001-0x00FF  Signature family (SIG, MULTISIG, ADAPTOR_SIG, MUSIG_THRESHOLD, KEY_REF_SIG)
  *    0x0100-0x01FF  Timelock family (CSV, CSV_TIME, CLTV, CLTV_TIME)
- *    0x0200-0x02FF  Hash family (TAGGED_HASH, HASH_GUARDED) — HASH_PREIMAGE, HASH160_PREIMAGE deprecated
+ *    0x0200-0x02FF  Hash family (TAGGED_HASH, HASH_GUARDED)
  *    0x0300-0x03FF  Covenant family (CTV, VAULT_LOCK, AMOUNT_LOCK)
  *    0x0400-0x04FF  Recursion family (RECURSE_SAME, _MODIFIED, _UNTIL, _COUNT, _SPLIT, _DECAY)
  *    0x0500-0x05FF  Anchor family (ANCHOR, _CHANNEL, _POOL, _RESERVE, _SEAL, _ORACLE, DATA_RETURN)
@@ -43,10 +43,10 @@ enum class RungBlockType : uint16_t {
     CLTV_TIME        = 0x0104, //!< Absolute timelock — median-time-past
 
     // Hash family
-    HASH_PREIMAGE    = 0x0201, //!< SHA-256 hash preimage reveal
-    HASH160_PREIMAGE = 0x0202, //!< HASH160 preimage reveal
+    RESERVED_0201    = 0x0201, //!< Reserved: was HASH_PREIMAGE, removed
+    RESERVED_0202    = 0x0202, //!< Reserved: was HASH160_PREIMAGE, removed
     TAGGED_HASH      = 0x0203, //!< BIP-340 tagged hash verification
-    HASH_GUARDED     = 0x0204, //!< Raw SHA256 preimage verification (non-invertible, replaces deprecated HASH_PREIMAGE)
+    HASH_GUARDED     = 0x0204, //!< Raw SHA256 preimage verification (non-invertible)
 
     // Covenant family
     CTV              = 0x0301, //!< OP_CHECKTEMPLATEVERIFY covenant
@@ -73,7 +73,7 @@ enum class RungBlockType : uint16_t {
     // Compound family (collapsed multi-block patterns)
     TIMELOCKED_SIG   = 0x0701, //!< SIG + CSV combined: pubkey + sig + block-height timelock
     HTLC             = 0x0702, //!< Hash + Timelock + Sig: atomic swap / Lightning HTLC
-    HASH_SIG         = 0x0703, //!< HASH_PREIMAGE + SIG combined: atomic swap claim
+    HASH_SIG         = 0x0703, //!< Hash preimage + SIG combined: atomic swap claim
     PTLC             = 0x0704, //!< ADAPTOR_SIG + CSV combined: point-locked payment channel
     CLTV_SIG         = 0x0705, //!< SIG + CLTV combined: absolute-time locked payment
     TIMELOCKED_MULTISIG = 0x0706, //!< MULTISIG + CSV combined: time-delayed M-of-N
@@ -149,7 +149,7 @@ inline bool IsKnownBlockType(uint16_t b)
     case RungBlockType::CSV_TIME:
     case RungBlockType::CLTV:
     case RungBlockType::CLTV_TIME:
-    // Hash (HASH_PREIMAGE/HASH160_PREIMAGE deprecated — use HTLC, HASH_SIG, or HASH_GUARDED)
+    // Hash
     case RungBlockType::TAGGED_HASH:
     case RungBlockType::HASH_GUARDED:
     // Covenant
@@ -210,10 +210,6 @@ inline bool IsKnownBlockType(uint16_t b)
     case RungBlockType::P2TR_LEGACY:
     case RungBlockType::P2TR_SCRIPT_LEGACY:
         return true;
-    // Deprecated block types — explicitly false
-    case RungBlockType::HASH_PREIMAGE:
-    case RungBlockType::HASH160_PREIMAGE:
-        return false;
     }
     return false;
 }
@@ -296,8 +292,8 @@ inline std::string BlockTypeName(RungBlockType type)
     case RungBlockType::CSV_TIME:         return "CSV_TIME";
     case RungBlockType::CLTV:             return "CLTV";
     case RungBlockType::CLTV_TIME:        return "CLTV_TIME";
-    case RungBlockType::HASH_PREIMAGE:    return "HASH_PREIMAGE";
-    case RungBlockType::HASH160_PREIMAGE: return "HASH160_PREIMAGE";
+    case RungBlockType::RESERVED_0201:    return "RESERVED";
+    case RungBlockType::RESERVED_0202:    return "RESERVED";
     case RungBlockType::TAGGED_HASH:      return "TAGGED_HASH";
     case RungBlockType::HASH_GUARDED:     return "HASH_GUARDED";
     case RungBlockType::CTV:              return "CTV";
@@ -424,7 +420,7 @@ inline bool IsInvertibleBlockType(RungBlockType type)
     case RungBlockType::CSV_TIME:
     case RungBlockType::CLTV:
     case RungBlockType::CLTV_TIME:
-    // Hash (TAGGED_HASH only — HASH_PREIMAGE/HASH160_PREIMAGE deprecated)
+    // Hash
     case RungBlockType::TAGGED_HASH:
     // Covenant
     case RungBlockType::CTV:
@@ -691,9 +687,9 @@ inline constexpr uint16_t MICRO_HEADER_TABLE[MICRO_HEADER_SLOTS] = {
     0x0102, // 0x04: CSV_TIME
     0x0103, // 0x05: CLTV
     0x0104, // 0x06: CLTV_TIME
-    // Slot 7-9: Hash family (HASH_PREIMAGE/HASH160_PREIMAGE deprecated)
-    0xFFFF, // 0x07: (was HASH_PREIMAGE — deprecated)
-    0xFFFF, // 0x08: (was HASH160_PREIMAGE — deprecated)
+    // Slot 7-9: Hash family (0x07-0x08 reserved)
+    0xFFFF, // 0x07: reserved
+    0xFFFF, // 0x08: reserved
     0x0203, // 0x09: TAGGED_HASH
     // Slot 10-12: Covenant family
     0x0301, // 0x0A: CTV
@@ -824,7 +820,7 @@ inline constexpr ImplicitFieldLayout CLTV_CONDITIONS = CSV_CONDITIONS;
 /** CLTV_TIME conditions: [NUMERIC(varint)] */
 inline constexpr ImplicitFieldLayout CLTV_TIME_CONDITIONS = CSV_CONDITIONS;
 
-// HASH_PREIMAGE_CONDITIONS and HASH160_PREIMAGE_CONDITIONS removed (deprecated block types)
+// RESERVED_0201/RESERVED_0202: no layout (removed block types)
 
 /** TAGGED_HASH conditions: [HASH256(32), HASH256(32)] */
 inline constexpr ImplicitFieldLayout TAGGED_HASH_CONDITIONS = {2, {
@@ -1090,7 +1086,7 @@ inline constexpr ImplicitFieldLayout SIG_WITNESS = {2, {
 /** CSV witness: [NUMERIC(varint)] */
 inline constexpr ImplicitFieldLayout CSV_WITNESS = CSV_CONDITIONS;
 
-// HASH_PREIMAGE_WITNESS and HASH160_PREIMAGE_WITNESS removed (deprecated block types)
+// RESERVED_0201/RESERVED_0202: no layout (removed block types)
 
 /** TAGGED_HASH witness: [HASH256(32), HASH256(32), PREIMAGE(var)] */
 inline constexpr ImplicitFieldLayout TAGGED_HASH_WITNESS = {3, {
@@ -1153,7 +1149,7 @@ inline const ImplicitFieldLayout& GetImplicitLayout(RungBlockType type, uint8_t 
         case RungBlockType::CSV_TIME:         return CSV_TIME_CONDITIONS;
         case RungBlockType::CLTV:             return CLTV_CONDITIONS;
         case RungBlockType::CLTV_TIME:        return CLTV_TIME_CONDITIONS;
-        // HASH_PREIMAGE/HASH160_PREIMAGE: deprecated (removed from GetImplicitLayout)
+        // RESERVED_0201/RESERVED_0202: removed (no layout)
         case RungBlockType::TAGGED_HASH:      return TAGGED_HASH_CONDITIONS;
         case RungBlockType::HASH_GUARDED:     return HASH_GUARDED_CONDITIONS;
         case RungBlockType::CTV:              return CTV_CONDITIONS;
@@ -1227,7 +1223,7 @@ inline const ImplicitFieldLayout& GetImplicitLayout(RungBlockType type, uint8_t 
         case RungBlockType::CSV_TIME:         return CSV_WITNESS;
         case RungBlockType::CLTV:             return CSV_WITNESS;
         case RungBlockType::CLTV_TIME:        return CSV_WITNESS;
-        // HASH_PREIMAGE/HASH160_PREIMAGE: deprecated (removed from GetImplicitLayout)
+        // RESERVED_0201/RESERVED_0202: removed (no layout)
         case RungBlockType::TAGGED_HASH:      return TAGGED_HASH_WITNESS;
         case RungBlockType::HASH_GUARDED:     return HASH_GUARDED_WITNESS;
         case RungBlockType::CTV:              return CTV_WITNESS;

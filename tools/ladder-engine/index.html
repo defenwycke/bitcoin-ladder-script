@@ -2436,14 +2436,6 @@ const BLOCK_FAMILIES = [
   {
     name: 'HASH', color: '#00e676',
     blocks: [
-      { type: 'HASH_PREIMAGE', label: 'HASH_PRE', desc: 'DEPRECATED: Use HTLC, HASH_SIG, or HASH_GUARDED instead', deprecated: true, fields: [
-        { name: 'preimage', dataType: 'PREIMAGE', label: 'Preimage (secret)', placeholder: 'Hex data' },
-        { name: 'hash', dataType: 'HASH256', label: 'Hash (read-only)', placeholder: 'Auto-computed', computed: true }
-      ]},
-      { type: 'HASH160_PREIMAGE', label: 'HASH160', desc: 'DEPRECATED: Use HTLC, HASH_SIG, or HASH_GUARDED instead', deprecated: true, fields: [
-        { name: 'preimage', dataType: 'PREIMAGE', label: 'Preimage (secret)', placeholder: 'Hex data' },
-        { name: 'hash', dataType: 'HASH160', label: 'Hash (read-only)', placeholder: 'Auto-computed', computed: true }
-      ]},
       { type: 'TAGGED_HASH', label: 'TAGGED', desc: 'BIP-340 tagged hash verification', fields: [
         { name: 'tag', dataType: 'HASH256', label: 'Tag Hash', placeholder: '32-byte hex' },
         { name: 'hash', dataType: 'HASH256', label: 'Expected', placeholder: '32-byte hex' }
@@ -2744,10 +2736,8 @@ const BLOCK_RULES = {
   CSV_TIME: 'Relative timelock in seconds (BIP-68 time-based). Same logic as CSV but with time flag.',
   CLTV: 'Absolute timelock by block height (BIP-65). Satisfied when nLockTime >= specified height.',
   CLTV_TIME: 'Absolute timelock by median-time-past. Same logic as CLTV but compared against MTP.',
-  HASH_PREIMAGE: 'DEPRECATED. Rejected at consensus. Use HTLC, HASH_SIG, or HASH_GUARDED instead.',
-  HASH160_PREIMAGE: 'DEPRECATED. Rejected at consensus. Use HTLC, HASH_SIG, or HASH_GUARDED instead.',
   TAGGED_HASH: 'BIP-340 tagged hash: SHA256(tag || tag || preimage) must equal expected hash.',
-  HASH_GUARDED: 'Raw SHA-256 preimage verification. SHA256(preimage) must equal the committed hash. Non-invertible (fail-closed). Safe replacement for deprecated HASH_PREIMAGE.',
+  HASH_GUARDED: 'Raw SHA-256 preimage verification. SHA256(preimage) must equal the committed hash. Non-invertible (fail-closed).',
   CTV: 'BIP-119 CheckTemplateVerify. Spending transaction must match the committed template hash exactly.',
   VAULT_LOCK: 'Two-path vault: recovery key sweeps immediately, hot key requires CSV delay. No SIGNATURE = ERROR.',
   AMOUNT_LOCK: 'Satisfied when output amount is within [min, max] satoshis inclusive.',
