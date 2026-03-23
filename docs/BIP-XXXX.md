@@ -7,7 +7,6 @@ Type: Specification
 Layer: Consensus (soft fork)
 Assigned: ?
 License: MIT
-Requires: 119, 340, 341
 Discussion: 2026-03-16: https://groups.google.com/g/bitcoindev/c/0jEHXaQaeZw
 ```
 
