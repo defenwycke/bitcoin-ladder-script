@@ -1,5 +1,5 @@
 ```
-BIP: 110
+BIP: XXXX
 Layer: Consensus (soft fork)
 Title: Ladder Script: Typed Structured Transaction Conditions
 Author: Defenwycke <defenwycke@icloud.com>
@@ -827,7 +827,7 @@ Valid combinations: `{0x00-0x03, 0x40-0x43, 0x81-0x83, 0xC0-0xC3}`.
 
 #### Comparison with BIP-341 Hash Types
 
-| Feature                | BIP-341 (Taproot)       | BIP-110 (Ladder Script) |
+| Feature                | BIP-341 (Taproot)       | BIP-XXXX (Ladder Script) |
 |------------------------|-------------------------|--------------------------|
 | Base types             | DEFAULT, ALL, NONE, SINGLE | Same                  |
 | ANYONECANPAY           | `0x80` flag             | Same                     |
@@ -1292,7 +1292,7 @@ algorithm agility.
 
 ## Comparison with Existing Proposals
 
-| Feature                    | BIP-110 (Ladder Script) | BIP-119 (CTV) | BIP-118 (APO) | BIP-345 (OP_VAULT) | BIP-420 (OP_CAT) |
+| Feature                    | BIP-XXXX (Ladder Script) | BIP-119 (CTV) | BIP-118 (APO) | BIP-345 (OP_VAULT) | BIP-420 (OP_CAT) |
 |----------------------------|:-----------------------:|:--------------:|:--------------:|:-------------------:|:-----------------:|
 | Covenants                  | CTV + VAULT_LOCK + AMOUNT_LOCK + RECURSE_* + OUTPUT_CHECK | Template hash only | No | Vault-specific | Composable via stack |
 | Vaults                     | VAULT_LOCK (native)    | Via template chain | No | Native | Via composition |
