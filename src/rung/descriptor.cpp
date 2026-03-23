@@ -342,13 +342,14 @@ bool ParseAdaptorSig(ParseContext& ctx, RungBlock& block, std::vector<std::vecto
     rung_pks.push_back(pk2);
 
     block.type = RungBlockType::ADAPTOR_SIG;
-    RungScheme scheme = RungScheme::SCHNORR;
+    // ADAPTOR_SIG has nullptr conditions layout — no fields in conditions.
+    // Optional scheme argument is accepted but not stored in conditions
+    // (it's metadata for the signing path, not a wire field).
     SkipWhitespace(ctx);
     if (ctx.pos < ctx.desc.size() && ctx.desc[ctx.pos] == ',') {
         ++ctx.pos;
-        scheme = ParseScheme(ReadIdentifier(ctx));
+        ReadIdentifier(ctx); // consume scheme name but don't store
     }
-    block.fields.push_back({RungDataType::SCHEME, {static_cast<uint8_t>(scheme)}});
     return Expect(ctx, ')');
 }
 

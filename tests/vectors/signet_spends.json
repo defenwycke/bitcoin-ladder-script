@@ -168,6 +168,18 @@
       "spend_txid": "d9ef426f36f99e11f22b67b157db1c42c21de3133b3597d540f5f7f61f8c3231",
       "status": "verified",
       "date": "2026-03-22T21:17:00Z"
+    },
+    "ADAPTOR_SIG": {
+      "fund_txid": "c8e2ba31aeaed6fb3506e1a8559f070e4f7f7992f2658c4c7a99b1f249e5313a",
+      "spend_txid": "e0d6f8a00bdfaf5810a662456af03437925883b38e75112086fb169c07ce0e3b",
+      "status": "verified",
+      "date": "2026-03-23T01:30:00Z"
+    },
+    "PTLC": {
+      "fund_txid": "6092720726f54670005195d8fa0edb85a276f027aa8dc7838e52ee09be0df300",
+      "spend_txid": "f134a5b684f14051a3d96e8bf34d1f74b4d725881c6beda67a58bd1fdcd38ae1",
+      "status": "verified",
+      "date": "2026-03-23T01:45:00Z"
     }
   }
 }
