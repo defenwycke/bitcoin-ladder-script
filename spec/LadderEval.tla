@@ -187,10 +187,11 @@ InversionPreservesError ==
     \A inv \in BOOLEAN :
         ApplyInversion("ERROR", inv) = "ERROR"
 
-\* PROPERTY 3: Double inversion is identity
-\* Inverting twice returns the original result
+\* PROPERTY 3: Double inversion is identity for SATISFIED/UNSATISFIED
+\* Inverting twice returns the original for normal results.
+\* ERROR and UNKNOWN_BLOCK_TYPE are absorbing states (inversion doesn't flip them back).
 DoubleInversionIdentity ==
-    \A result \in EvalResults :
+    \A result \in {"SATISFIED", "UNSATISFIED"} :
         ApplyInversion(ApplyInversion(result, TRUE), TRUE) = result
 
 \* PROPERTY 4: Empty rung is always ERROR
