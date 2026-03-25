@@ -168,6 +168,25 @@ Inv_PubkeyDifferentiation ==
         \A pk1, pk2 \in PubKeyValues :
             pk1 # pk2 => LeafHash(lv, pk1) # LeafHash(lv, pk2)
 
+(***************************************************************************)
+(* TX_MLSC: Shared Tree Properties                                         *)
+(* In TX_MLSC, all outputs share one Merkle tree. Each rung leaf includes  *)
+(* a structural template (block types + coil with output_index) and a      *)
+(* value_commitment (hash of field values + pubkeys).                      *)
+(***************************************************************************)
+
+\* TX_MLSC P1: output_index in leaf means changing output_index changes the leaf
+\* (modeled as: different abstract output_index values → different leaves)
+Inv_OutputIndexBinding ==
+    \A lv \in LeafValues :
+        \A pk \in PubKeyValues :
+            \A oi1, oi2 \in 1..4 :
+                oi1 # oi2 => Hash(lv, oi1) # Hash(lv, oi2)
+
+\* TX_MLSC P2: creation proof root is deterministic from leaf data
+\* (same as Inv_RootDeterministic — the shared tree uses the same algorithm)
+Inv_SharedTreeDeterministic == Inv_RootDeterministic
+
 \* Combined
 SafetyInvariant ==
     /\ Inv_RootDeterministic
@@ -176,5 +195,7 @@ SafetyInvariant ==
     /\ Inv_WrongIndexFails
     /\ Inv_TamperEvidence
     /\ Inv_PubkeyDifferentiation
+    /\ Inv_OutputIndexBinding
+    /\ Inv_SharedTreeDeterministic
 
 =============================================================================

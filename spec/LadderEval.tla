@@ -266,9 +266,15 @@ RecurseSpec == RecurseInit /\ [][RecurseStep]_recurseDepth
 \* PREIMAGE fields are capped at MAX_PREIMAGE_FIELDS_PER_TX = 2 (across all inputs).
 \* DATA type is restricted to DATA_RETURN blocks only.
 \*
-\* This property is structural (enforced by deserialization) and cannot
-\* be fully modeled in TLA+ without the wire format. We assert the
-\* key invariant: key-consuming blocks cannot be inverted.
+\* TX_MLSC addition: conditions_root is protocol-derived from creation proof.
+\* leaf = TaggedHash(structural_template || value_commitment).
+\* structural_template: validated block types + inverted flags + coil (enums).
+\* value_commitment: SHA256(field_values || pubkeys) — hash output, not user-chosen.
+\* Total readable attacker data per transaction: 112 bytes (flat).
+\*
+\* This property is structural (enforced by deserialization + creation proof
+\* validation) and cannot be fully modeled in TLA+ without the wire format.
+\* We assert the key invariant: key-consuming blocks cannot be inverted.
 AntiSpamKeyInvariant == KeyConsumingNeverInvertible
 
 (***************************************************************************)

@@ -246,9 +246,13 @@ static constexpr unsigned int RUNG_VERIFY_MLSC_ONLY = (1U << 28); //!< Reject 0x
  *    - DATA_RETURN block (exactly one per transaction, max 80 bytes)
  *  No raw OP_RETURN, no legacy scriptPubKey types.
  *  Returns false with error on any invalid output. */
+/** @deprecated Legacy per-output MLSC validation. TX_MLSC uses ValidateCreationProof.
+ *  Retained for recursive covenant evaluators pending migration. */
 bool ValidateRungOutputs(const CTransaction& tx, unsigned int flags, std::string& error);
 
-/** Top-level verification entry point for v4 RUNG_TX transactions. */
+/** Top-level verification entry point for v4 RUNG_TX transactions.
+ *  TX_MLSC: validates creation proof, verifies spend proof against shared tree,
+ *  checks coil.output_index matches spent output. */
 bool VerifyRungTx(const CTransaction& tx,
                   unsigned int nIn,
                   const CTxOut& spent_output,
