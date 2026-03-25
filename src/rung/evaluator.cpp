@@ -3364,9 +3364,30 @@ bool VerifyRungTx(const CTransaction& tx,
         return false;
     }
 
-    // Consensus: validate all outputs are valid Ladder Script format.
-    // Runs per-input but is a cheap prefix check (O(n_outputs)).
-    {
+    // Consensus: validate outputs.
+    // TX_MLSC: validate creation proof (structural templates + root match).
+    // Legacy per-output MLSC: validate scriptPubKey format.
+    if (!tx.conditions_root.IsNull() && !tx.creation_proof.empty()) {
+        // TX_MLSC path: validate creation proof
+        CreationProof proof;
+        std::string cp_error;
+        if (!DeserializeCreationProof(tx.creation_proof, proof, cp_error)) {
+            LogPrintf("TX_MLSC creation proof deserialization failed: %s\n", cp_error);
+            if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
+            return false;
+        }
+        // Count non-DATA_RETURN outputs (DATA_RETURN has nValue == 0)
+        size_t n_spendable = 0;
+        for (const auto& out : tx.vout) {
+            if (out.nValue > 0) n_spendable++;
+        }
+        if (!ValidateCreationProof(proof, tx.conditions_root, n_spendable, cp_error)) {
+            LogPrintf("TX_MLSC creation proof validation failed: %s\n", cp_error);
+            if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
+            return false;
+        }
+    } else {
+        // Legacy per-output MLSC path
         std::string output_error;
         if (!ValidateRungOutputs(tx, flags, output_error)) {
             if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
@@ -3478,6 +3499,18 @@ bool VerifyRungTx(const CTransaction& tx,
             LogPrintf("MLSC proof failed: %s\n", verify_error);
             if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
             return false;
+        }
+
+        // TX_MLSC: verify the revealed rung's coil.output_index matches the output being spent.
+        // The coil.output_index is committed in the Merkle leaf — forging it breaks the proof.
+        if (!tx.conditions_root.IsNull()) {
+            uint32_t spent_vout = tx.vin[nIn].prevout.n;
+            if (witness_ladder.coil.output_index != spent_vout) {
+                LogPrintf("TX_MLSC coil.output_index %u != spent vout %u\n",
+                          witness_ladder.coil.output_index, spent_vout);
+                if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
+                return false;
+            }
         }
 
         // Build RungConditions from MLSC proof (1 rung + relays + coil)
