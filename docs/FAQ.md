@@ -293,8 +293,10 @@ Ladder Script enforces multiple layers of anti-spam protection:
    1-4 bytes. SCHEME: 1 byte. SCRIPT_BODY: 1-80 bytes. DATA: 1-40 bytes.
 
 2. **PREIMAGE/SCRIPT_BODY field cap**: Maximum 2 PREIMAGE or SCRIPT_BODY
-   fields per witness (`MAX_PREIMAGE_FIELDS_PER_WITNESS = 2`). This limits
-   user-chosen data to 64 bytes (2 x 32 bytes) per input.
+   fields per witness (`MAX_PREIMAGE_FIELDS_PER_WITNESS = 2`, fast reject).
+   The binding constraint is per-transaction: `MAX_PREIMAGE_FIELDS_PER_TX = 2`
+   sums across ALL inputs, preventing multi-input data embedding. Total
+   user-chosen preimage data: 64 bytes per transaction regardless of input count.
 
 3. **Data-embedding type rejection**: For blocks without an implicit layout,
    high-bandwidth data types (PUBKEY_COMMIT, HASH256, HASH160, DATA) are
@@ -327,7 +329,8 @@ Ladder Script enforces multiple layers of anti-spam protection:
    - `MAX_REQUIRES = 8` (relay_refs per rung or relay)
    - `MAX_RELAY_DEPTH = 4` (transitive chain depth)
    - `MAX_COIL_CONDITION_RUNGS = 0` (coil conditions reserved)
-   - `MAX_PREIMAGE_FIELDS_PER_WITNESS = 2`
+   - `MAX_PREIMAGE_FIELDS_PER_WITNESS = 2` (per-input fast reject)
+   - `MAX_PREIMAGE_FIELDS_PER_TX = 2` (per-transaction binding constraint)
    - `COIL_ADDRESS_HASH_SIZE = 32` (SHA256 of raw address)
 
 10. **Blanket HASH256 rejection**: In blocks without implicit layouts, HASH256
@@ -732,7 +735,8 @@ transaction. The maximum data payload is 80 bytes.
 | Max relays per ladder | 8 | `MAX_RELAYS` |
 | Max relay_refs per rung/relay | 8 | `MAX_REQUIRES` |
 | Max relay chain depth | 4 | `MAX_RELAY_DEPTH` |
-| Max PREIMAGE/SCRIPT_BODY fields | 2 | `MAX_PREIMAGE_FIELDS_PER_WITNESS` |
+| Max PREIMAGE/SCRIPT_BODY per witness | 2 | `MAX_PREIMAGE_FIELDS_PER_WITNESS` |
+| Max PREIMAGE/SCRIPT_BODY per tx | 2 | `MAX_PREIMAGE_FIELDS_PER_TX` |
 | Coil condition rungs | 0 (reserved) | `MAX_COIL_CONDITION_RUNGS` |
 | Coil address hash size | 32 bytes | `COIL_ADDRESS_HASH_SIZE` |
 | Max PUBKEY size | 2,048 bytes | `FieldMaxSize(PUBKEY)` |

@@ -14,9 +14,10 @@ EXTENDS Integers, Sequences, FiniteSets
 CONSTANTS
     MaxFields    \* Max fields per block for enumeration (e.g. 3)
 
-MAX_PREIMAGE_FIELDS == 2
-MAX_PREIMAGE_BYTES == 32  \* Each PREIMAGE is 32 bytes max
-MAX_EMBED_BYTES == MAX_PREIMAGE_FIELDS * MAX_PREIMAGE_BYTES  \* 64 bytes total
+MAX_PREIMAGE_FIELDS_PER_WITNESS == 2   \* Per-input fast reject
+MAX_PREIMAGE_FIELDS_PER_TX == 2        \* Per-transaction binding constraint
+MAX_PREIMAGE_BYTES == 32               \* Each PREIMAGE is 32 bytes max
+MAX_EMBED_BYTES == MAX_PREIMAGE_FIELDS_PER_TX * MAX_PREIMAGE_BYTES  \* 64 bytes total
 
 \* Block types: representative subset
 BlockTypesWithLayout == {"SIG", "CSV", "CLTV", "AMOUNT_LOCK", "MULTISIG"}
@@ -43,7 +44,7 @@ ValidateBlock(blockType, context, fieldTypes, preimageCount, layoutFieldCount, l
         fieldCount == Len(fieldTypes)
     IN
     \* P1: Preimage count limit
-    IF preimageCount > MAX_PREIMAGE_FIELDS THEN "REJECT_P1"
+    IF preimageCount > MAX_PREIMAGE_FIELDS_PER_TX THEN "REJECT_P1"
     \* P2: Data embedding in non-layout block (except ACCUMULATOR)
     ELSE IF blockType \notin BlockTypesWithLayout
             /\ blockType \notin DataReturnBlock
@@ -116,7 +117,7 @@ Inv_ResultValid ==
 
 \* P1: preimage count > MAX → always rejected
 Inv_PreimageLimitEnforced ==
-    preimageCount > MAX_PREIMAGE_FIELDS =>
+    preimageCount > MAX_PREIMAGE_FIELDS_PER_TX =>
         ValidateBlock(blockType, context, fieldSeq, preimageCount,
                       layoutFieldCount, layoutFieldSeq) = "REJECT_P1"
 
@@ -143,13 +144,13 @@ Inv_FieldCountMismatch ==
 
 \* P7: Total embeddable data bounded (structural: 2 PREIMAGE × 32 = 64 bytes)
 Inv_EmbedBound ==
-    MAX_PREIMAGE_FIELDS * MAX_PREIMAGE_BYTES = 64
+    MAX_PREIMAGE_FIELDS_PER_TX * MAX_PREIMAGE_BYTES = 64
 
 \* Accepted blocks have preimage count within limit
 Inv_AcceptedPreimageOk ==
     LET r == ValidateBlock(blockType, context, fieldSeq, preimageCount,
                            layoutFieldCount, layoutFieldSeq)
-    IN r = "ACCEPT" => preimageCount <= MAX_PREIMAGE_FIELDS
+    IN r = "ACCEPT" => preimageCount <= MAX_PREIMAGE_FIELDS_PER_TX
 
 \* Combined
 SafetyInvariant ==

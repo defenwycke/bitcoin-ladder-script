@@ -39,7 +39,7 @@ and Merkelized conditions (MLSC). Transactions use version 4 (`RUNG_TX_VERSION =
 | `src/rung/policy.cpp` | Mempool policy checks |
 | `src/rung/adaptor.h/cpp` | Adaptor signature utilities |
 | `src/rung/pq_verify.h/cpp` | Post-quantum signature verification |
-| `src/rung/rpc.cpp` | 12 RPC commands (decoderung, createrung, validateladder, createrungtx, signrungtx, computectvhash, generatepqkeypair, pqpubkeycommit, extractadaptorsecret, verifyadaptorpresig, parseladder, formatladder) |
+| `src/rung/rpc.cpp` | 14 RPC commands (decoderung, createrung, validateladder, createrungtx, signrungtx, signladder, computectvhash, computemutation, generatepqkeypair, pqpubkeycommit, extractadaptorsecret, verifyadaptorpresig, parseladder, formatladder) |
 
 ## Test Coverage
 
@@ -51,4 +51,4 @@ and Merkelized conditions (MLSC). Transactions use version 4 (`RUNG_TX_VERSION =
 
 ## Repository
 
-Source: [github.com/bitcoin-ghost/ghost](https://github.com/bitcoin-ghost/ghost)
+Source: [github.com/bitcoin-ghost/ghost-labs-ladder-script](https://github.com/bitcoin-ghost/ghost-labs-ladder-script)

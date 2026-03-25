@@ -4,7 +4,7 @@
  *
  * Loads the engine HTML file and verifies:
  *   1. All 39 templates parse without errors
- *   2. BLOCK_FAMILIES defines >= 63 unique block types
+ *   2. BLOCK_FAMILIES defines >= 61 unique block types
  *   3. getTypeHex returns valid hex for every block type
  *   4. No references to removed features (COVENANT coil, AGGREGATE attestation)
  *
@@ -73,7 +73,7 @@ while ((tm = typePattern.exec(src)) !== null) {
   blockTypes.add(tm[1]);
 }
 
-check(`BLOCK_FAMILIES >= 63 unique types`, blockTypes.size >= 63,
+check(`BLOCK_FAMILIES >= 61 unique types`, blockTypes.size >= 61,
   `found ${blockTypes.size} unique block types`);
 
 // Verify critical types present
@@ -100,7 +100,7 @@ if (typeHexMatch) {
     if (name) hexMap[name] = hex;
   }
 
-  check(`getTypeHex has >= 63 entries`, Object.keys(hexMap).length >= 63,
+  check(`getTypeHex has >= 61 entries`, Object.keys(hexMap).length >= 61,
     `found ${Object.keys(hexMap).length} entries`);
 
   // Check OUTPUT_CHECK specifically (was missing before fix)

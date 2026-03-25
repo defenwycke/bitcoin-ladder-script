@@ -27,12 +27,21 @@ static constexpr size_t MAX_BLOCKS_PER_RUNG = 8;
 static constexpr size_t MAX_FIELDS_PER_BLOCK = 16;
 /** Maximum total ladder witness size in bytes (must accommodate PQ signatures). */
 static constexpr size_t MAX_LADDER_WITNESS_SIZE = 100000;
-/** Maximum number of PREIMAGE/SCRIPT_BODY fields per ladder witness (consensus).
+/** Maximum number of PREIMAGE/SCRIPT_BODY fields per ladder witness (fast reject).
  *  Counts all PREIMAGE and SCRIPT_BODY fields across all block types including
  *  compounds (HTLC, HASH_SIG, P2SH_LEGACY, P2WSH_LEGACY, P2TR_SCRIPT_LEGACY)
  *  and hash-preimage binding for anchor/one-shot blocks.
- *  Limits user-chosen data to 64 bytes (2 * 32 bytes PREIMAGE). */
+ *  Per-witness check is a fast reject; the binding constraint is per-transaction. */
 static constexpr size_t MAX_PREIMAGE_FIELDS_PER_WITNESS = 2;
+/** Maximum number of PREIMAGE/SCRIPT_BODY fields per transaction (consensus).
+ *  Summed across ALL inputs. Prevents multi-input data embedding attacks where
+ *  an attacker creates N inputs each carrying preimage data. Legitimate use cases
+ *  (HTLC, atomic swap, HASH_SIG) never need >2 preimages per transaction. */
+static constexpr size_t MAX_PREIMAGE_FIELDS_PER_TX = 2;
+/** Minimum output value for non-DATA_RETURN MLSC outputs (consensus).
+ *  Prevents UTXO set bloat and cheap output-layer spam.
+ *  Matches current Bitcoin dust threshold for witness outputs. */
+static constexpr int64_t MIN_RUNG_OUTPUT_VALUE = 546;
 /** Coil address is carried as SHA256(raw_address) — 32 bytes, fixed.
  *  Raw address never goes on-chain. Wire format: 0 (no address) or 32 (hash). */
 static constexpr size_t COIL_ADDRESS_HASH_SIZE = 32;

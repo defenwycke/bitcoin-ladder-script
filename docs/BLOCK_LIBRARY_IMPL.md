@@ -36,7 +36,7 @@ Every parameter in every block must be one of the following enumerated types. No
 | `NUMERIC` | `0x08` | 1–4B | uint32 value | Timelocks, thresholds, counts, rates |
 | `SCHEME` | `0x09` | 1B exact | Enum value from RungScheme | Signature algorithm selector |
 
-**Key principle:** Type enforcement happens at the deserializer — before any cryptographic operation, before mempool admission, before everything. PUBKEY is witness-only; conditions use merkle_pub_key (keys folded into the Merkle leaf hash — no key field in conditions at all). PUBKEY_COMMIT is reserved and rejected in both contexts. The condition data types are: HASH256, HASH160, NUMERIC, SCHEME, SPEND_INDEX, DATA. Conditions contain zero user-chosen bytes. A maximum of 2 preimage-bearing fields (`MAX_PREIMAGE_FIELDS_PER_WITNESS = 2`) are permitted per witness. HASH_PREIMAGE and HASH160_PREIMAGE are deprecated and rejected at deserialization. The remaining preimage-bearing blocks are TAGGED_HASH and HASH_GUARDED. Compound blocks HTLC and HASH_SIG also consume PREIMAGE fields. This is what makes spam structurally impossible.
+**Key principle:** Type enforcement happens at the deserializer — before any cryptographic operation, before mempool admission, before everything. PUBKEY is witness-only; conditions use merkle_pub_key (keys folded into the Merkle leaf hash — no key field in conditions at all). PUBKEY_COMMIT is reserved and rejected in both contexts. The condition data types are: HASH256, HASH160, NUMERIC, SCHEME, SPEND_INDEX, DATA. Conditions contain zero user-chosen bytes. A maximum of 2 preimage-bearing fields are permitted per witness (`MAX_PREIMAGE_FIELDS_PER_WITNESS = 2`, fast reject) and per transaction (`MAX_PREIMAGE_FIELDS_PER_TX = 2`, binding constraint across all inputs). The preimage-bearing blocks are TAGGED_HASH and HASH_GUARDED. Compound blocks HTLC and HASH_SIG also consume PREIMAGE fields. Enum values `0x0201` and `0x0202` are reserved and rejected at deserialization. This is what makes spam structurally impossible.
 
 ---
 
@@ -189,36 +189,6 @@ CLTV by median-time-past. Locktime encodes Unix timestamp.
 ## 4. Hash Blocks
 
 Hash blocks verify preimage knowledge. Invertible hash blocks enable spend-if-NOT-revealed conditions — the refund path in HTLCs expressed as a first-class typed block.
-
----
-
-### `HASH_PREIMAGE` · `0x0201` — **DEPRECATED**
-
-> **DEPRECATED.** Rejected at deserialization. Use HTLC, HASH_SIG, or HASH_GUARDED instead. Standalone hash preimage blocks with invertible, writable hash fields created a data embedding surface.
-
-~~SHA-256 preimage reveal. Witness must contain a value P where SHA256(P) equals the committed hash.~~
-
-~~**Params:** `HASH256 expected_hash`~~
-
-~~**Invertible:** Yes~~
-
-~~**Use case:** HTLC payment reveal, atomic swap preimage, secret-gated spending~~
-
-~~**Inverted semantics:** Passes when preimage NOT revealed. HTLC refund path: `[SIG: Alice] [/HASH_PREIMAGE: H] [CSV: 144]` = Alice reclaims if Bob never revealed the secret.~~
-
----
-
-### `HASH160_PREIMAGE` · `0x0202` — **DEPRECATED**
-
-> **DEPRECATED.** Rejected at deserialization. Use HTLC, HASH_SIG, or HASH_GUARDED instead.
-
-~~HASH160 preimage reveal. SHA256 then RIPEMD160. Legacy compatible.~~
-
-~~**Params:** `HASH160 expected_hash`~~
-
-~~**Invertible:** Yes~~
-
-~~**Use case:** Legacy HTLC compatibility, Bitcoin script migration path~~
 
 ---
 
@@ -690,7 +660,6 @@ In PLC ladder logic, a normally closed contact `[/]` passes current when the con
 |---|---|---|
 | `[/CSV: N]` | Passes BEFORE N blocks elapsed | Dead man's switch, breach remedy window |
 | `[/CLTV: H]` | Passes BEFORE block height H | Spend deadline — must act before this date |
-| `[/HASH_PREIMAGE: H]` | *(Deprecated — use HTLC, HASH_SIG, or HASH_GUARDED)* | *(HASH_PREIMAGE rejected at deserialization)* |
 | `[/MULTISIG: n-of-m]` | Passes when n-of-m have NOT signed | Governance veto — board blocks CEO spend |
 | `[/SIG: key]` | Passes when key has NOT signed | Exclusion — anyone EXCEPT this key can spend |
 | `[/COMPARE: GT N]` | Passes when amount <= N | Small-amount fast path, large requires extra auth |
@@ -738,8 +707,8 @@ All block type enum values. Unrecognised blocks return `UNSATISFIED` — forward
 | `0x0102` | `CSV_TIME` | Timelock | Relative time timelock |
 | `0x0103` | `CLTV` | Timelock | Absolute block height timelock |
 | `0x0104` | `CLTV_TIME` | Timelock | Absolute time timelock |
-| `0x0201` | ~~`HASH_PREIMAGE`~~ | Hash | **Deprecated.** Rejected at deserialization. |
-| `0x0202` | ~~`HASH160_PREIMAGE`~~ | Hash | **Deprecated.** Rejected at deserialization. |
+| `0x0201` | *(reserved)* | Hash | Reserved. Rejected at deserialization. |
+| `0x0202` | *(reserved)* | Hash | Reserved. Rejected at deserialization. |
 | `0x0203` | `TAGGED_HASH` | Hash | BIP-340 tagged hash |
 | `0x0204` | `HASH_GUARDED` | Hash | Raw SHA-256 preimage verification (non-invertible) |
 | `0x0301` | `CTV` | Covenant | CheckTemplateVerify |

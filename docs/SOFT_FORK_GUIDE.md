@@ -108,7 +108,8 @@ transaction:
    - `MAX_BLOCKS_PER_RUNG = 8`
    - `MAX_FIELDS_PER_BLOCK = 16`
    - `MAX_LADDER_WITNESS_SIZE = 100000`
-   - `MAX_PREIMAGE_FIELDS_PER_WITNESS = 2`
+   - `MAX_PREIMAGE_FIELDS_PER_WITNESS = 2` (per-input fast reject)
+   - `MAX_PREIMAGE_FIELDS_PER_TX = 2` (per-transaction binding constraint)
    - `MAX_RELAYS = 8`, `MAX_RELAY_DEPTH = 4`
    - Known block types only (`IsKnownBlockType` returns true)
    - Non-invertible block types cannot have `inverted = true`

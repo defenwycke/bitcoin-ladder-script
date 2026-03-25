@@ -50,7 +50,8 @@ conditions hash (unless ANYPREVOUTANYSCRIPT).
 
 ### serialize.h / serialize.cpp
 Wire format. Key constants: MAX_RUNGS=16, MAX_BLOCKS_PER_RUNG=8, MAX_FIELDS_PER_BLOCK=16,
-MAX_LADDER_WITNESS_SIZE=100000, MAX_PREIMAGE_FIELDS_PER_WITNESS=2, MAX_RELAYS=8,
+MAX_LADDER_WITNESS_SIZE=100000, MAX_PREIMAGE_FIELDS_PER_WITNESS=2 (per-input),
+MAX_PREIMAGE_FIELDS_PER_TX=2 (per-transaction, binding), MAX_RELAYS=8,
 MAX_RELAY_DEPTH=4.
 - `DeserializeLadderWitness()`: fail-closed; rejects unknown types, deprecated blocks, non-invertible inversion, data-embedding types in layout-less blocks, trailing bytes
 - Diff witness mode: `n_rungs == 0` signals witness reference; diffs restricted to PUBKEY/SIGNATURE/PREIMAGE/SCRIPT_BODY/SCHEME

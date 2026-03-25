@@ -663,6 +663,7 @@ invertible. The inverted flag is set via the `0x81` escape byte.
 | MAX_FIELDS_PER_BLOCK            | 16      | `serialize.h`             |
 | MAX_LADDER_WITNESS_SIZE         | 100,000 | `serialize.h`             |
 | MAX_PREIMAGE_FIELDS_PER_WITNESS | 2       | `serialize.h`             |
+| MAX_PREIMAGE_FIELDS_PER_TX      | 2       | `serialize.h`             |
 | COIL_ADDRESS_HASH_SIZE          | 32      | `serialize.h`             |
 | MAX_RELAYS                      | 8       | `serialize.h`             |
 | MAX_REQUIRES                    | 8       | `serialize.h`             |
@@ -673,6 +674,7 @@ invertible. The inverted flag is set via the `0x81` escape byte.
 | SIGNATURE max size              | 50,000  | `types.h` (FieldMaxSize)  |
 | SCRIPT_BODY max size            | 80      | `types.h` (FieldMaxSize)  |
 | DATA max size                   | 40      | `types.h` (FieldMaxSize)  |
+| MIN_RUNG_OUTPUT_VALUE           | 546     | `serialize.h`             |
 | DATA_RETURN outputs per tx      | 1       | `evaluator.cpp`           |
 | Witness stack elements          | 2       | `evaluator.cpp`           |
 
@@ -765,8 +767,12 @@ of the witness for arbitrary data storage:
    layout-less blocks to embed unvalidated payloads.
 
 3. **PREIMAGE field limit.** At most `MAX_PREIMAGE_FIELDS_PER_WITNESS = 2`
-   PREIMAGE or SCRIPT_BODY fields are permitted per ladder witness. This
-   limits user-chosen data to 64 bytes (2 x 32-byte PREIMAGE).
+   PREIMAGE or SCRIPT_BODY fields are permitted per ladder witness (fast
+   reject). The binding constraint is `MAX_PREIMAGE_FIELDS_PER_TX = 2`,
+   which sums PREIMAGE/SCRIPT_BODY fields across ALL inputs in the
+   transaction. This prevents multi-input data embedding where an attacker
+   creates N inputs each carrying preimage data. Total user-chosen preimage
+   data is capped at 64 bytes per transaction regardless of input count.
 
 4. **DATA type restriction.** The DATA data type (`0x0B`) is only permitted
    in DATA_RETURN blocks. Any other block carrying a DATA field is rejected.

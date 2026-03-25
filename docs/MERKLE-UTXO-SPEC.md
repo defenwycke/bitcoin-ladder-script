@@ -584,7 +584,9 @@ collisions. A leaf hash can never be confused with an internal node hash.
 Blocks with implicit layouts have their field count and types enforced at
 deserialization. Blocks without implicit layouts reject data-embedding types
 (`IsDataEmbeddingType`). `PREIMAGE` and `SCRIPT_BODY` fields are capped at
-`MAX_PREIMAGE_FIELDS_PER_WITNESS = 2` across the entire witness.
+`MAX_PREIMAGE_FIELDS_PER_WITNESS = 2` per input (fast reject) and
+`MAX_PREIMAGE_FIELDS_PER_TX = 2` across all inputs in the transaction
+(binding constraint). This prevents multi-input data embedding.
 
 ---
 
@@ -601,7 +603,8 @@ deserialization. Blocks without implicit layouts reject data-embedding types
 | `MAX_REQUIRES` | 8 | `serialize.h:46` | Maximum relay refs per rung or relay |
 | `MAX_RELAY_DEPTH` | 4 | `serialize.h:48` | Maximum transitive relay chain depth |
 | `MAX_LADDER_WITNESS_SIZE` | 100,000 | `serialize.h:29` | Maximum witness size in bytes |
-| `MAX_PREIMAGE_FIELDS_PER_WITNESS` | 2 | `serialize.h:35` | Combined PREIMAGE + SCRIPT\_BODY cap |
+| `MAX_PREIMAGE_FIELDS_PER_WITNESS` | 2 | `serialize.h:35` | Per-input PREIMAGE + SCRIPT\_BODY fast reject |
+| `MAX_PREIMAGE_FIELDS_PER_TX` | 2 | `serialize.h:39` | Per-transaction PREIMAGE + SCRIPT\_BODY cap |
 | `MAX_COIL_CONDITION_RUNGS` | 0 | `serialize.h:42` | Coil conditions reserved (never evaluated) |
 | `COIL_ADDRESS_HASH_SIZE` | 32 | `serialize.h:38` | SHA256(address) fixed size |
 

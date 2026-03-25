@@ -509,8 +509,8 @@ The binary serialization of `LadderWitness`, defined in `serialize.h/cpp`. Struc
 type, followed by implicit or explicit fields. After rungs: coil (type + attestation +
 scheme + address + conditions + rung_destinations), then relays and per-rung relay_refs.
 Key constants: `MAX_RUNGS = 16`, `MAX_BLOCKS_PER_RUNG = 8`, `MAX_FIELDS_PER_BLOCK = 16`,
-`MAX_LADDER_WITNESS_SIZE = 100000`, `MAX_PREIMAGE_FIELDS_PER_WITNESS = 2`,
-`MAX_RELAYS = 8`, `MAX_RELAY_DEPTH = 4`.
+`MAX_LADDER_WITNESS_SIZE = 100000`, `MAX_PREIMAGE_FIELDS_PER_WITNESS = 2` (per-input),
+`MAX_PREIMAGE_FIELDS_PER_TX = 2` (per-transaction), `MAX_RELAYS = 8`, `MAX_RELAY_DEPTH = 4`.
 
 ### Witness Reference
 Struct `WitnessReference` in `types.h`. When `n_rungs == 0` on the wire, rungs and relays

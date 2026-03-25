@@ -263,7 +263,7 @@ RecurseSpec == RecurseInit /\ [][RecurseStep]_recurseDepth
 \* PROPERTY 10: No block type allows arbitrary data embedding
 \* Key-consuming blocks bind pubkeys to Merkle leaves (merkle_pub_key).
 \* Non-key blocks use implicit field layouts with fixed types.
-\* PREIMAGE fields are capped at MAX_PREIMAGE_FIELDS_PER_WITNESS = 2.
+\* PREIMAGE fields are capped at MAX_PREIMAGE_FIELDS_PER_TX = 2 (across all inputs).
 \* DATA type is restricted to DATA_RETURN blocks only.
 \*
 \* This property is structural (enforced by deserialization) and cannot
