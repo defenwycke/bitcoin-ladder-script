@@ -376,11 +376,10 @@ All recursive blocks enforce these at consensus level:
 
 Output inherits the identical rung set as the input. Covenant propagates forward unchanged.
 
-**Params:** `NUMERIC max_depth` · `SCHEME value_rule`
+**Params:** `NUMERIC max_depth`
 
 **Use case:** Perpetual custody rules, sustained governance covenants, channel state propagation
 
-**Note:** `value_rule` must be `VALUE_CONSERVED` or `VALUE_DECREASING`. `max_depth` is a hard ceiling — parse error without it.
 
 ---
 
@@ -400,7 +399,7 @@ Output inherits rung set with one typed mutation applied per recursion. The muta
 
 Recurse until a termination block height is reached. After that height the covenant terminates and coins are unconditionally free.
 
-**Params:** `NUMERIC until_height` · `SCHEME value_rule`
+**Params:** `NUMERIC until_height`
 
 **Use case:** Time-bounded custody, expiring governance rules, temporary spending restrictions
 
@@ -412,7 +411,7 @@ Recurse until a termination block height is reached. After that height the coven
 
 Recurse exactly N times. After N recursions the covenant terminates. Counter verifiable on-chain via sequence numbers.
 
-**Params:** `NUMERIC max_count` · `SCHEME value_rule`
+**Params:** `NUMERIC max_count`
 
 **Use case:** Fixed-term custody agreements, N-round DLC resolution, graduated vesting schedules
 
@@ -422,7 +421,7 @@ Recurse exactly N times. After N recursions the covenant terminates. Counter ver
 
 Split output value, each piece re-encumbers with the same rung set minus one recursion count. Enables streaming and pool exit patterns.
 
-**Params:** `NUMERIC max_splits` · `NUMERIC min_split_sats` · `SCHEME value_rule`
+**Params:** `NUMERIC max_splits` · `NUMERIC min_split_sats`
 
 **Use case:** Salary streaming, subscription payments, Ark pool participant exit, vesting releases
 
@@ -590,7 +589,7 @@ Comparators check relationships between values, enabling amount-conditional spen
 
 Evaluates a comparison between transaction amounts or block height and a threshold. Supports EQ, NEQ, GT, LT, GTE, LTE, IN_RANGE operators.
 
-**Params:** `SCHEME operator` · `NUMERIC value_b` · `NUMERIC value_c` (IN_RANGE upper bound)
+**Params:** `NUMERIC operator` · `NUMERIC value_b` · `NUMERIC value_c` (IN_RANGE upper bound)
 
 **Invertible:** Yes
 

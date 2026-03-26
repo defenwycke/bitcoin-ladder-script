@@ -18,7 +18,7 @@ Ladder Script replaces this with **typed function blocks** organised into **rung
 
 The name and structure are borrowed from ladder logic, the programming model used in industrial PLCs (programmable logic controllers) for decades. A spending policy is a ladder. Each rung is a possible spending path containing typed condition blocks. Blocks on the same rung are AND —all must be satisfied. Rungs are OR —the first satisfied rung authorises the spend.
 
-The output format is **MLSC** (Merkelized Ladder Script Conditions): a shared 33-byte commitment (`0xDF || conditions_root`) regardless of policy complexity. Only the exercised spending path is revealed at spend time. Unused paths stay permanently hidden. The UTXO footprint is 40 bytes per entry.
+The output format is **MLSC** (Merkelized Ladder Script Conditions): a shared 33-byte commitment (`0xDF || conditions_root`) regardless of policy complexity. Only the exercised spending path is revealed at spend time. Unused paths stay permanently hidden. Each UTXO entry stores its value (8 bytes) plus a reference to the shared conditions_root.
 
 Transaction version 4 (`RUNG_TX`). Soft fork activation —non-upgraded nodes see v4 as anyone-can-spend, the same upgrade path as SegWit and Taproot.
 

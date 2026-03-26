@@ -169,7 +169,7 @@ a:hover { text-decoration: underline; }
       <div class="byte-seg" style="background:var(--c-locktime);flex:1"><div class="seg-label">Locktime</div><div class="seg-size">4 B</div></div>
     </div>
 
-    <p>The witness stack has exactly 3 elements:</p>
+    <p>The per-input witness stack has exactly 2 elements:</p>
 
     <div class="detail">
       <div class="detail-head"><div class="detail-swatch" style="background:var(--c-witness)"></div><div class="detail-title">Witness Stack[0]: Ladder Witness</div></div>
@@ -181,10 +181,7 @@ a:hover { text-decoration: underline; }
       <p>The Merkle proof linking the revealed conditions to the conditions_root. Contains the rung index, revealed conditions, and sibling hashes.</p>
     </div>
 
-    <div class="detail">
-      <div class="detail-head"><div class="detail-swatch" style="background:var(--c-proof)"></div><div class="detail-title">Witness Stack[2]: Creation Proof</div></div>
-      <p>Validates that the conditions_root is protocol-derived. Proves the root was constructed from valid condition blocks, not arbitrary data.</p>
-    </div>
+    <p style="margin-top:12px">The <strong>creation proof</strong> is a separate per-transaction blob (not a per-input witness element). It validates that the conditions_root is protocol-derived from valid typed structure. It is carried after all per-input witness stacks in the TX_MLSC wire format (flag byte 0x02).</p>
   </div>
 
   <div class="section">
@@ -269,7 +266,7 @@ a:hover { text-decoration: underline; }
       <p><strong>3.</strong> Validates outputs are value-only (8 bytes each) with one conditions_root per tx</p>
       <p><strong>4.</strong> Deserialises witness stack[0] as LadderWitness</p>
       <p><strong>5.</strong> Deserialises witness stack[1] as MLSCProof</p>
-      <p><strong>6.</strong> Validates witness stack[2] as CreationProof (root is protocol-derived)</p>
+      <p><strong>6.</strong> Validates the per-transaction creation proof (root is protocol-derived)</p>
       <p><strong>7.</strong> Extracts pubkeys from witness blocks (merkle_pub_key)</p>
       <p><strong>8.</strong> Verifies Merkle proof against conditions_root</p>
       <p><strong>9.</strong> Merges conditions with witness into single structure</p>
