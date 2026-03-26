@@ -198,149 +198,176 @@ nav{position:sticky;top:0;z-index:100;background:rgba(0,0,0,.94);backdrop-filter
 <script>
 const S = [
 
-// === ACT 0: THE LADDER ===
+// ============================================================================
+// ACT 0: WHAT IS TX_MLSC
+// ============================================================================
 
-{act:0,t:"WHAT IS A LADDER?",s:"Rungs · Blocks · OR / AND logic",h:`
-<div class="desc">A <strong>Ladder Script</strong> transaction locks funds behind a <strong>ladder</strong> of spending conditions. The ladder has <strong>rungs</strong> — each rung is an independent spending path. Within each rung are <strong>blocks</strong> — each block is a single condition (signature, timelock, hash lock, etc).</div>
+{act:0,t:"WHAT IS A LADDER?",s:"Rungs (OR) / Blocks (AND) / Coil",h:`
+<div class="desc">A <strong>Ladder Script</strong> transaction locks funds behind a <strong>ladder</strong> of spending conditions. The ladder has <strong>rungs</strong> -- each rung is an independent spending path. Within each rung are <strong>blocks</strong> -- each block is a single condition (signature, timelock, hash lock, etc).</div>
 <div class="card blue">
 <div class="card-t">Logic Rules</div>
 <div class="desc" style="margin-bottom:0">
-<strong style="color:var(--nblue)">Between rungs: OR</strong> — any one rung can spend the output.<br>
-<strong style="color:var(--npurple)">Within a rung: AND</strong> — every block in the rung must be satisfied.<br>
-<strong style="color:var(--ngreen)">Coil</strong> — output metadata (unlock type, attestation mode). Always revealed at spend time.
+<strong style="color:var(--nblue)">Between rungs: OR</strong> -- any one rung can spend the output.<br>
+<strong style="color:var(--npurple)">Within a rung: AND</strong> -- every block in the rung must be satisfied.<br>
+<strong style="color:var(--ngreen)">Coil</strong> -- output metadata: coil_type, attestation, scheme, output_index. Each rung carries its own coil specifying which output it controls.
 </div>
 </div>
-<div class="desc" style="font-size:.72rem;color:#555">The spender reveals only the rung they use. All other rungs stay hidden behind SHA-256 proof hashes — permanently concealed.</div>
+<div class="desc" style="font-size:.72rem;color:#555">The spender reveals only the rung they use. All other rungs stay hidden behind SHA-256 proof hashes -- permanently concealed. This is the PLC model: one program, multiple output coils.</div>
 `},
 
-{act:0,t:"THE QUANTUM VAULT",s:"Rung 0 (Schnorr) · Rung 1 (FALCON512 + CSV) · Coil",h:`
-<div class="desc">This is how the vault looks in the <strong>Ladder Script Engine</strong> — blocks sit on rungs between power rails, wired in series. The coil at the end fires when all blocks on a rung are satisfied.</div>
+{act:0,t:"TX_MLSC: ONE TREE PER TX",s:"Transaction-level Merkelised Ladder Script Conditions",h:`
+<div class="desc">TX_MLSC is <strong>transaction-level</strong> commitment. Instead of one Merkle tree per output, the entire transaction shares a <strong>single conditions_root</strong>. Every rung becomes a leaf. Each rung's coil has an <code>output_index</code> field that binds it to a specific output.</div>
+<div class="card green">
+<div class="card-t">The PLC Model</div>
+<div class="desc" style="margin-bottom:0">
+Think of a PLC (Programmable Logic Controller): <strong>one program</strong>, multiple <strong>output coils</strong>.<br><br>
+A TX_MLSC transaction is the program. Each rung is a logic path. Each rung's coil fires a specific output via <code>output_index</code>. Multiple rungs can target the same output (OR paths), and different rungs can target different outputs within a single transaction.
+</div>
+</div>
+<div class="desc" style="font-size:.72rem;color:#555">Outputs store only 8 bytes (value). The shared 32-byte conditions_root lives at the transaction level. Total on-chain footprint: ~112 bytes regardless of conditions complexity.</div>
+`},
+
+{act:0,t:"THE LEAF FORMULA",s:"TaggedHash('LadderLeaf', structural_template || value_commitment)",h:`
+<div class="desc">Each rung becomes a <strong>leaf</strong> via a two-part hash. The <strong>structural template</strong> (block types, inversion flags, coil metadata) is public and validated at creation time. The <strong>value commitment</strong> (field values + pubkeys) is an opaque SHA-256 digest.</div>
+<div class="sv">
+<span class="lbl">Leaf = TaggedHash("LadderLeaf", template || value_commitment)</span>
+<span class="b s">structural_template</span><span class="bn">block types + inverted flags + coil (~10 bytes)</span><br>
+<span class="b v">value_commitment</span><span class="bn">SHA256(field_values || pubkeys) -- 32 bytes, opaque</span>
+</div>
+<div class="card purple">
+<div class="card-t">Why Two Parts?</div>
+<div class="desc" style="margin-bottom:0;font-size:.82rem">
+<strong style="color:var(--nblue)">Structural template</strong> -- validated at block acceptance. The node checks: are the block types known? Are inversion flags valid? Does output_index exist? This prevents invalid conditions from entering the UTXO set.<br><br>
+<strong style="color:var(--npurple)">Value commitment</strong> -- opaque at creation. A SHA-256 hash output, not attacker-chosen data. The actual field values and pubkeys are revealed only at spend time.
+</div>
+</div>
+`},
+
+{act:0,t:"CREATION PROOF",s:"Witness data validated at block acceptance, prunable afterward",h:`
+<div class="desc">The <strong>creation proof</strong> is carried in the transaction witness. It contains the structural templates and value commitments for every rung. Nodes validate it at block acceptance -- checking block types, coils, output coverage, and root match -- then it can be pruned (it's witness data).</div>
+<div class="card orange">
+<div class="card-t">CreationProof Structure</div>
+<div class="sv" style="margin:0;border:none;padding:.4rem 0">
+<span class="b s">n_rungs</span><span class="bn">CompactSize</span><br>
+for each rung:<br>
+&nbsp;&nbsp;<span class="b s">n_blocks</span><span class="bn">uint8</span><br>
+&nbsp;&nbsp;per block: <span class="b v">block_type</span><span class="bn">uint16 LE</span> + <span class="b v">inverted</span><span class="bn">uint8</span><br>
+&nbsp;&nbsp;<span class="b v">coil_type</span> <span class="b v">attestation</span> <span class="b v">scheme</span> <span class="b v">output_index</span> <span class="b v">has_address</span><br>
+&nbsp;&nbsp;<span class="b k">value_commitment</span><span class="bn">32 bytes -- SHA256(fields || pubkeys)</span>
+</div>
+</div>
+<div class="desc" style="font-size:.72rem;color:#555">ValidateCreationProof() checks: known block types, valid inversion, valid coil types, output_index &lt; n_outputs, every output has at least one rung, and computed root matches the transaction's conditions_root.</div>
+`},
+
+{act:0,t:"THE QUANTUM VAULT",s:"Rung 0 (Schnorr) / Rung 1 (FALCON512 + CSV) -- same output",h:`
+<div class="desc">Throughout this walkthrough we'll trace a <strong>quantum vault</strong> -- two spending paths targeting the same output. The coil at the end of each rung fires when all blocks on that rung are satisfied.</div>
 
 <div class="eng-ladder">
-  <div style="font-family:var(--mono);font-size:11px;color:#444;margin-bottom:8px;letter-spacing:1px">RUNG 0 — PRIMARY</div>
+  <div style="font-family:var(--mono);font-size:11px;color:#444;margin-bottom:8px;letter-spacing:1px">RUNG 0 -- PRIMARY (output_index: 0)</div>
   <div class="eng-rung">
     <div class="eng-rail eng-rail-l"></div>
     <div class="eng-wire"></div>
     <div class="eng-contact">
-      <span class="eng-bracket">─┤</span>
+      <span class="eng-bracket">--&#9508;</span>
       <div class="eng-body" style="border-top-color:var(--nblue)">
         <span class="eng-type" style="color:var(--nblue)">SIG</span>
-        <span class="eng-val">Schnorr · key A</span>
+        <span class="eng-val">Schnorr key A</span>
       </div>
-      <span class="eng-bracket">├─</span>
+      <span class="eng-bracket">&#9500;--</span>
     </div>
     <div class="eng-wire"></div>
-    <div class="eng-coil"><span class="eng-coil-sym">( )</span><span class="eng-coil-name">UNLOCK</span></div>
+    <div class="eng-coil"><span class="eng-coil-sym">( )</span><span class="eng-coil-name">OUT 0</span></div>
     <div class="eng-wire" style="width:8px"></div>
     <div class="eng-rail eng-rail-r"></div>
   </div>
 
   <div class="eng-or">OR</div>
 
-  <div style="font-family:var(--mono);font-size:11px;color:#444;margin-bottom:8px;letter-spacing:1px">RUNG 1 — RECOVERY</div>
+  <div style="font-family:var(--mono);font-size:11px;color:#444;margin-bottom:8px;letter-spacing:1px">RUNG 1 -- RECOVERY (output_index: 0)</div>
   <div class="eng-rung">
     <div class="eng-rail eng-rail-l"></div>
     <div class="eng-wire"></div>
     <div class="eng-contact">
-      <span class="eng-bracket">─┤</span>
+      <span class="eng-bracket">--&#9508;</span>
       <div class="eng-body" style="border-top-color:var(--npurple)">
         <span class="eng-type" style="color:var(--npurple)">SIG</span>
-        <span class="eng-val">FALCON512 · key D</span>
+        <span class="eng-val">FALCON512 key D</span>
       </div>
-      <span class="eng-bracket">├─</span>
+      <span class="eng-bracket">&#9500;--</span>
     </div>
     <div class="eng-wire"></div>
     <div class="eng-contact">
-      <span class="eng-bracket">─┤</span>
+      <span class="eng-bracket">--&#9508;</span>
       <div class="eng-body" style="border-top-color:var(--npurple)">
         <span class="eng-type" style="color:var(--npurple)">CSV</span>
         <span class="eng-val">1008 blocks</span>
       </div>
-      <span class="eng-bracket">├─</span>
+      <span class="eng-bracket">&#9500;--</span>
     </div>
     <div class="eng-wire"></div>
-    <div class="eng-coil"><span class="eng-coil-sym">( )</span><span class="eng-coil-name">UNLOCK</span></div>
+    <div class="eng-coil"><span class="eng-coil-sym">( )</span><span class="eng-coil-name">OUT 0</span></div>
     <div class="eng-wire" style="width:8px"></div>
     <div class="eng-rail eng-rail-r"></div>
   </div>
 </div>
 
-<div class="desc" style="margin-top:1rem;font-size:.82rem;color:#555"><strong style="color:var(--nblue)">Rung 0:</strong> 1 block (SIG Schnorr) — everyday spending.<br><strong style="color:var(--npurple)">Rung 1:</strong> 2 blocks (SIG FALCON512 <strong style="color:#555">AND</strong> CSV 1008) — quantum-safe recovery after ~1 week.<br><strong style="color:var(--ngreen)">Coil:</strong> UNLOCK · INLINE · SCHNORR — always revealed at spend time.</div>
+<div class="desc" style="margin-top:1rem;font-size:.82rem;color:#555"><strong style="color:var(--nblue)">Rung 0:</strong> 1 block (SIG Schnorr) -- everyday spending. Coil output_index = 0.<br><strong style="color:var(--npurple)">Rung 1:</strong> 2 blocks (SIG FALCON512 <strong style="color:#555">AND</strong> CSV 1008) -- quantum-safe recovery after ~1 week. Coil output_index = 0.<br><strong style="color:var(--ngreen)">Both rungs target output 0</strong> -- the PLC model: two paths, one output.</div>
 `},
 
-{act:0,t:"THE CHALLENGE",s:"How do we commit to this structure without revealing it?",h:`
-<div class="desc">The vault has 2 rungs, 3 blocks, a 33-byte Schnorr pubkey, a 897-byte FALCON512 pubkey, a CSV timelock, and a coil. All of this must be <strong>committed to on-chain</strong> so it can't be changed — but <strong>none of it should be visible</strong> until spent.</div>
-<div class="desc">The answer: <strong>TX_MLSC</strong> (Transaction-Level Merkelised Ladder Script Conditions). Every rung becomes a <strong>leaf</strong> in a Merkle tree. The leaves are <strong>SHA-256 digests</strong> of the serialised data + pubkeys. Only the 32-byte <strong>root</strong> goes on-chain.</div>
-<div class="desc">Let's trace every byte through this process.</div>
-`},
+// ============================================================================
+// ACT 1: FUND (CREATE TRANSACTION)
+// ============================================================================
 
-// === ACT 1: CREATION ===
-
-{act:1,t:"TRANSACTION SHELL",s:"createtxmlsc · version 4 · TX_MLSC format",h:`
-<div class="desc">The user calls <code>createtxmlsc</code>. The system creates a <code>CMutableTransaction</code> with <strong>version = 4</strong> (RUNG_TX_VERSION). Inputs are outpoints to spend. Outputs are values only (8 bytes each). Rungs specify conditions with output_index. TX_MLSC format uses flag byte 0x02. One shared conditions_root per transaction. Creation proof validated at block acceptance.</div>
+{act:1,t:"TRANSACTION SHELL",s:"createtxmlsc RPC / version 4 / flag 0x02",h:`
+<div class="desc">The user calls <code>createtxmlsc</code>. The system creates a <code>CMutableTransaction</code> with <strong>version = 4</strong> (RUNG_TX_VERSION). TX_MLSC format uses flag byte <code>0x02</code>. One shared <code>conditions_root</code> per transaction. Outputs are 8 bytes each (value only).</div>
 <div class="sv">
 <span class="lbl">Transaction skeleton</span>
 <span class="b s">version</span><span class="bn">= 4 (RUNG_TX_VERSION)</span><br>
+<span class="b s">flag</span><span class="bn">= 0x02 (TX_MLSC format)</span><br>
 <span class="b s">vin[]</span><span class="bn">input outpoints (txid + vout + sequence)</span><br>
-<span class="b s">vout[]</span><span class="bn">each output: 8 bytes (value only). Shared conditions_root per tx.</span><br>
+<span class="b s">vout[]</span><span class="bn">each output: 8 bytes (value only)</span><br>
+<span class="b v">conditions_root</span><span class="bn">32 bytes -- shared across all outputs</span><br>
+<span class="b k">creation_proof</span><span class="bn">witness -- templates + value_commitments</span><br>
 <span class="b s">nLockTime</span><span class="bn">optional, default 0</span>
 </div>
 `},
 
-{act:1,t:"RUNG 0 — BLOCK TYPE PARSING",s:'ParseBlockType("SIG") → 0x0001',h:`
+{act:1,t:"RUNG 0 -- BLOCK TYPE PARSING",s:'ParseBlockType("SIG") -> 0x0001',h:`
 <div class="desc">User specifies <code>{"type": "SIG"}</code>. The string is mapped to <code>RungBlockType::SIG</code> (0x0001).</div>
 <div class="card blue">
 <div class="card-t">Checks</div>
-<div class="chk ok"><span class="ic">✓</span> ParseBlockType("SIG") → RungBlockType::SIG (0x0001)</div>
-<div class="chk ok"><span class="ic">✓</span> IsKnownBlockType(0x0001) = true — one of 60 known types</div>
-<div class="chk ok"><span class="ic">✓</span> No "inverted" flag — default false</div>
-<div class="chk ok"><span class="ic">✓</span> IsKeyConsumingBlockType(SIG) = true — SIG consumes 1 pubkey</div>
-<div class="chk ok"><span class="ic">✓</span> IsInvertibleBlockType(SIG) = false — key-consuming blocks can NEVER be inverted</div>
+<div class="chk ok"><span class="ic">&#10003;</span> ParseBlockType("SIG") -> RungBlockType::SIG (0x0001)</div>
+<div class="chk ok"><span class="ic">&#10003;</span> IsKnownBlockType(0x0001) = true</div>
+<div class="chk ok"><span class="ic">&#10003;</span> No "inverted" flag -- default false</div>
+<div class="chk ok"><span class="ic">&#10003;</span> IsKeyConsumingBlockType(SIG) = true -- SIG consumes 1 pubkey</div>
+<div class="chk ok"><span class="ic">&#10003;</span> IsInvertibleBlockType(SIG) = false -- key-consuming blocks can NEVER be inverted</div>
 </div>
-<div class="co">If user tried "inverted": true on SIG → rejected: "Block type SIG cannot be inverted." This prevents garbage-pubkey data embedding via inversion (fail → invert → SATISFIED).</div>
+<div class="co">If user tried "inverted": true on SIG, it would be rejected. This prevents garbage-pubkey data embedding via inversion (fail -> invert -> SATISFIED).</div>
 `},
 
-{act:1,t:"RUNG 0 — PUBKEY INPUT",s:"33 bytes · compressed secp256k1 · prefix check",h:`
-<div class="desc">User provides <code>{"type": "PUBKEY", "hex": "02a3f2..."}</code>. The raw public key enters the system.</div>
+{act:1,t:"RUNG 0 -- PUBKEY INTERCEPT",s:"merkle_pub_key: pubkey collected, NOT stored in conditions",h:`
+<div class="desc">User provides a 33-byte compressed secp256k1 pubkey. Because <code>conditions_only = true</code> and the field type is PUBKEY, the system does NOT add it to the block's fields. The raw pubkey bytes are collected into a separate vector.</div>
 <div class="fs" style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:4px">
   <div class="fs-l" style="color:var(--npink)">PUBKEY</div>
   <div class="fs-m">
     <div class="hex">02a3f2c8...8d01b7e5</div>
-    <div class="note">33 bytes · compressed secp256k1</div>
-  </div>
-</div>
-<div class="card pink" style="margin-top:.5rem">
-<div class="card-t">Validation — RungField::IsValid()</div>
-<div class="chk ok"><span class="ic">✓</span> ParseDataType("PUBKEY") → RungDataType::PUBKEY (0x01)</div>
-<div class="chk ok"><span class="ic">✓</span> FieldMinSize(PUBKEY) = 1, FieldMaxSize(PUBKEY) = 2048 — size 33 passes</div>
-<div class="chk ok"><span class="ic">✓</span> Size == 33 → special check: data[0] must be 0x02 or 0x03 — prefix 0x02 passes</div>
-</div>
-`},
-
-{act:1,t:"RUNG 0 — PUBKEY INTERCEPT",s:"merkle_pub_key · pubkey collected, NOT stored in conditions",h:`
-<div class="desc">The PUBKEY field hits the <strong>intercept gate</strong>. Because <code>conditions_only = true</code> and field type is PUBKEY, the system does NOT add it to the block's fields. Instead, the raw pubkey bytes are collected into a separate vector.</div>
-<div class="fs" style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:4px">
-  <div class="fs-l" style="color:var(--npink)">PUBKEY</div>
-  <div class="fs-m">
-    <div class="hex">02a3f2c8...8d01b7e5</div>
-    <div class="note">33 bytes</div>
+    <div class="note">33 bytes -- compressed secp256k1</div>
   </div>
   <div class="fs-r">
     <span class="arrow">&#8594;</span>
-    <span class="action">INTERCEPTED<br>→ rung_pubkeys[0]<br>NOT in block.fields</span>
+    <span class="action">INTERCEPTED<br>-> rung_pubkeys[0]<br>NOT in block.fields</span>
   </div>
 </div>
-<div class="desc" style="margin-top:.75rem;font-size:.72rem;color:#555">The <code>continue</code> statement at rpc.cpp:369 skips adding this field to the block. The pubkey leaves the conditions structure entirely. It will be folded into the Merkle leaf hash later.</div>
-<div class="co">Why? Because there is no PUBKEY_COMMIT field in conditions anymore. The Merkle tree IS the commitment. No writable 32-byte pubkey slot exists for an attacker to stuff arbitrary data into.</div>
+<div class="co">Why? There is no PUBKEY_COMMIT field in conditions. The pubkey will be folded into the value_commitment hash. No writable 32-byte pubkey slot exists for an attacker to stuff arbitrary data into.</div>
 `},
 
-{act:1,t:"RUNG 0 — SCHEME INPUT",s:"1 byte · 6 valid values · stored in conditions",h:`
-<div class="desc">User provides <code>{"type": "SCHEME", "hex": "01"}</code> (SCHNORR).</div>
+{act:1,t:"RUNG 0 -- SCHEME FIELD",s:"1 byte / SCHNORR / stored in conditions",h:`
+<div class="desc">User provides <code>{"type": "SCHEME", "hex": "01"}</code> (SCHNORR). Unlike PUBKEY, the SCHEME field IS stored in the block's fields -- it's a condition data type.</div>
 <div class="fs" style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:4px">
   <div class="fs-l" style="color:var(--ncyan)">SCHEME</div>
   <div class="fs-m">
     <div class="hex">01</div>
-    <div class="note">1 byte · SCHNORR</div>
+    <div class="note">1 byte -- SCHNORR</div>
   </div>
   <div class="fs-r">
     <span class="arrow">&#8594;</span>
@@ -349,283 +376,278 @@ const S = [
 </div>
 <div class="card green" style="margin-top:.5rem">
 <div class="card-t">Validation</div>
-<div class="chk ok"><span class="ic">✓</span> FieldMinSize(SCHEME) = 1, FieldMaxSize(SCHEME) = 1 — size 1 passes</div>
-<div class="chk ok"><span class="ic">✓</span> IsKnownScheme(0x01) = true — SCHNORR is one of 6 known schemes</div>
-<div class="chk ok"><span class="ic">✓</span> IsConditionDataType(SCHEME) = true — allowed in conditions</div>
+<div class="chk ok"><span class="ic">&#10003;</span> IsConditionDataType(SCHEME) = true</div>
+<div class="chk ok"><span class="ic">&#10003;</span> IsKnownScheme(0x01) = true -- SCHNORR</div>
 </div>
-<div class="desc" style="font-size:.72rem;color:#555;margin-top:.5rem">Valid schemes: SCHNORR (0x01), ECDSA (0x02), FALCON512 (0x10), FALCON1024 (0x11), DILITHIUM3 (0x12), SPHINCS_SHA (0x13). Any other value → rejected.</div>
+<div class="desc" style="font-size:.72rem;color:#555;margin-top:.5rem">Valid schemes: SCHNORR (0x01), ECDSA (0x02), FALCON512 (0x10), FALCON1024 (0x11), DILITHIUM3 (0x12), SPHINCS_SHA (0x13).</div>
 `},
 
 {act:1,t:"PUBKEY_COMMIT REJECTION",s:"If someone tries to use PUBKEY_COMMIT...",h:`
 <div class="desc">What happens if a user (or attacker via RPC) tries <code>{"type": "PUBKEY_COMMIT", "hex": "..."}</code>?</div>
 <div class="card" style="border-color:rgba(255,34,68,.2)">
 <div class="card-t" style="color:var(--nred)">Two rejection layers</div>
-<div class="chk no"><span class="ic">✗</span> RPC layer: ParseDataType("PUBKEY_COMMIT") throws JSONRPCError — "PUBKEY_COMMIT is no longer a condition field"</div>
-<div class="chk no"><span class="ic">✗</span> Consensus layer: IsConditionDataType(PUBKEY_COMMIT) returns false — deserialization rejects it</div>
+<div class="chk no"><span class="ic">&#10007;</span> RPC layer: ParseDataType("PUBKEY_COMMIT") throws JSONRPCError -- "PUBKEY_COMMIT is no longer a condition field"</div>
+<div class="chk no"><span class="ic">&#10007;</span> Consensus layer: IsConditionDataType(PUBKEY_COMMIT) returns false -- deserialization rejects it</div>
 </div>
-<div class="desc" style="margin-top:.5rem;font-size:.72rem;color:#555">Even someone crafting a raw transaction and bypassing the RPC entirely cannot use PUBKEY_COMMIT — the consensus deserialization in <code>DeserializeMLSCProof</code> checks every field against <code>IsConditionDataType()</code> and rejects PUBKEY_COMMIT at the protocol level.</div>
+<div class="desc" style="margin-top:.5rem;font-size:.72rem;color:#555">Even someone crafting a raw transaction and bypassing the RPC entirely cannot use PUBKEY_COMMIT -- the consensus deserialization checks every field against <code>IsConditionDataType()</code> and rejects PUBKEY_COMMIT at the protocol level.</div>
 `},
 
-{act:1,t:"RUNG 1 — SIG FALCON512",s:"897-byte PQ public key · SCHEME 0x10",h:`
+{act:1,t:"RUNG 1 -- PQ KEY + CSV",s:"FALCON512 (897 bytes) + CSV (NUMERIC 1008)",h:`
+<div class="desc">Rung 1 has two blocks: a SIG block with a FALCON512 key, and a CSV timelock.</div>
 <div class="fs" style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:4px;margin-bottom:2px">
   <div class="fs-l" style="color:var(--npink)">PUBKEY</div>
   <div class="fs-m">
     <div class="hex">d41a...f702</div>
-    <div class="note">897 bytes · FALCON-512 <span class="cst ok">1 ≤ 897 ≤ 2048 ✓</span></div>
+    <div class="note">897 bytes -- FALCON-512 <span class="cst ok">1 &le; 897 &le; 2048 &#10003;</span></div>
   </div>
-  <div class="fs-r"><span class="arrow">&#8594;</span><span class="action">INTERCEPTED<br>→ rung_pubkeys[1]</span></div>
+  <div class="fs-r"><span class="arrow">&#8594;</span><span class="action">INTERCEPTED<br>-> rung_pubkeys[1]</span></div>
 </div>
-<div class="fs" style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:4px">
+<div class="fs" style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:4px;margin-bottom:2px">
   <div class="fs-l" style="color:var(--ncyan)">SCHEME</div>
   <div class="fs-m">
     <div class="hex">10</div>
-    <div class="note">FALCON512 <span class="cst ok">IsKnownScheme ✓</span></div>
+    <div class="note">FALCON512 <span class="cst ok">IsKnownScheme &#10003;</span></div>
   </div>
   <div class="fs-r"><span class="arrow">&#8594;</span><span class="action">STORED</span></div>
 </div>
-<div class="desc" style="margin-top:.5rem;font-size:.72rem;color:#555">Size 897 ≠ 33, so the compressed-key prefix check is skipped. FALCON512 keys have their own internal structure validation. The 897-byte key goes into rung_pubkeys[1] — not into conditions.</div>
-`},
-
-{act:1,t:"RUNG 1 — CSV BLOCK",s:"block type 0x0101 · NUMERIC 1008 · relative timelock",h:`
-<div class="card purple">
-<div class="card-t">Block Type</div>
-<div class="chk ok"><span class="ic">✓</span> ParseBlockType("CSV") → RungBlockType::CSV (0x0101)</div>
-<div class="chk ok"><span class="ic">✓</span> IsKnownBlockType(0x0101) = true</div>
-<div class="chk ok"><span class="ic">✓</span> IsKeyConsumingBlockType(CSV) = false — CSV doesn't consume pubkeys</div>
-<div class="chk ok"><span class="ic">✓</span> IsInvertibleBlockType(CSV) = true — timelocks CAN be inverted (useful for "spend before X")</div>
-</div>
-<div class="fs" style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:4px;margin-top:.5rem">
+<div class="fs" style="background:#0a0a0a;border:1px solid #1a1a1a;border-radius:4px">
   <div class="fs-l" style="color:var(--nyellow)">NUMERIC</div>
   <div class="fs-m">
     <div class="hex">F0 03</div>
-    <div class="note">2 bytes LE = 1008 blocks (~1 week) <span class="cst ok">1 ≤ 2 ≤ 4 ✓</span> <span class="cst ok">≤ 0xFFFFFFFF ✓</span></div>
+    <div class="note">2 bytes LE = 1008 blocks (~1 week) <span class="cst ok">CSV block &#10003;</span></div>
   </div>
-  <div class="fs-r"><span class="arrow">&#8594;</span><span class="action">STORED<br>varint on wire:<br>FD F0 03</span></div>
+  <div class="fs-r"><span class="arrow">&#8594;</span><span class="action">STORED</span></div>
 </div>
 `},
 
-{act:1,t:"COIL INPUT",s:"UNLOCK · INLINE · SCHNORR",h:`
+{act:1,t:"COIL WITH OUTPUT_INDEX",s:"Each rung carries a coil -- binds to output via output_index",h:`
+<div class="desc">In TX_MLSC, every rung has its own coil. The critical field is <code>output_index</code> -- it specifies which transaction output this rung controls. Both rungs in our vault target output 0.</div>
 <div class="card green">
-<div class="card-t">Coil Metadata</div>
+<div class="card-t">Coil Metadata (both rungs)</div>
 <div class="fs" style="background:#080808;margin-bottom:2px">
   <div class="fs-l" style="color:var(--ngreen)">coil_type</div>
-  <div class="fs-m"><div class="hex">01</div><div class="note">UNLOCK — standard spend</div></div>
+  <div class="fs-m"><div class="hex">01</div><div class="note">UNLOCK -- standard spend</div></div>
 </div>
 <div class="fs" style="background:#080808;margin-bottom:2px">
   <div class="fs-l" style="color:var(--ngreen)">attestation</div>
-  <div class="fs-m"><div class="hex">01</div><div class="note">INLINE — signatures in witness</div></div>
+  <div class="fs-m"><div class="hex">01</div><div class="note">INLINE -- signatures in witness</div></div>
 </div>
 <div class="fs" style="background:#080808;margin-bottom:2px">
   <div class="fs-l" style="color:var(--ngreen)">scheme</div>
   <div class="fs-m"><div class="hex">01</div><div class="note">SCHNORR</div></div>
 </div>
 <div class="fs" style="background:#080808;margin-bottom:2px">
-  <div class="fs-l" style="color:#333">address</div>
-  <div class="fs-m"><div class="note">empty (no destination constraint)</div></div>
+  <div class="fs-l" style="color:var(--ngreen)">output_index</div>
+  <div class="fs-m"><div class="hex">00</div><div class="note">Target: output 0</div></div>
 </div>
 <div class="fs" style="background:#080808">
-  <div class="fs-l" style="color:#333">conditions</div>
-  <div class="fs-m"><div class="note">none</div></div>
+  <div class="fs-l" style="color:#333">has_address</div>
+  <div class="fs-m"><div class="note">0x00 -- no destination constraint</div></div>
 </div>
 </div>
+<div class="co">ValidateCreationProof checks that every output has at least one rung assigned via output_index. Orphan outputs are rejected.</div>
 `},
 
-{act:1,t:"CONDITIONS SUMMARY",s:"What survived · What's separate",h:`
-<div class="desc">After all input processing, here's what we have:</div>
-<div class="card blue">
-<div class="card-t">Rung 0 conditions (SIG block)</div>
-<div style="font-family:var(--mono);font-size:.65rem;color:#888;padding:.2rem 0">fields: [<span style="color:var(--ncyan)">{SCHEME, 0x01}</span>] — 1 field, 1 byte</div>
-<div style="font-family:var(--mono);font-size:.65rem;color:var(--npink);padding:.2rem 0">pubkeys: [<span style="color:var(--npink)">33-byte compressed key</span>] — separate vector</div>
-</div>
-<div class="card purple">
-<div class="card-t">Rung 1 conditions (SIG + CSV blocks)</div>
-<div style="font-family:var(--mono);font-size:.65rem;color:#888;padding:.2rem 0">SIG fields: [<span style="color:var(--ncyan)">{SCHEME, 0x10}</span>] · CSV fields: [<span style="color:var(--nyellow)">{NUMERIC, 1008}</span>]</div>
-<div style="font-family:var(--mono);font-size:.65rem;color:var(--npink);padding:.2rem 0">pubkeys: [<span style="color:var(--npink)">897-byte FALCON512 key</span>] — separate vector</div>
-</div>
-<div class="desc" style="font-size:.72rem;color:#555;margin-top:.5rem">No PUBKEY_COMMIT anywhere. No raw pubkeys in conditions. The conditions contain only tiny typed values (SCHEME, NUMERIC). The pubkeys live in separate vectors, ready to be folded into Merkle leaves.</div>
-`},
-
-{act:1,t:"SERIALIZE RUNG 0",s:"SerializeRungBlocks → 4 bytes",h:`
-<div class="desc"><code>SerializeRungBlocks(rung_0, CONDITIONS)</code> converts the structure to bytes. SIG has micro-header slot 0 and an implicit field layout — minimal encoding.</div>
+{act:1,t:"SERIALIZE STRUCTURAL TEMPLATE",s:"SerializeStructuralTemplate -> ~8 bytes per rung",h:`
+<div class="desc"><code>SerializeStructuralTemplate()</code> encodes the <strong>public half</strong> of each rung: block types, inversion flags, and coil metadata. This is the part validated at creation time.</div>
 <div class="sv">
-<span class="lbl">Byte-by-byte output</span>
-<span class="b s">01</span><span class="bn">WriteCompactSize(1) — n_blocks = 1</span><br>
-<span class="b s">00</span><span class="bn">micro-header slot 0 → SIG (MICRO_HEADER_TABLE[0] = 0x0001)</span><br>
-<span class="b v">01</span><span class="bn">SCHEME = SCHNORR — implicit field, fixed_size=1, no type byte, no length prefix</span><br>
-<span class="b s">00</span><span class="bn">WriteCompactSize(0) — n_relay_refs = 0</span>
+<span class="lbl">Rung 0 template (~8 bytes)</span>
+<span class="b s">01</span><span class="bn">n_blocks = 1</span><br>
+<span class="b v">01 00</span><span class="bn">block_type = 0x0001 (SIG) -- uint16 LE</span>
+<span class="b v">00</span><span class="bn">inverted = false</span><br>
+<span class="b s">01</span><span class="bn">coil_type = UNLOCK</span>
+<span class="b s">01</span><span class="bn">attestation = INLINE</span>
+<span class="b s">01</span><span class="bn">scheme = SCHNORR</span>
+<span class="b s">00</span><span class="bn">output_index = 0</span>
+<span class="b s">00</span><span class="bn">has_address = false</span>
 </div>
-<div class="desc" style="font-size:.72rem;color:#555"><strong style="color:#fff">4 bytes total.</strong> The implicit layout (SIG_CONDITIONS = [{SCHEME, fixed 1}]) means no field count and no type bytes are needed. The micro-header compresses the 2-byte block type (0x0001) into 1 byte (0x00).</div>
-`},
-
-{act:1,t:"BUILD RUNG 0 LEAF",s:"4 bytes + 33-byte pubkey → SHA-256 → 32 bytes",h:`
-<div class="desc"><code>ComputeRungLeaf(rung_0, rung_pubkeys[0])</code> — the serialised bytes and the raw pubkey are hashed together into a single leaf.</div>
 <div class="sv">
-<span class="lbl">Hash input: serialised blocks (4) + pubkey (33) = 37 bytes</span>
-<span class="b s">01 00</span> <span class="b v">01</span> <span class="b s">00</span>
-<span style="color:#333;margin:0 .2rem">‖</span>
-<span class="b k">02 a3 f2 c8 ... 8d 01 b7 e5</span><span class="bn">← pubkey appended (merkle_pub_key)</span>
-</div>
-<div class="ha">
-<div class="fn">SHA256( SHA256("LadderLeaf") ‖ SHA256("LadderLeaf") ‖ 37 bytes )</div>
-<div class="ar">&#8595;</div>
-</div>
-<div class="leaf">
-<div class="n">&#1..327; rung_leaf_0</div>
-<div class="h">0x4a8c...b3d7</div>
-<div class="g">The SCHEME byte and the 33-byte pubkey are the preimage. They are gone. Only this 32-byte SHA-256 digest exists. Nobody can extract the pubkey from this hash.</div>
-</div>
-`},
-
-{act:1,t:"SERIALIZE RUNG 1",s:"SerializeRungBlocks → 8 bytes",h:`
-<div class="sv">
-<span class="lbl">Byte-by-byte output — 2 blocks (SIG + CSV)</span>
+<span class="lbl">Rung 1 template (~11 bytes)</span>
 <span class="b s">02</span><span class="bn">n_blocks = 2</span><br>
-<span class="b s">00</span><span class="bn">micro-header → SIG</span>
-<span class="b v">10</span><span class="bn">SCHEME = FALCON512 (implicit, fixed 1 byte)</span><br>
-<span class="b s">03</span><span class="bn">micro-header slot 3 → CSV</span>
-<span class="b v">FD F0 03</span><span class="bn">NUMERIC = 1008 (CompactSize varint: 1008 > 252 → 0xFD + uint16 LE)</span><br>
-<span class="b s">00</span><span class="bn">n_relay_refs = 0</span>
+<span class="b v">01 00</span><span class="bn">SIG (0x0001)</span>
+<span class="b v">00</span><span class="bn">not inverted</span>
+<span class="b v">01 01</span><span class="bn">CSV (0x0101)</span>
+<span class="b v">00</span><span class="bn">not inverted</span><br>
+<span class="b s">01 01 01 00 00</span><span class="bn">coil: UNLOCK / INLINE / SCHNORR / out:0 / no addr</span>
 </div>
-<div class="desc" style="font-size:.72rem;color:#555"><strong style="color:#fff">8 bytes.</strong> Two blocks, two micro-headers, two implicit field layouts. The entire recovery path — PQ signature + timelock — serializes to 8 bytes of conditions.</div>
 `},
 
-{act:1,t:"BUILD RUNG 1 LEAF",s:"8 bytes + 897-byte FALCON key → SHA-256 → 32 bytes",h:`
+{act:1,t:"COMPUTE VALUE COMMITMENTS",s:"SHA256(field_values || pubkeys) -> 32 bytes each",h:`
+<div class="desc"><code>ComputeValueCommitment()</code> hashes all field values from all blocks in layout order, then appends pubkeys. NUMERIC fields are normalized to 4-byte LE for consistent hashing regardless of original encoding.</div>
 <div class="sv">
-<span class="lbl">Hash input: rung bytes (8) + FALCON512 pubkey (897) = 905 bytes</span>
-<span class="b s">02 00</span> <span class="b v">10</span> <span class="b s">03</span> <span class="b v">FD F0 03</span> <span class="b s">00</span>
-<span style="color:#333;margin:0 .2rem">‖</span>
-<span class="b k">d4 1a ... f7 02</span><span class="bn">← 897-byte FALCON-512 key appended</span>
+<span class="lbl">Rung 0: SHA256(SCHEME_value || pubkey_A)</span>
+<span class="b v">01</span><span class="bn">SCHEME = SCHNORR (1 byte)</span>
+<span style="color:#333;margin:0 .2rem">||</span>
+<span class="b k">02 a3 f2 c8 ... 8d 01 b7 e5</span><span class="bn">33-byte pubkey</span>
 </div>
 <div class="ha">
-<div class="fn">TaggedHash("LadderLeaf", 905 bytes)</div>
+<div class="fn">SHA256(1 + 33 = 34 bytes)</div>
 <div class="ar">&#8595;</div>
 </div>
 <div class="leaf">
-<div class="n">&#1..327; rung_leaf_1</div>
+<div class="n">value_commitment_0</div>
+<div class="h">0x7b2e...c4f1</div>
+<div class="g">Opaque SHA-256 digest. Not attacker-chosen data.</div>
+</div>
+
+<div class="sv" style="margin-top:1rem">
+<span class="lbl">Rung 1: SHA256(SCHEME_value || NUMERIC_value || pubkey_D)</span>
+<span class="b v">10</span><span class="bn">SCHEME = FALCON512</span>
+<span class="b v">F0 03 00 00</span><span class="bn">NUMERIC = 1008 (normalized to 4-byte LE)</span>
+<span style="color:#333;margin:0 .2rem">||</span>
+<span class="b k">d4 1a ... f7 02</span><span class="bn">897-byte FALCON key</span>
+</div>
+<div class="ha">
+<div class="fn">SHA256(1 + 4 + 897 = 902 bytes)</div>
+<div class="ar">&#8595;</div>
+</div>
+<div class="leaf">
+<div class="n">value_commitment_1</div>
+<div class="h">0x3d91...a8b2</div>
+<div class="g">The 897-byte FALCON key, the SCHEME, the CSV timelock -- all compressed to 32 bytes.</div>
+</div>
+`},
+
+{act:1,t:"COMPUTE TX_MLSC LEAVES",s:"TaggedHash('LadderLeaf', template || value_commitment)",h:`
+<div class="desc"><code>ComputeTxMLSCLeaf()</code> combines the structural template and the value commitment into a single leaf via tagged hash. The LEAF_HASHER is a pre-computed copy of <code>TaggedHash("LadderLeaf")</code> prefix.</div>
+<div class="sv">
+<span class="lbl">Rung 0 leaf</span>
+<span class="b s">01 01 00 00 01 01 01 00 00</span><span class="bn">structural_template (~8 bytes)</span>
+<span style="color:#333;margin:0 .2rem">||</span>
+<span class="b k">7b 2e ... c4 f1</span><span class="bn">value_commitment (32 bytes)</span>
+</div>
+<div class="ha">
+<div class="fn">TaggedHash("LadderLeaf", ~40 bytes)</div>
+<div class="ar">&#8595;</div>
+</div>
+<div class="leaf">
+<div class="n">leaf_0</div>
+<div class="h">0x4a8c...b3d7</div>
+<div class="g">Rung 0: SIG Schnorr -- everyday spending path</div>
+</div>
+
+<div class="sv" style="margin-top:1rem">
+<span class="lbl">Rung 1 leaf</span>
+<span class="b s">02 01 00 00 01 01 00 01 01 01 00 00</span><span class="bn">structural_template (~11 bytes)</span>
+<span style="color:#333;margin:0 .2rem">||</span>
+<span class="b k">3d 91 ... a8 b2</span><span class="bn">value_commitment (32 bytes)</span>
+</div>
+<div class="ha">
+<div class="fn">TaggedHash("LadderLeaf", ~43 bytes)</div>
+<div class="ar">&#8595;</div>
+</div>
+<div class="leaf">
+<div class="n">leaf_1</div>
 <div class="h">0x91e5...20ac</div>
-<div class="g">905 bytes — the FALCON512 key, the SCHEME, the CSV timelock — all compressed into 32 bytes. An observer cannot tell this was a post-quantum recovery path with a 1-week timelock.</div>
+<div class="g">Rung 1: FALCON512 + CSV 1008 -- quantum-safe recovery</div>
 </div>
 `},
 
-{act:1,t:"SERIALIZE & BUILD COIL LEAF",s:"5 bytes → SHA-256 → 32 bytes · no pubkeys",h:`
-<div class="sv">
-<span class="lbl">SerializeCoilData → 5 bytes</span>
-<span class="b v">01</span><span class="bn">UNLOCK</span>
-<span class="b v">01</span><span class="bn">INLINE</span>
-<span class="b v">01</span><span class="bn">SCHNORR</span>
-<span class="b s">00</span><span class="bn">addr_len = 0</span>
-<span class="b s">00</span><span class="bn">n_conditions = 0</span>
-</div>
-<div class="ha">
-<div class="fn">TaggedHash("LadderLeaf", 5 bytes) — no pubkeys appended to coil</div>
-<div class="ar">&#8595;</div>
-</div>
-<div class="leaf">
-<div class="n">&#1..327; coil_leaf</div>
-<div class="h">0xf7c2...8891</div>
-</div>
-`},
-
-{act:1,t:"ASSEMBLE LEAVES",s:"3 leaves · ordered: rungs, then coil",h:`
-<div class="desc"><code>ComputeConditionsRoot()</code> collects leaves in fixed order: <strong>rung leaves</strong> (index 0, 1, ...) then <strong>relay leaves</strong> (none here) then <strong>coil leaf</strong> (always last).</div>
+{act:1,t:"BUILD SHARED MERKLE TREE",s:"ComputeTxMLSCRoot -- sorted interior nodes, power-of-2 padding",h:`
+<div class="desc"><code>ComputeTxMLSCRoot()</code> collects all rung leaves (no separate coil leaf -- the coil is embedded in each rung's template), pads to next power of 2 with <code>MLSC_EMPTY_LEAF</code>, and builds the tree with sorted interior nodes.</div>
 <div style="display:flex;gap:.5rem;margin:.75rem 0;flex-wrap:wrap">
-<div class="leaf" style="flex:1;min-width:150px"><div class="n">&#1..327; leaves[0]</div><div class="h" style="font-size:.7rem">0x4a8c...b3d7</div><div class="g">Rung 0 · SIG Schnorr</div></div>
-<div class="leaf" style="flex:1;min-width:150px"><div class="n">&#1..327; leaves[1]</div><div class="h" style="font-size:.7rem">0x91e5...20ac</div><div class="g">Rung 1 · FALCON + CSV</div></div>
-<div class="leaf" style="flex:1;min-width:150px"><div class="n">&#1..327; leaves[2]</div><div class="h" style="font-size:.7rem">0xf7c2...8891</div><div class="g">Coil · UNLOCK</div></div>
+<div class="leaf" style="flex:1;min-width:150px"><div class="n">leaves[0]</div><div class="h" style="font-size:.7rem">0x4a8c...b3d7</div><div class="g">Rung 0 -- SIG Schnorr</div></div>
+<div class="leaf" style="flex:1;min-width:150px"><div class="n">leaves[1]</div><div class="h" style="font-size:.7rem">0x91e5...20ac</div><div class="g">Rung 1 -- FALCON + CSV</div></div>
 </div>
-`},
-
-{act:1,t:"PAD TO POWER OF 2",s:"3 leaves → 4 · EMPTY_LEAF padding",h:`
-<div class="desc"><code>BuildMerkleTree()</code> — <code>NextPowerOf2(3) = 4</code>. Pad with <code>MLSC_EMPTY_LEAF = TaggedHash("LadderLeaf", "")</code>. This is a nothing-up-my-sleeve constant — it cannot collide with any valid leaf because valid serialised data has minimum length requirements.</div>
-<div style="display:flex;gap:.5rem;margin:.75rem 0;flex-wrap:wrap">
-<div class="leaf" style="flex:1;min-width:120px"><div class="n" style="font-size:.6rem">leaves[0]</div><div class="h" style="font-size:.62rem">0x4a8c...b3d7</div></div>
-<div class="leaf" style="flex:1;min-width:120px"><div class="n" style="font-size:.6rem">leaves[1]</div><div class="h" style="font-size:.62rem">0x91e5...20ac</div></div>
-<div class="leaf" style="flex:1;min-width:120px"><div class="n" style="font-size:.6rem">leaves[2]</div><div class="h" style="font-size:.62rem">0xf7c2...8891</div></div>
-<div style="flex:1;min-width:120px;background:#0a0a0a;border:1px dashed #222;border-radius:7px;padding:.9rem 1rem;font-family:var(--mono);font-size:.6rem;color:#333;text-align:center">leaves[3]<br>EMPTY_LEAF<br><span style="font-size:.5rem">padding</span></div>
-</div>
-`},
-
-{act:1,t:"BUILD INTERIOR NODES",s:"Sorted children · LadderInternal tag · domain separation",h:`
-<div class="desc"><code>MerkleInterior(a, b)</code>: compare a and b lexicographically. Place smaller left, larger right. Hash: <code>TaggedHash("LadderInternal", min(a,b) ‖ max(a,b))</code>.</div>
+<div class="desc" style="font-size:.72rem;color:#555"><code>NextPowerOf2(2) = 2</code> -- already a power of 2, no padding needed. Interior hashing: sort children lexicographically, then <code>TaggedHash("LadderInternal", min(a,b) || max(a,b))</code>.</div>
 <div class="sv">
-<span class="lbl">Level 1: two interior nodes</span>
-<span class="b s">node_left</span> = TaggedHash("LadderInternal", sorted(leaf_0, leaf_1))<br>
-<span class="b s">node_right</span> = TaggedHash("LadderInternal", sorted(coil_leaf, EMPTY_LEAF))
+<span class="lbl">Root</span>
+<span class="b v">conditions_root</span> = TaggedHash("LadderInternal", sorted(leaf_0, leaf_1))
 </div>
-<div class="sv">
-<span class="lbl">Level 0: root</span>
-<span class="b v">conditions_root</span> = TaggedHash("LadderInternal", sorted(node_left, node_right))
-</div>
-<div class="desc" style="font-size:.72rem;color:#555;margin-top:.5rem"><strong style="color:#fff">Domain separation:</strong> Leaf tag = "LadderLeaf", Interior tag = "LadderInternal". The 64-byte tag prefix is different, so a valid leaf hash can NEVER collide with a valid interior hash. This follows BIP-341 (Taproot) convention.</div>
+<div class="desc" style="font-size:.72rem;color:#555;margin-top:.5rem"><strong style="color:#fff">Domain separation:</strong> Leaf tag = "LadderLeaf", Interior tag = "LadderInternal". A valid leaf hash can NEVER collide with a valid interior hash. This follows BIP-341 (Taproot) convention.</div>
 `},
 
-{act:1,t:"THE MERKLE TREE",s:"Visual",h:`
+{act:1,t:"THE MERKLE TREE",s:"Visual -- 2 rung leaves, 1 shared root",h:`
 <div class="tree">
-<svg viewBox="0 0 700 280">
-  <line x1="350" y1="48" x2="185" y2="108" stroke="#1a1a1a" stroke-width="1.5"/>
-  <line x1="350" y1="48" x2="515" y2="108" stroke="#1a1a1a" stroke-width="1.5"/>
-  <line x1="185" y1="142" x2="95" y2="192" stroke="#111" stroke-width="1"/>
-  <line x1="185" y1="142" x2="275" y2="192" stroke="#111" stroke-width="1"/>
-  <line x1="515" y1="142" x2="425" y2="192" stroke="#111" stroke-width="1"/>
-  <line x1="515" y1="142" x2="605" y2="192" stroke="#111" stroke-width="1"/>
-  <rect x="268" y="14" width="164" height="38" rx="5" fill="#000" stroke="#00ff88" stroke-width="2"/>
+<svg viewBox="0 0 700 220">
+  <line x1="350" y1="48" x2="185" y2="128" stroke="#1a1a1a" stroke-width="1.5"/>
+  <line x1="350" y1="48" x2="515" y2="128" stroke="#1a1a1a" stroke-width="1.5"/>
+
+  <rect x="248" y="14" width="204" height="38" rx="5" fill="#000" stroke="#00ff88" stroke-width="2"/>
   <text x="350" y="32" text-anchor="middle" fill="#00ff88" font-size="10" font-weight="600" style="filter:drop-shadow(0 0 5px rgba(0,255,136,.3))">conditions_root</text>
-  <text x="350" y="45" text-anchor="middle" fill="#333" font-size="7">32 bytes</text>
-  <rect x="110" y="104" width="150" height="42" rx="5" fill="#050505" stroke="#222"/>
-  <text x="185" y="122" text-anchor="middle" fill="#444" font-size="7">"LadderInternal"</text>
-  <text x="185" y="137" text-anchor="middle" fill="#aaa" font-size="8.5">H(sorted(L0, L1))</text>
-  <rect x="440" y="104" width="150" height="42" rx="5" fill="#050505" stroke="#222"/>
-  <text x="515" y="122" text-anchor="middle" fill="#444" font-size="7">"LadderInternal"</text>
-  <text x="515" y="137" text-anchor="middle" fill="#aaa" font-size="8.5">H(sorted(L2, L3))</text>
-  <rect x="25" y="188" width="140" height="52" rx="5" fill="#050505" stroke="#00d4ff" stroke-width="1.5"/>
-  <text x="95" y="206" text-anchor="middle" fill="#00d4ff" font-size="7.5">&#1..327; rung_leaf_0</text>
-  <text x="95" y="220" text-anchor="middle" fill="#b366ff" font-size="7">0x4a8c...b3d7</text>
-  <text x="95" y="234" text-anchor="middle" fill="#333" font-size="6">SIG + pubkey_A</text>
-  <rect x="205" y="188" width="140" height="52" rx="5" fill="#050505" stroke="#b366ff" stroke-width="1.5"/>
-  <text x="275" y="206" text-anchor="middle" fill="#b366ff" font-size="7.5">&#1..327; rung_leaf_1</text>
-  <text x="275" y="220" text-anchor="middle" fill="#b366ff" font-size="7">0x91e5...20ac</text>
-  <text x="275" y="234" text-anchor="middle" fill="#333" font-size="6">FALCON + CSV + pubkey_D</text>
-  <rect x="355" y="188" width="140" height="52" rx="5" fill="#050505" stroke="#00ff88" stroke-width="1.5"/>
-  <text x="425" y="206" text-anchor="middle" fill="#00ff88" font-size="7.5">&#1..327; coil_leaf</text>
-  <text x="425" y="220" text-anchor="middle" fill="#b366ff" font-size="7">0xf7c2...8891</text>
-  <text x="425" y="234" text-anchor="middle" fill="#333" font-size="6">UNLOCK INLINE</text>
-  <rect x="535" y="188" width="140" height="52" rx="5" fill="#050505" stroke="#1a1a1a" stroke-dasharray="4"/>
-  <text x="605" y="210" text-anchor="middle" fill="#222" font-size="7.5">EMPTY_LEAF</text>
-  <text x="605" y="226" text-anchor="middle" fill="#1a1a1a" font-size="6.5">padding</text>
-  <text x="350" y="262" text-anchor="middle" fill="#333" font-size="7">Leaf: "LadderLeaf" tag · Interior: "LadderInternal" tag — domain separation</text>
-  <text x="350" y="275" text-anchor="middle" fill="#222" font-size="6.5">Children sorted lexicographically before hashing</text>
+  <text x="350" y="45" text-anchor="middle" fill="#333" font-size="7">32 bytes -- shared across all outputs</text>
+
+  <rect x="55" y="120" width="260" height="52" rx="5" fill="#050505" stroke="#00d4ff" stroke-width="1.5"/>
+  <text x="185" y="140" text-anchor="middle" fill="#00d4ff" font-size="8">leaf_0 -- Rung 0</text>
+  <text x="185" y="154" text-anchor="middle" fill="#b366ff" font-size="7">TaggedHash(template_0 || vc_0)</text>
+  <text x="185" y="167" text-anchor="middle" fill="#333" font-size="6">SIG Schnorr + pubkey_A -- output 0</text>
+
+  <rect x="385" y="120" width="260" height="52" rx="5" fill="#050505" stroke="#b366ff" stroke-width="1.5"/>
+  <text x="515" y="140" text-anchor="middle" fill="#b366ff" font-size="8">leaf_1 -- Rung 1</text>
+  <text x="515" y="154" text-anchor="middle" fill="#b366ff" font-size="7">TaggedHash(template_1 || vc_1)</text>
+  <text x="515" y="167" text-anchor="middle" fill="#333" font-size="6">FALCON512 + CSV 1008 + pubkey_D -- output 0</text>
+
+  <text x="350" y="200" text-anchor="middle" fill="#333" font-size="7">Leaf: TaggedHash("LadderLeaf", template || value_commitment)</text>
+  <text x="350" y="213" text-anchor="middle" fill="#222" font-size="6.5">Interior: children sorted lexicographically before hashing</text>
 </svg>
 </div>
 `},
 
-{act:1,t:"OUTPUT CREATION",s:"TX_MLSC: 8 bytes per output + shared root",h:`
-<div class="desc"><code>CreateMLSCScript(root)</code> — push prefix byte 0xDF (RUNG_MLSC_PREFIX), append 32-byte root.</div>
+{act:1,t:"CREATION PROOF IN WITNESS",s:"Templates + value_commitments -- validated at block acceptance",h:`
+<div class="desc">The creation proof is serialized into the transaction witness. It carries the structural templates and opaque value commitments for every rung. Nodes validate this at block acceptance time.</div>
+<div class="sv">
+<span class="lbl">SerializeCreationProof -- wire format</span>
+<span class="b s">02</span><span class="bn">n_rungs = 2</span><br>
+<span class="b v">01</span><span class="bn">rung 0: n_blocks = 1</span>
+<span class="b v">01 00 00</span><span class="bn">SIG (0x0001) + not inverted</span>
+<span class="b v">01 01 01 00 00</span><span class="bn">coil: UNLOCK/INLINE/SCHNORR/out:0/no_addr</span>
+<span class="b k">7b 2e ... c4 f1</span><span class="bn">value_commitment_0 (32 bytes)</span><br>
+<span class="b v">02</span><span class="bn">rung 1: n_blocks = 2</span>
+<span class="b v">01 00 00</span><span class="bn">SIG + not inverted</span>
+<span class="b v">01 01 00</span><span class="bn">CSV + not inverted</span>
+<span class="b v">01 01 01 00 00</span><span class="bn">coil: UNLOCK/INLINE/SCHNORR/out:0/no_addr</span>
+<span class="b k">3d 91 ... a8 b2</span><span class="bn">value_commitment_1 (32 bytes)</span>
+</div>
+<div class="card blue">
+<div class="card-t">ValidateCreationProof checks</div>
+<div class="chk ok"><span class="ic">&#10003;</span> All block types known: SIG (0x0001), CSV (0x0101)</div>
+<div class="chk ok"><span class="ic">&#10003;</span> Inversion flags valid: 0 on all blocks</div>
+<div class="chk ok"><span class="ic">&#10003;</span> Coil types known: UNLOCK, INLINE</div>
+<div class="chk ok"><span class="ic">&#10003;</span> output_index < n_outputs: 0 < 1</div>
+<div class="chk ok"><span class="ic">&#10003;</span> Every output covered: output 0 has rungs 0 and 1</div>
+<div class="chk ok"><span class="ic">&#10003;</span> ComputeTxMLSCRoot(proof) == tx.conditions_root</div>
+</div>
+`},
+
+{act:1,t:"OUTPUT FORMAT",s:"8 bytes per output + one shared conditions_root per tx",h:`
 <div class="out">
-<div class="pre">TX_MLSC output (value only)</div>
-<div class="val">0xDF ‖ conditions_root</div>
-<div class="sz">8 bytes per output (value). One shared conditions_root (0xDF + 32 bytes) per transaction.</div>
+<div class="pre">TX_MLSC output</div>
+<div class="val">8 bytes (value only)</div>
+<div class="sz">One conditions_root (0xDF + 32 bytes = 33 bytes) shared per transaction.<br>Total on-chain: ~112 bytes per tx regardless of conditions complexity.</div>
 <div class="msg">
 This is <strong>everything</strong> on-chain at creation.<br>
 Zero conditions. Zero public keys. Zero block types. Zero timelocks.<br>
-The 33-byte Schnorr key, the 897-byte FALCON key, the CSV timelock —<br>
+The 33-byte Schnorr key, the 897-byte FALCON key, the CSV timelock --<br>
 all inside SHA-256 leaf digests. <strong>Irrecoverable.</strong>
 </div>
 </div>
 `},
 
-{act:1,t:"WHAT GOES WHERE",s:"UTXO set · Blockchain · Wallet",h:`
+{act:1,t:"ANTI-SPAM PROPERTIES",s:"Protocol-derived root / typed fields / ~112 bytes per tx",h:`
+<div class="card green">
+<div class="card-t">Anti-spam surface at creation</div>
+<div class="chk ok"><span class="ic">&#10003;</span> conditions_root: protocol-derived from validated structural templates -- NOT attacker-chosen</div>
+<div class="chk ok"><span class="ic">&#10003;</span> value_commitments: SHA-256 hash outputs -- NOT raw attacker data</div>
+<div class="chk ok"><span class="ic">&#10003;</span> Structural templates: only block_type(uint16) + inverted(uint8) + coil fields -- typed, bounded</div>
+<div class="chk ok"><span class="ic">&#10003;</span> No PUBKEY_COMMIT field -- pubkeys folded into value_commitment hash</div>
+<div class="chk ok"><span class="ic">&#10003;</span> MIN_RUNG_OUTPUT_VALUE = 546 sats -- prevents dust UTXO bloat</div>
+<div class="chk ok"><span class="ic">&#10003;</span> MAX_PREIMAGE_FIELDS_PER_TX = 2 -- across ALL inputs</div>
+</div>
+<div class="desc" style="font-size:.72rem;color:#555">Total on-chain footprint: ~112 bytes. The same size whether the vault has 1 rung with 1 block or 16 rungs with 8 blocks each, PQ keys, timelocks, hash locks, and relays.</div>
+`},
+
+{act:1,t:"WHAT GOES WHERE",s:"UTXO set / Blockchain / Wallet",h:`
 <div class="where-grid">
 <div class="where-box" style="border-color:rgba(0,255,136,.2)">
   <div class="wt">UTXO Set</div>
   <div class="wv" style="color:var(--ngreen)">40 bytes</div>
   <div class="ws">value (8 bytes int64) + conditions_root (32 bytes)</div>
-  <div class="ws" style="margin-top:.3rem;color:#555">Same size for single-sig or 15-of-15 multisig with 16 rungs</div>
+  <div class="ws" style="margin-top:.3rem;color:#555">Same size for single-sig or 16-rung PQ vault</div>
 </div>
 <div class="where-box" style="border-color:rgba(0,212,255,.2)">
   <div class="wt">Blockchain (in block)</div>
-  <div class="wv" style="color:var(--nblue)">33 bytes</div>
-  <div class="ws">0xDF + root in the transaction output</div>
-  <div class="ws" style="margin-top:.3rem;color:#555">No conditions, no pubkeys, no scripts visible</div>
+  <div class="wv" style="color:var(--nblue)">~112 bytes</div>
+  <div class="ws">Outputs (8 bytes each) + 0xDF + root (33 bytes) + creation proof (witness, prunable)</div>
 </div>
 </div>
 <div class="where-grid">
@@ -637,154 +659,124 @@ all inside SHA-256 leaf digests. <strong>Irrecoverable.</strong>
 <div class="where-box" style="border-color:rgba(179,102,255,.2)">
   <div class="wt">NOT on-chain</div>
   <div class="wv" style="color:var(--npurple)">Everything else</div>
-  <div class="ws">Pubkeys, schemes, timelocks, block types, coil details — all hidden until spend.</div>
+  <div class="ws">Pubkeys, schemes, timelocks, block types, coil details -- all hidden until spend.</div>
 </div>
 </div>
 `},
 
-// === ACT 2: SPEND ===
+// ============================================================================
+// ACT 2: SPEND (VERIFY)
+// ============================================================================
 
-{act:2,t:"SPENDING TRANSACTION",s:"Witness stack · Two elements",h:`
+{act:2,t:"SPENDING TRANSACTION",s:"Witness stack: exactly 2 elements",h:`
 <div class="desc">A new v4 transaction spends the UTXO. The input's witness has exactly <strong>2 stack elements</strong>:</div>
 <div class="card orange">
-<div class="card-t">stack[0] — LadderWitness</div>
-<div class="desc" style="margin-bottom:0;font-size:.72rem">The unlock data: pubkeys, signatures, preimages for the one rung being spent.</div>
+<div class="card-t">stack[0] -- LadderWitness</div>
+<div class="desc" style="margin-bottom:0;font-size:.72rem">The unlock data: pubkeys, signatures, preimages for the one rung being spent. Exactly 1 rung (single rung rule).</div>
 </div>
 <div class="card orange">
-<div class="card-t">stack[1] — MLSCProof</div>
-<div class="desc" style="margin-bottom:0;font-size:.72rem">The revealed rung's conditions + Merkle proof hashes for unrevealed leaves.</div>
+<div class="card-t">stack[1] -- MLSCProof</div>
+<div class="desc" style="margin-bottom:0;font-size:.72rem">The revealed rung's conditions + proof hashes for unrevealed leaves. Contains total_rungs, rung_index, revealed_rung, proof_hashes.</div>
 </div>
 <div class="desc" style="margin-top:.5rem;font-size:.72rem;color:#555">The node doesn't know which rung is being spent until it deserializes these. Let's trace <strong>spending via Rung 0</strong> (Schnorr).</div>
 `},
 
-{act:2,t:"DESERIALIZE WITNESS",s:"LadderWitness · size gate · block parsing",h:`
+{act:2,t:"DESERIALIZE & ANTI-SPAM",s:"Size gate / witness stack enforcement / preimage count",h:`
 <div class="stg">
-<div class="stg-h"><div class="stg-n" style="background:rgba(255,136,0,.1);color:var(--norange)">1</div><div class="stg-t">DeserializeLadderWitness — size & structure</div></div>
-<div class="chk ok"><span class="ic">✓</span> Not empty</div>
-<div class="chk ok"><span class="ic">✓</span> Size ≤ MAX_LADDER_WITNESS_SIZE (100,000 bytes)</div>
-<div class="chk ok"><span class="ic">✓</span> n_rungs = ReadCompactSize = 1 (not 0 = not diff witness, ≤ MAX_RUNGS = 16)</div>
-<div class="chk ok"><span class="ic">✓</span> n_blocks = ReadCompactSize = 1 (> 0 = not compact rung, ≤ MAX_BLOCKS_PER_RUNG = 8)</div>
+<div class="stg-h"><div class="stg-n" style="background:rgba(255,136,0,.1);color:var(--norange)">1</div><div class="stg-t">DeserializeLadderWitness</div></div>
+<div class="chk ok"><span class="ic">&#10003;</span> Size &le; MAX_LADDER_WITNESS_SIZE (100,000 bytes)</div>
+<div class="chk ok"><span class="ic">&#10003;</span> n_rungs = 1 (&le; MAX_RUNGS = 16)</div>
+<div class="chk ok"><span class="ic">&#10003;</span> n_blocks = 1 (&le; MAX_BLOCKS_PER_RUNG = 8)</div>
+<div class="chk ok"><span class="ic">&#10003;</span> witness.stack.size() == 2 (exactly LadderWitness + MLSCProof)</div>
+</div>
+<div class="stg">
+<div class="stg-h"><div class="stg-n" style="background:rgba(255,136,0,.1);color:var(--norange)">2</div><div class="stg-t">Anti-spam gates</div></div>
+<div class="chk ok"><span class="ic">&#10003;</span> CountTxPreimageFields(tx) &le; MAX_PREIMAGE_FIELDS_PER_TX (2)</div>
+<div class="chk ok"><span class="ic">&#10003;</span> Single rung rule: witness_ladder.rungs.size() == 1</div>
+<div class="chk ok"><span class="ic">&#10003;</span> No trailing bytes in witness data</div>
 </div>
 `},
 
-{act:2,t:"WITNESS SIG BLOCK",s:"Micro-header · implicit layout · PUBKEY + SIGNATURE",h:`
+{act:2,t:"MLSC DETECTION",s:"0xDF prefix / extract conditions_root from UTXO",h:`
 <div class="stg">
-<div class="stg-h"><div class="stg-n" style="background:rgba(255,136,0,.1);color:var(--norange)">2</div><div class="stg-t">DeserializeBlock — WITNESS context</div></div>
-<div class="chk ok"><span class="ic">✓</span> first_byte = 0x00 → MICRO_HEADER_TABLE[0] = SIG (0x0001)</div>
-<div class="chk ok"><span class="ic">✓</span> IsKnownBlockType(0x0001) = true</div>
-<div class="chk ok"><span class="ic">✓</span> Not inverted on non-invertible type</div>
-<div class="chk ok"><span class="ic">✓</span> GetImplicitLayout(SIG, WITNESS) = SIG_WITNESS = [PUBKEY(var), SIGNATURE(var)]</div>
+<div class="stg-h"><div class="stg-n" style="background:rgba(0,255,136,.1);color:var(--ngreen)">3</div><div class="stg-t">IsMLSCScript + GetMLSCRoot</div></div>
+<div class="chk ok"><span class="ic">&#10003;</span> scriptPubKey[0] = 0xDF (RUNG_MLSC_PREFIX)</div>
+<div class="chk ok"><span class="ic">&#10003;</span> scriptPubKey.size() within [33, 73] (standard or with DATA_RETURN)</div>
+<div class="chk ok"><span class="ic">&#10003;</span> Extract bytes 1-32 -> conditions_root (the expected Merkle root)</div>
 </div>
+<div class="desc" style="font-size:.72rem;color:#555">This is the root that was committed at creation time. The verifier will rebuild the tree from the revealed data and check it matches.</div>
+`},
+
+{act:2,t:"VALIDATE CREATION PROOF",s:"Structural templates checked for new outputs",h:`
 <div class="stg">
-<div class="stg-h"><div class="stg-n" style="background:rgba(255,68,136,.1);color:var(--npink)">P</div><div class="stg-t">Field 0: PUBKEY</div></div>
-<div class="chk ok"><span class="ic">✓</span> Length = 33 bytes (ReadCompactSize) — within [1, 2048]</div>
-<div class="chk ok"><span class="ic">✓</span> RungField::IsValid() — 33 bytes, prefix 0x02 ✓</div>
-</div>
-<div class="stg">
-<div class="stg-h"><div class="stg-n" style="background:rgba(0,212,255,.1);color:var(--nblue)">S</div><div class="stg-t">Field 1: SIGNATURE</div></div>
-<div class="chk ok"><span class="ic">✓</span> Length = 64 bytes (Schnorr BIP-340) — within [1, 50000]</div>
-<div class="chk ok"><span class="ic">✓</span> RungField::IsValid() — passes (no special content check for signatures)</div>
+<div class="stg-h"><div class="stg-n" style="background:rgba(0,255,136,.1);color:var(--ngreen)">4</div><div class="stg-t">Creation proof validation (new outputs)</div></div>
+<div class="desc" style="font-size:.72rem;margin-bottom:.3rem">If the spending transaction creates new TX_MLSC outputs, VerifyRungTx validates its creation proof first -- checking structural templates, block types, output coverage, and root match.</div>
+<div class="chk ok"><span class="ic">&#10003;</span> DeserializeCreationProof(tx.creation_proof)</div>
+<div class="chk ok"><span class="ic">&#10003;</span> ValidateCreationProof(proof, tx.conditions_root, n_spendable)</div>
+<div class="chk ok"><span class="ic">&#10003;</span> Dust threshold: every output &ge; MIN_RUNG_OUTPUT_VALUE (546 sats)</div>
 </div>
 `},
 
-{act:2,t:"WITNESS ANTI-SPAM",s:"Embedding check · preimage count · trailing bytes",h:`
+{act:2,t:"MLSC PROOF DESERIALIZATION",s:"total_rungs / rung_index / revealed rung / proof hashes",h:`
 <div class="stg">
-<div class="stg-h"><div class="stg-n" style="background:rgba(255,136,0,.1);color:var(--norange)">3</div><div class="stg-t">Anti-spam gates</div></div>
-<div class="chk ok"><span class="ic">✓</span> IsDataEmbeddingType — blocks PUBKEY_COMMIT, HASH256, HASH160, DATA in witness for non-implicit blocks</div>
-<div class="chk ok"><span class="ic">✓</span> PREIMAGE/SCRIPT_BODY field count: 0 ≤ MAX_PREIMAGE_FIELDS_PER_WITNESS (2)</div>
-<div class="chk ok"><span class="ic">✓</span> Relay chain depth: 0 ≤ MAX_RELAY_DEPTH (4)</div>
-<div class="chk ok"><span class="ic">✓</span> ss.empty() = true — no trailing bytes</div>
+<div class="stg-h"><div class="stg-n" style="background:rgba(179,102,255,.1);color:var(--npurple)">5</div><div class="stg-t">DeserializeMLSCProof -- from stack[1]</div></div>
+<div class="chk ok"><span class="ic">&#10003;</span> total_rungs = 2 -- within [1, MAX_RUNGS=16]</div>
+<div class="chk ok"><span class="ic">&#10003;</span> total_relays = 0 -- within [0, MAX_RELAYS=8]</div>
+<div class="chk ok"><span class="ic">&#10003;</span> rung_index = 0 -- less than total_rungs (2)</div>
+<div class="chk ok"><span class="ic">&#10003;</span> Revealed rung: 1 SIG block, CONDITIONS context -- SCHEME = 0x01 (SCHNORR)</div>
+<div class="chk ok"><span class="ic">&#10003;</span> n_proof_hashes = 1 (one unrevealed rung)</div>
+<div class="chk ok"><span class="ic">&#10003;</span> proof_hash[0] = 0x91e5...20ac (rung 1's leaf -- opaque)</div>
 </div>
+<div class="co">Rung 1 stays hidden. This 32-byte proof hash is a leaf digest. It contains the 897-byte FALCON key and the CSV timelock -- but nobody can extract them.</div>
 `},
 
-{act:2,t:"MLSC DETECTION",s:"0xDF prefix · extract root",h:`
+{act:2,t:"BUILD CREATION PROOF RUNG",s:"Reconstruct leaf from revealed rung + witness pubkeys",h:`
+<div class="desc">The verifier builds a <code>CreationProofRung</code> from the revealed data: block types from the MLSCProof, coil from the witness, and a freshly computed value_commitment from the revealed conditions + witness pubkeys.</div>
 <div class="stg">
-<div class="stg-h"><div class="stg-n" style="background:rgba(0,255,136,.1);color:var(--ngreen)">4</div><div class="stg-t">IsMLSCScript + GetMLSCRoot</div></div>
-<div class="chk ok"><span class="ic">✓</span> scriptPubKey.size() = 33, within [33, 65]</div>
-<div class="chk ok"><span class="ic">✓</span> scriptPubKey[0] = 0xDF (RUNG_MLSC_PREFIX)</div>
-<div class="chk ok"><span class="ic">✓</span> Extract bytes 1-32 → conditions_root (the expected Merkle root)</div>
-<div class="chk ok"><span class="ic">✓</span> witness.stack.size() = 2 (LadderWitness + MLSCProof)</div>
+<div class="stg-h"><div class="stg-n" style="background:rgba(0,212,255,.1);color:var(--nblue)">6</div><div class="stg-t">Rebuild CreationProofRung</div></div>
+<div class="chk ok"><span class="ic">&#10003;</span> cp_rung.blocks = [(SIG/0x0001, inverted=0)] -- from mlsc_proof.revealed_rung</div>
+<div class="chk ok"><span class="ic">&#10003;</span> cp_rung.coil = witness_ladder.coil -- from stack[0]</div>
+<div class="chk ok"><span class="ic">&#10003;</span> ExtractBlockPubkeys(witness blocks) -> [33-byte pubkey_A]</div>
+<div class="chk ok"><span class="ic">&#10003;</span> cp_rung.value_commitment = ComputeValueCommitment(revealed_rung, [pubkey_A])</div>
 </div>
+<div class="desc" style="font-size:.72rem;color:#555">The value_commitment is recomputed from the revealed conditions and witness pubkeys. If the attacker changed any field value or swapped a pubkey, this hash would differ, and leaf verification would fail.</div>
 `},
 
-{act:2,t:"MLSC PROOF — HEADER",s:"total_rungs · total_relays · rung_index",h:`
+{act:2,t:"VERIFY COIL OUTPUT_INDEX",s:"coil.output_index must match the spent output",h:`
 <div class="stg">
-<div class="stg-h"><div class="stg-n" style="background:rgba(179,102,255,.1);color:var(--npurple)">5</div><div class="stg-t">DeserializeMLSCProof — header</div></div>
-<div class="chk ok"><span class="ic">✓</span> total_rungs = 2 — within [1, MAX_RUNGS=16]</div>
-<div class="chk ok"><span class="ic">✓</span> total_relays = 0 — within [0, MAX_RELAYS=8]</div>
-<div class="chk ok"><span class="ic">✓</span> rung_index = 0 — less than total_rungs (2)</div>
+<div class="stg-h"><div class="stg-n" style="background:rgba(0,255,136,.1);color:var(--ngreen)">7</div><div class="stg-t">Output binding check</div></div>
+<div class="chk ok"><span class="ic">&#10003;</span> witness_ladder.coil.output_index = 0</div>
+<div class="chk ok"><span class="ic">&#10003;</span> tx.vin[nIn].prevout.n = 0 (spent output vout)</div>
+<div class="chk ok"><span class="ic">&#10003;</span> output_index == spent_vout -- MATCH</div>
 </div>
+<div class="desc" style="font-size:.72rem;color:#555">This is the PLC binding: the coil's output_index (embedded in the leaf via the structural template) must match the actual output being spent. A rung targeting output 1 cannot be used to spend output 0.</div>
 `},
 
-{act:2,t:"MLSC PROOF — REVEALED RUNG",s:"Conditions deserialised with consensus validation",h:`
+{act:2,t:"WALK PROOF TO ROOT",s:"Compute leaf / fill unrevealed / build tree / verify root",h:`
 <div class="stg">
-<div class="stg-h"><div class="stg-n" style="background:rgba(179,102,255,.1);color:var(--npurple)">6</div><div class="stg-t">Revealed rung — SIG block in CONDITIONS context</div></div>
-<div class="chk ok"><span class="ic">✓</span> n_blocks = 1 (not 0 — compact rungs rejected: "deprecated")</div>
-<div class="chk ok"><span class="ic">✓</span> Micro-header 0x00 → SIG (0x0001) — IsKnownBlockType ✓</div>
-<div class="chk ok"><span class="ic">✓</span> Not deprecated block type</div>
-<div class="chk ok"><span class="ic">✓</span> Implicit layout: SIG_CONDITIONS = [{SCHEME, fixed 1}]</div>
-<div class="chk ok"><span class="ic">✓</span> SCHEME = 0x01 — IsConditionDataType(SCHEME) = true</div>
-<div class="chk ok"><span class="ic">✓</span> RungField::IsValid() — IsKnownScheme(0x01) = true</div>
-<div class="chk no"><span class="ic">✗</span> PUBKEY_COMMIT would fail here — IsConditionDataType returns false</div>
+<div class="stg-h"><div class="stg-n" style="background:rgba(0,255,136,.1);color:var(--ngreen)">8</div><div class="stg-t">Merkle tree verification</div></div>
+<div class="chk ok"><span class="ic">&#10003;</span> my_leaf = ComputeTxMLSCLeaf(cp_rung) -- TaggedHash("LadderLeaf", template || vc)</div>
+<div class="chk ok"><span class="ic">&#10003;</span> total_leaves = total_rungs = 2</div>
+<div class="chk ok"><span class="ic">&#10003;</span> leaves[0] = my_leaf (rung_index = 0 -- recomputed)</div>
+<div class="chk ok"><span class="ic">&#10003;</span> leaves[1] = proof_hashes[0] = 0x91e5...20ac (unrevealed)</div>
+<div class="chk ok"><span class="ic">&#10003;</span> BuildMerkleTree(leaves) -> computed_root</div>
+<div class="chk ok"><span class="ic" style="font-size:.6rem">&#10003;</span><span style="font-weight:700"> computed_root == conditions_root -- MATCH</span></div>
 </div>
+<div class="desc" style="font-size:.72rem;color:#555;margin-top:.5rem"><strong style="color:#fff">This is the binding:</strong> if the attacker changed the pubkey, the value_commitment changes, the leaf hash changes, the root changes, verification fails. The Merkle tree IS the commitment.</div>
 `},
 
-{act:2,t:"MLSC PROOF — PROOF HASHES",s:"1 hash for the unrevealed rung",h:`
+{act:2,t:"EVALUATE RUNG BLOCKS",s:"Conditions + witness merged / SIG evaluator / result",h:`
 <div class="stg">
-<div class="stg-h"><div class="stg-n" style="background:rgba(179,102,255,.1);color:var(--npurple)">7</div><div class="stg-t">Proof hashes + trailing bytes check</div></div>
-<div class="chk ok"><span class="ic">✓</span> n_relay_refs = 0, n_revealed_relays = 0</div>
-<div class="chk ok"><span class="ic">✓</span> n_proof_hashes = 1 — max allowed: (total_rungs-1) + (total_relays-revealed) = 1</div>
-<div class="chk ok"><span class="ic">✓</span> Read 32 bytes: proof_hash[0] = 0x91e5...20ac</div>
-<div class="chk ok"><span class="ic">✓</span> ss.empty() = true — no trailing bytes</div>
-</div>
-<div class="co">Rung 1 stays hidden. This 32-byte proof hash is a SHA-256 digest. It contains the 897-byte FALCON key and the CSV timelock — but nobody can extract them.</div>
-`},
-
-{act:2,t:"SINGLE RUNG RULE",s:"witness_ladder.rungs.size() must be exactly 1",h:`
-<div class="stg">
-<div class="stg-h"><div class="stg-n" style="background:rgba(255,136,0,.1);color:var(--norange)">8</div><div class="stg-t">Consensus enforcement</div></div>
-<div class="chk ok"><span class="ic">✓</span> witness_ladder.rungs.size() == 1 — exactly one rung in witness</div>
-</div>
-<div class="desc" style="font-size:.72rem;color:#555">Multiple rungs would harm privacy with no benefit (OR semantics — only one needs to pass). The single rung rule is enforced at consensus.</div>
-`},
-
-{act:2,t:"EXTRACT PUBKEYS FROM WITNESS",s:"ExtractBlockPubkeys · PubkeyCountForBlock",h:`
-<div class="stg">
-<div class="stg-h"><div class="stg-n" style="background:rgba(0,255,136,.1);color:var(--ngreen)">9</div><div class="stg-t">ExtractBlockPubkeys(witness blocks)</div></div>
-<div class="desc" style="font-size:.72rem;margin-bottom:.3rem">Walks blocks left-to-right. For each block, <code>PubkeyCountForBlock(type, block)</code> determines how many PUBKEY fields to collect.</div>
-<div class="chk ok"><span class="ic">✓</span> Block 0 (SIG): PubkeyCountForBlock(SIG) = 1 — collect 1 PUBKEY</div>
-<div class="chk ok"><span class="ic">✓</span> FindAllFields(block, PUBKEY) → [33-byte pubkey_A]</div>
-<div class="chk ok"><span class="ic">✓</span> Result: rung_pks = [pubkey_A]</div>
-</div>
-<div class="desc" style="font-size:.72rem;color:#555;margin-top:.5rem">These are the same pubkeys that were separated out during creation. The system extracts them from the witness to re-fold them into the leaf hash — verifying they match what was committed.</div>
-`},
-
-{act:2,t:"REBUILD MERKLE TREE",s:"Recompute leaves · fill proof hashes · check root",h:`
-<div class="stg">
-<div class="stg-h"><div class="stg-n" style="background:rgba(0,255,136,.1);color:var(--ngreen)">10</div><div class="stg-t">VerifyMLSCProof</div></div>
-<div class="chk ok"><span class="ic">✓</span> total_leaves = 2 + 0 + 1 = 3</div>
-<div class="chk ok"><span class="ic">✓</span> leaves[0] = ComputeRungLeaf(revealed_rung, [pubkey_A]) → recomputed</div>
-<div class="chk ok"><span class="ic">✓</span> leaves[1] = proof_hash[0] = 0x91e5...20ac → from proof</div>
-<div class="chk ok"><span class="ic">✓</span> leaves[2] = ComputeCoilLeaf(coil) → recomputed</div>
-<div class="chk ok"><span class="ic">✓</span> Pad to 4 with EMPTY_LEAF</div>
-<div class="chk ok"><span class="ic">✓</span> BuildMerkleTree → computed_root</div>
-<div class="chk ok"><span class="ic" style="font-size:.6rem">✓</span><span style="font-weight:700"> computed_root == expected_root — MATCH</span></div>
-</div>
-<div class="desc" style="font-size:.72rem;color:#555;margin-top:.5rem"><strong style="color:#fff">This is the binding:</strong> if the attacker changed the pubkey, the leaf hash changes, the root changes, verification fails. The pubkeys were committed at creation inside the leaf hash. The Merkle tree IS the commitment.</div>
-`},
-
-{act:2,t:"EVALUATE",s:"Conditions + witness merged · SIG evaluator · result",h:`
-<div class="stg">
-<div class="stg-h"><div class="stg-n" style="background:rgba(0,255,136,.1);color:var(--ngreen)">11</div><div class="stg-t">Merge & Evaluate</div></div>
-<div class="desc" style="font-size:.72rem;margin-bottom:.3rem">Conditions (from MLSCProof: SCHEME) merged with witness (PUBKEY + SIGNATURE). Pubkeys trusted directly — Merkle proof already verified they match creation.</div>
-<div class="chk ok"><span class="ic">✓</span> Block count matches: conditions 1 block == witness 1 block</div>
-<div class="chk ok"><span class="ic">✓</span> Block type matches: SIG == SIG</div>
-<div class="chk ok"><span class="ic">✓</span> Merged block: [{SCHEME, 0x01}, {PUBKEY, 33B}, {SIGNATURE, 64B}]</div>
-<div class="chk ok"><span class="ic">✓</span> EvalSigBlock: SCHEME=SCHNORR, not PQ → Schnorr path</div>
-<div class="chk ok"><span class="ic">✓</span> Extract x-only key from compressed pubkey (strip prefix byte)</div>
-<div class="chk ok"><span class="ic">✓</span> CheckSchnorrSignature(sig, xonly_key) → VALID</div>
-<div class="chk ok"><span class="ic">✓</span> Rung 0: all blocks SATISFIED (1/1)</div>
-<div class="chk ok"><span class="ic">✓</span> EvalLadder: first satisfied rung found → TRUE</div>
+<div class="stg-h"><div class="stg-n" style="background:rgba(0,255,136,.1);color:var(--ngreen)">9</div><div class="stg-t">Merge & Evaluate</div></div>
+<div class="desc" style="font-size:.72rem;margin-bottom:.3rem">Conditions (from MLSCProof: SCHEME) merged with witness (PUBKEY + SIGNATURE). Pubkeys trusted directly -- Merkle proof already verified they match creation.</div>
+<div class="chk ok"><span class="ic">&#10003;</span> Block count matches: conditions 1 block == witness 1 block</div>
+<div class="chk ok"><span class="ic">&#10003;</span> Block type matches: SIG == SIG</div>
+<div class="chk ok"><span class="ic">&#10003;</span> Merged block: [{SCHEME, 0x01}, {PUBKEY, 33B}, {SIGNATURE, 64B}]</div>
+<div class="chk ok"><span class="ic">&#10003;</span> EvalSigBlock: SCHEME=SCHNORR -> Schnorr verification path</div>
+<div class="chk ok"><span class="ic">&#10003;</span> Extract x-only key from compressed pubkey (strip prefix byte)</div>
+<div class="chk ok"><span class="ic">&#10003;</span> CheckSchnorrSignature(sig, xonly_key) -> VALID</div>
+<div class="chk ok"><span class="ic">&#10003;</span> Rung 0: all blocks SATISFIED (1/1)</div>
+<div class="chk ok"><span class="ic">&#10003;</span> EvalLadder: first satisfied rung found -> TRUE</div>
 </div>
 <div class="result">
 <h3>SPEND VALID</h3>
@@ -797,25 +789,25 @@ all inside SHA-256 leaf digests. <strong>Irrecoverable.</strong>
 <div class="where-grid">
 <div class="where-box" style="border-color:rgba(0,255,136,.2)">
   <div class="wt">At creation</div>
-  <div class="wv" style="color:var(--ngreen);font-size:.75rem">0xDF ‖ root</div>
-  <div class="ws">33 bytes. Zero information about conditions.</div>
+  <div class="wv" style="color:var(--ngreen);font-size:.75rem">0xDF || root + 8-byte values</div>
+  <div class="ws">~112 bytes. Zero information about conditions.</div>
 </div>
 <div class="where-box" style="border-color:rgba(255,136,0,.2)">
   <div class="wt">At spend (Rung 0)</div>
   <div class="wv" style="color:var(--norange);font-size:.75rem">SIG + pubkey + sig + coil</div>
-  <div class="ws">Observer learns: Schnorr key controlled funds.</div>
+  <div class="ws">Observer learns: Schnorr key controlled funds at output 0.</div>
 </div>
 </div>
 <div class="where-grid">
 <div class="where-box" style="border-color:rgba(179,102,255,.2)">
   <div class="wt">Hidden forever</div>
   <div class="wv" style="color:var(--npurple);font-size:.75rem">Rung 1</div>
-  <div class="ws">FALCON512 key, CSV timelock — represented by one 32-byte hash, indistinguishable from random.</div>
+  <div class="ws">FALCON512 key, CSV timelock -- represented by one 32-byte hash, indistinguishable from random.</div>
 </div>
 <div class="where-box" style="border-color:rgba(255,34,68,.2)">
   <div class="wt">Cannot be embedded</div>
   <div class="wv" style="color:var(--nred);font-size:.75rem">Arbitrary data</div>
-  <div class="ws">No PUBKEY_COMMIT field. Proof hashes are root-locked SHA-256 outputs. Every field typed & validated.</div>
+  <div class="ws">No PUBKEY_COMMIT field. Value commitments are SHA-256 outputs. Templates are typed & validated. Root is protocol-derived.</div>
 </div>
 </div>
 `},
@@ -824,11 +816,11 @@ all inside SHA-256 leaf digests. <strong>Irrecoverable.</strong>
 
 // Act metadata
 const acts = [
-  {name:"THE LADDER",color:"var(--nblue)"},
-  {name:"CREATE",color:"var(--ngreen)"},
+  {name:"WHAT IS TX_MLSC",color:"var(--nblue)"},
+  {name:"FUND",color:"var(--ngreen)"},
   {name:"SPEND",color:"var(--norange)"}
 ];
-const actLabels = ["LADDER","CREATE","SPEND"];
+const actLabels = ["TX_MLSC","FUND","SPEND"];
 
 let cur = 0;
 const N = S.length;
