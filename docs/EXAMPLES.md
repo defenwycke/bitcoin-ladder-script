@@ -778,7 +778,7 @@ chain (source must not itself be a template reference).
 - **UNLOCK_TO**: Directed spend. The output value goes to the address specified
   in the coil's `address_hash` field. Per-rung destinations
   (`rung_destinations`) can override this per rung.
-- **COVENANT**: The spending transaction is constrained by covenant/recursion
+- **UNLOCK**: Standard spend. Covenant/recursion constraints are enforced by block types (CTV, RECURSE_*, VAULT_LOCK), not the coil.
   blocks in the rung. The output must carry specific MLSC conditions.
 
 ### Evaluation result semantics

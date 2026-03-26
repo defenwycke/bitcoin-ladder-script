@@ -93,7 +93,7 @@
     <div class="eval-step"><span class="eval-step-num">1.</span><span class="eval-step-text"><strong>Zero value</strong>  -- output <code>nValue</code> must be exactly 0 satoshis</span></div>
     <div class="eval-step"><span class="eval-step-num">2.</span><span class="eval-step-text"><strong>Max one per tx</strong>  -- at most one DATA_RETURN output per v4 transaction</span></div>
     <div class="eval-step"><span class="eval-step-num">3.</span><span class="eval-step-text"><strong>Single rung, single block</strong>  -- the output conditions must contain exactly one rung with exactly one DATA_RETURN block, no relays</span></div>
-    <div class="eval-step"><span class="eval-step-num">4.</span><span class="eval-step-text"><strong>MLSC exemption</strong>  -- DATA_RETURN via 0xC1 inline conditions is allowed on mainnet even when RUNG_VERIFY_MLSC_ONLY is active (since MLSC trees cannot contain unspendable leaves)</span></div>
+    <div class="eval-step"><span class="eval-step-num">4.</span><span class="eval-step-text"><strong>MLSC exemption</strong>  -- DATA_RETURN is embedded in the TX_MLSC output (0xDF prefix + root + data) on mainnet even when RUNG_VERIFY_MLSC_ONLY is active (since MLSC trees cannot contain unspendable leaves)</span></div>
   </div>
 </div>
 
@@ -111,7 +111,7 @@
 <!-- JSON -->
 <div class="doc-section">
   <div class="section-label">JSON Wire Format</div>
-  <div class="json-label">Output conditions (inline 0xC1 format)</div>
+  <div class="json-label">Output (TX_MLSC format)</div>
   <div class="json-block"><pre>{
   <span class="json-key">"type"</span>: <span class="json-str">"DATA_RETURN"</span>,
   <span class="json-key">"inverted"</span>: <span class="json-num">false</span>,

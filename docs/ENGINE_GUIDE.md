@@ -299,7 +299,7 @@ Configured in the output inspector under "Wire Format":
 |--------------|---------|
 | `INLINE`     | Signatures in witness data |
 | `AGGREGATE`  | Reserved — not implemented |
-| `DEFERRED`   | Template hash only |
+| `DEFERRED`   | Reserved — not implemented |
 
 ### Signature schemes
 

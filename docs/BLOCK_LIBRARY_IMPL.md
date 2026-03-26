@@ -743,7 +743,7 @@ All block type enum values. Unrecognised blocks return `UNSATISFIED` — forward
 | `0x0681` | `COSIGN` | PLC (cross-input) | Co-spend constraint (cross-input scriptPubKey hash) |
 | `0x0701` | `TIMELOCKED_SIG` | Compound | SIG + CSV combined |
 | `0x0702` | `HTLC` | Compound | Hash + Timelock + Sig (Lightning HTLC). 5-field witness: PUBKEY + SIGNATURE + PUBKEY + PREIMAGE + NUMERIC. |
-| `0x0703` | `HASH_SIG` | Compound | HASH_PREIMAGE + SIG combined |
+| `0x0703` | `HASH_SIG` | Compound | Hash preimage + SIG combined |
 | `0x0704` | `PTLC` | Compound | ADAPTOR_SIG + CSV (point time-lock contract) |
 | `0x0705` | `CLTV_SIG` | Compound | SIG + CLTV combined |
 | `0x0706` | `TIMELOCKED_MULTISIG` | Compound | MULTISIG + CSV combined |
