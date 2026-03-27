@@ -153,9 +153,9 @@ Inv_AcceptedPreimageOk ==
     IN r = "ACCEPT" => preimageCount <= MAX_PREIMAGE_FIELDS_PER_TX
 
 (***************************************************************************)
-(* TX_MLSC: Creation Proof Anti-Spam Properties                            *)
-(* The conditions_root is protocol-derived, not user-supplied. Every       *)
-(* on-chain value is either a hash output, validated enum, or functional.  *)
+(* TX_MLSC: Conditions Anti-Spam Properties                                *)
+(* Conditions are embedded in scriptPubKey (0xc1 prefix). Every on-chain   *)
+(* value is either a hash output, validated enum, or functional.           *)
 (***************************************************************************)
 
 \* TX_MLSC embeddable surface constants
@@ -165,21 +165,20 @@ NSEQUENCE_BYTES == 4        \* standard Bitcoin (per input)
 TX_MLSC_READABLE_PER_TX == DATA_RETURN_MAX + NLOCKTIME_BYTES + NSEQUENCE_BYTES + MAX_EMBED_BYTES
     \* 40 + 4 + 4 + 64 = 112 bytes
 
-\* P8: TX_MLSC conditions_root is protocol-derived (triple-hashed)
-\* Root = MerkleRoot(TaggedHash(template || SHA256(values || pubkeys)))
+\* P8: Conditions use PUBKEY_COMMIT (SHA256 of pubkey), not raw pubkeys
 \* Attacker cannot embed specific message without breaking SHA256
-Inv_RootProtocolDerived ==
-    TRUE  \* Structural property: root derived during validation, not user-supplied
+Inv_ConditionsCommitOnly ==
+    TRUE  \* Structural: conditions use PUBKEY_COMMIT, witness-only types rejected
 
-\* P9: TX_MLSC value_commitment is SHA256 output (not attacker-chosen)
-Inv_ValueCommitmentIsHash ==
-    TRUE  \* Structural: value_commitment = SHA256(field_values || pubkeys)
+\* P9: Conditions field values are protocol-constrained (not attacker-chosen)
+Inv_FieldValuesConstrained ==
+    TRUE  \* Structural: HASH256=32B, HASH160=20B, NUMERIC=1-4B, SCHEME=1B
 
-\* P10: TX_MLSC structural templates are validated enums
-\* block_type must be one of 61 known types
-\* inverted must be 0 or 1, valid for the block type
-Inv_TemplateValidated ==
-    TRUE  \* Checked by ValidateCreationProof: IsKnownBlockType + IsInvertibleBlockType
+\* P10: All block types in conditions are validated known types
+\* block_type must be one of 52 known types
+\* inverted must be valid for the block type
+Inv_ConditionsValidated ==
+    TRUE  \* Checked by conditions deserialization: IsKnownBlockType + IsInvertibleBlockType
 
 \* P11: Total readable attacker data per TX_MLSC transaction = 112 bytes
 Inv_TxMLSCEmbedBound ==
@@ -203,8 +202,8 @@ SafetyInvariant ==
     /\ Inv_AcceptedPreimageOk
     /\ Inv_TxMLSCEmbedBound
     /\ Inv_NoLargeContiguousEmbed
-    /\ Inv_RootProtocolDerived
-    /\ Inv_ValueCommitmentIsHash
-    /\ Inv_TemplateValidated
+    /\ Inv_ConditionsCommitOnly
+    /\ Inv_FieldValuesConstrained
+    /\ Inv_ConditionsValidated
 
 =============================================================================

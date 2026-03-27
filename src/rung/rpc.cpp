@@ -2128,25 +2128,27 @@ static RPCHelpMan signrungtx()
                 }
             }
 
-            // TX_MLSC: compute proof hashes using template + value_commitment leaves.
+            // TX_MLSC: build all leaves and compute O(log N) Merkle path.
             // Leaf order: [rung_leaf[0..N-1]] (no separate relay/coil leaves in TX_MLSC)
-            // Each rung in the shared tree is one leaf.
-            for (uint16_t r = 0; r < conditions.rungs.size(); ++r) {
-                if (r == target_rung) continue;
-                // Build CreationProofRung for this unrevealed rung
-                rung::CreationProofRung cp_rung;
-                for (const auto& block : conditions.rungs[r].blocks) {
-                    cp_rung.blocks.push_back({
-                        static_cast<uint16_t>(block.type),
-                        static_cast<uint8_t>(block.inverted ? 1 : 0)
-                    });
+            {
+                std::vector<uint256> all_leaves;
+                for (uint16_t r = 0; r < conditions.rungs.size(); ++r) {
+                    rung::CreationProofRung cp_rung;
+                    for (const auto& block : conditions.rungs[r].blocks) {
+                        cp_rung.blocks.push_back({
+                            static_cast<uint16_t>(block.type),
+                            static_cast<uint8_t>(block.inverted ? 1 : 0)
+                        });
+                    }
+                    cp_rung.coil = conditions.coil;
+                    cp_rung.coil.output_index = 0;
+                    std::vector<std::vector<uint8_t>> rpks;
+                    if (r < rung_pubkeys2.size()) rpks = rung_pubkeys2[r];
+                    cp_rung.value_commitment = rung::ComputeValueCommitment(conditions.rungs[r], rpks);
+                    all_leaves.push_back(rung::ComputeTxMLSCLeaf(cp_rung));
                 }
-                cp_rung.coil = conditions.coil; // Use the conditions coil
-                cp_rung.coil.output_index = 0;  // Default; caller should set properly
-                std::vector<std::vector<uint8_t>> rpks;
-                if (r < rung_pubkeys2.size()) rpks = rung_pubkeys2[r];
-                cp_rung.value_commitment = rung::ComputeValueCommitment(conditions.rungs[r], rpks);
-                mlsc_proof.proof_hashes.push_back(rung::ComputeTxMLSCLeaf(cp_rung));
+                mlsc_proof.proof_mode = rung::MLSCProofMode::MERKLE_PATH;
+                mlsc_proof.proof_hashes = rung::BuildMerklePath(all_leaves, target_rung);
             }
 
             auto proof_bytes = rung::SerializeMLSCProof(mlsc_proof);
@@ -2623,6 +2625,9 @@ static RPCHelpMan signladder()
             },
             {"input_index", RPCArg::Type::NUM, RPCArg::DefaultHint{"0"}, "Input index to sign"},
             {"rung_index", RPCArg::Type::NUM, RPCArg::DefaultHint{"0"}, "Target rung index (for multi-rung conditions)"},
+            {"keypath_key", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "WIF private key for key-path spending. When provided, produces a 1-element witness (signature only)."},
+            {"keypath_merkle_root", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "32-byte Merkle root hex for key-path spending with script tree. Omit for key-path-only (no conditions)."},
+            {"shared_source", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "Input index of an already-signed input from the same source tx. Uses SHARED proof mode (compact, references existing proof)."},
         },
         RPCResult{RPCResult::Type::OBJ, "", "", {
             {RPCResult::Type::STR_HEX, "hex", "The signed transaction hex"},
@@ -2643,6 +2648,86 @@ static RPCHelpMan signladder()
         }
         if (mtx.version != CTransaction::RUNG_TX_VERSION) {
             throw JSONRPCError(RPC_INVALID_PARAMETER, "Transaction is not v4 RUNG_TX");
+        }
+
+        // Key-path signing: produce 1-element witness (signature only)
+        // The keypath_key WIF is the INTERNAL private key. The signing uses the
+        // tweaked key: internal_privkey + H_LadderTweak(internal_pubkey || merkle_root).
+        // When merkle_root is null (key-path-only, no conditions tree), the tweak is
+        // H_LadderTweak(internal_pubkey).
+        if (!request.params[6].isNull() && !request.params[6].get_str().empty()) {
+            CKey keypath_key = DecodeSecret(request.params[6].get_str());
+            if (!keypath_key.IsValid()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid keypath_key WIF");
+            }
+
+            unsigned int input_idx = 0;
+            if (!request.params[4].isNull()) {
+                input_idx = request.params[4].getInt<unsigned int>();
+            }
+            if (input_idx >= mtx.vin.size()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "input_index out of range");
+            }
+
+            // Parse spent outputs for sighash computation
+            const UniValue& spent_arr = request.params[3].get_array();
+            std::vector<CTxOut> spent_outputs;
+            for (size_t i = 0; i < spent_arr.size(); ++i) {
+                CTxOut out;
+                out.nValue = AmountFromValue(spent_arr[i]["amount"]);
+                auto spk_hex = spent_arr[i]["scriptPubKey"].get_str();
+                auto spk_bytes = ParseHex(spk_hex);
+                out.scriptPubKey = CScript(spk_bytes.begin(), spk_bytes.end());
+                spent_outputs.push_back(out);
+            }
+
+            // Build precomputed transaction data
+            CTransaction ctx(mtx);
+            PrecomputedTransactionData txdata;
+            txdata.Init(ctx, std::move(spent_outputs), true);
+
+            // Compute key-path sighash
+            uint256 sighash;
+            if (!rung::SignatureHashLadderKeyPath(txdata, ctx, input_idx, SIGHASH_DEFAULT, sighash)) {
+                throw JSONRPCError(RPC_INTERNAL_ERROR, "Failed to compute key-path sighash");
+            }
+
+            // Sign with the INTERNAL key tweaked by LadderTweak.
+            // CKey::SignSchnorr(hash, sig, merkle_root, aux) uses TapTweak internally.
+            // We need LadderTweak instead. Use a null merkle_root to get H_LadderTweak(pubkey)
+            // and apply the tweak manually via ComputeLadderTweakHash.
+            //
+            // For now: sign with null merkle_root (key-path-only, no script tree).
+            // For outputs created with createtxmlsc + internal_pubkey, the merkle_root
+            // was used during tweaking and would need to be passed here too.
+            // TODO: Accept optional merkle_root parameter for script-tree-enabled key-path.
+            std::vector<unsigned char> sig(64);
+            uint256 aux; // zero aux for deterministic signing
+
+            // Determine merkle_root: null for key-path-only, provided hex for script tree
+            uint256 merkle_root; // default = null (key-path-only)
+            const uint256* mr_ptr = &merkle_root;
+            if (!request.params[7].isNull() && !request.params[7].get_str().empty()) {
+                auto mr_opt = uint256::FromHex(request.params[7].get_str());
+                if (!mr_opt) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid keypath_merkle_root hex");
+                }
+                merkle_root = *mr_opt;
+                mr_ptr = &merkle_root;
+            }
+
+            if (!keypath_key.SignSchnorrLadder(sighash, sig, mr_ptr, aux)) {
+                throw JSONRPCError(RPC_INTERNAL_ERROR, "Schnorr signing failed");
+            }
+
+            // Set 1-element witness (key-path)
+            mtx.vin[input_idx].scriptWitness.stack.clear();
+            mtx.vin[input_idx].scriptWitness.stack.push_back(sig);
+
+            UniValue result(UniValue::VOBJ);
+            result.pushKV("hex", EncodeHexTx(CTransaction(mtx)));
+            result.pushKV("complete", true);
+            return result;
         }
 
         // 2. Parse keys — WIF private keys, derive pubkeys
@@ -2831,8 +2916,35 @@ static RPCHelpMan signladder()
         mtx.vin[input_idx].scriptWitness.stack.clear();
         mtx.vin[input_idx].scriptWitness.stack.push_back(witness_bytes);
 
-        // 9. Build MLSC proof
+        // 9. Build MLSC proof (or SHARED proof if shared_source is specified)
         if (is_mlsc) {
+            // Check for shared_source parameter (param index 8)
+            if (!request.params[8].isNull()) {
+                unsigned int shared_src = request.params[8].getInt<unsigned int>();
+                if (shared_src >= mtx.vin.size()) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "shared_source out of range");
+                }
+                if (shared_src == input_idx) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "shared_source cannot reference self");
+                }
+                // Build SHARED proof: reference the source input's full proof
+                rung::MLSCProof shared_proof;
+                shared_proof.proof_mode = rung::MLSCProofMode::SHARED;
+                shared_proof.shared_source_input = static_cast<uint16_t>(shared_src);
+                shared_proof.total_rungs = static_cast<uint16_t>(conditions.rungs.size());
+                shared_proof.total_relays = 0;
+                shared_proof.rung_index = static_cast<uint16_t>(target_rung);
+                shared_proof.revealed_rung = conditions.rungs[target_rung];
+
+                auto proof_bytes = rung::SerializeMLSCProof(shared_proof);
+                mtx.vin[input_idx].scriptWitness.stack.push_back(proof_bytes);
+
+                UniValue result(UniValue::VOBJ);
+                result.pushKV("hex", EncodeHexTx(CTransaction(mtx)));
+                result.pushKV("complete", true);
+                return result;
+            }
+
             rung::MLSCProof mlsc_proof;
             mlsc_proof.rung_index = static_cast<uint16_t>(target_rung);
             mlsc_proof.revealed_rung = conditions.rungs[target_rung];
@@ -2911,12 +3023,9 @@ static RPCHelpMan signladder()
                             mlsc_proof.total_rungs = static_cast<uint16_t>(all_leaves.size());
                             mlsc_proof.total_relays = 0;
                             mlsc_proof.rung_index = static_cast<uint16_t>(found_idx);
-                            // Add all OTHER leaves as proof hashes
-                            for (size_t i = 0; i < all_leaves.size(); ++i) {
-                                if (static_cast<int>(i) != found_idx) {
-                                    mlsc_proof.proof_hashes.push_back(all_leaves[i]);
-                                }
-                            }
+                            // Build O(log N) Merkle path instead of O(N) full leaves
+                            mlsc_proof.proof_mode = rung::MLSCProofMode::MERKLE_PATH;
+                            mlsc_proof.proof_hashes = rung::BuildMerklePath(all_leaves, found_idx);
                             // Set the coil's output_index from the funding proof
                             // (the descriptor defaults to 0 but the funding proof has the real value)
                             conditions.coil.output_index = funding_proof.rungs[found_idx].coil.output_index;
@@ -2939,8 +3048,9 @@ static RPCHelpMan signladder()
                     }
                 }
 
+                // Build all leaves for Merkle path computation
+                std::vector<uint256> all_leaves;
                 for (uint16_t r = 0; r < conditions.rungs.size(); ++r) {
-                    if (r == target_rung) continue;
                     rung::CreationProofRung cp_rung;
                     for (const auto& block : conditions.rungs[r].blocks) {
                         cp_rung.blocks.push_back({
@@ -2953,8 +3063,12 @@ static RPCHelpMan signladder()
                     std::vector<std::vector<uint8_t>> rpks;
                     if (r < rung_pubkeys.size()) rpks = rung_pubkeys[r];
                     cp_rung.value_commitment = rung::ComputeValueCommitment(conditions.rungs[r], rpks);
-                    mlsc_proof.proof_hashes.push_back(rung::ComputeTxMLSCLeaf(cp_rung));
+                    all_leaves.push_back(rung::ComputeTxMLSCLeaf(cp_rung));
                 }
+
+                // Build O(log N) Merkle path
+                mlsc_proof.proof_mode = rung::MLSCProofMode::MERKLE_PATH;
+                mlsc_proof.proof_hashes = rung::BuildMerklePath(all_leaves, target_rung);
             }
 
             auto proof_bytes = rung::SerializeMLSCProof(mlsc_proof);
@@ -3034,10 +3148,13 @@ static RPCHelpMan createtxmlsc()
                 },
             },
             {"locktime", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "Transaction nLockTime (default 0)"},
+            {"internal_pubkey", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "32-byte x-only internal pubkey for key-path spending. When provided, conditions_root is tweaked."},
+            {"no_creation_proof", RPCArg::Type::BOOL, RPCArg::Optional::OMITTED, "If true, omit creation proof (default: false)"},
         },
         RPCResult{RPCResult::Type::OBJ, "", "", {
             {RPCResult::Type::STR_HEX, "hex", "The unsigned TX_MLSC transaction hex"},
-            {RPCResult::Type::STR_HEX, "conditions_root", "The shared conditions root"},
+            {RPCResult::Type::STR_HEX, "conditions_root", "The shared conditions root (tweaked if internal_pubkey provided)"},
+            {RPCResult::Type::STR_HEX, "merkle_root", "The raw Merkle root (before tweaking)"},
             {RPCResult::Type::NUM, "n_rungs", "Total rungs in the shared tree"},
             {RPCResult::Type::NUM, "creation_proof_size", "Creation proof size in bytes"},
         }},
@@ -3148,11 +3265,31 @@ static RPCHelpMan createtxmlsc()
         proof.rungs.push_back(std::move(cp_rung));
     }
 
-    // Compute conditions_root from creation proof
-    mtx.conditions_root = rung::ComputeTxMLSCRoot(proof);
+    // Compute raw Merkle root from creation proof
+    uint256 merkle_root = rung::ComputeTxMLSCRoot(proof);
 
-    // Serialize creation proof
-    mtx.creation_proof = rung::SerializeCreationProof(proof);
+    // Apply key-path tweak if internal_pubkey is provided
+    bool has_internal_pubkey = !request.params[4].isNull() && !request.params[4].get_str().empty();
+    if (has_internal_pubkey) {
+        auto pk_hex = request.params[4].get_str();
+        auto pk_bytes = ParseHex(pk_hex);
+        if (pk_bytes.size() != 32) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "internal_pubkey must be 32 bytes (x-only)");
+        }
+        auto tweaked = rung::ComputeTweakedConditionsRoot(pk_bytes, merkle_root);
+        if (!tweaked) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Failed to compute tweaked key from internal_pubkey");
+        }
+        mtx.conditions_root = tweaked->first;
+    } else {
+        mtx.conditions_root = merkle_root;
+    }
+
+    // Serialize creation proof (unless no_creation_proof is set)
+    bool skip_proof = !request.params[5].isNull() && request.params[5].get_bool();
+    if (!skip_proof) {
+        mtx.creation_proof = rung::SerializeCreationProof(proof);
+    }
 
     // Inflate outputs with shared scriptPubKey (for UTXO compatibility)
     CScript mlsc_spk;
@@ -3165,6 +3302,7 @@ static RPCHelpMan createtxmlsc()
     UniValue result(UniValue::VOBJ);
     result.pushKV("hex", EncodeHexTx(CTransaction(mtx)));
     result.pushKV("conditions_root", mtx.conditions_root.GetHex());
+    result.pushKV("merkle_root", merkle_root.GetHex());
     result.pushKV("n_rungs", (int)proof.rungs.size());
     result.pushKV("creation_proof_size", (int)mtx.creation_proof.size());
     return result;

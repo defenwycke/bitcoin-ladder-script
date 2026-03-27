@@ -138,6 +138,38 @@ uint256 ComputeRelayLeaf(const Relay& relay,
  *  @return the Merkle root. */
 uint256 BuildMerkleTree(std::vector<uint256> leaves);
 
+/** Build a Merkle path (sibling hashes from leaf to root) for a target leaf.
+ *  The tree uses sorted interior nodes, so no direction bits are needed.
+ *  @param leaves        The full leaf array (will be padded to next power of 2)
+ *  @param target_index  Index of the target leaf
+ *  @return vector of sibling hashes, one per tree level (bottom to top). */
+std::vector<uint256> BuildMerklePath(std::vector<uint256> leaves, size_t target_index);
+
+/** Verify a Merkle path against an expected root.
+ *  Uses sorted interior nodes — no direction bits needed.
+ *  @param leaf           The leaf hash to verify
+ *  @param path           Sibling hashes from leaf to root
+ *  @param total_leaves   Number of leaves before padding (for depth computation)
+ *  @param expected_root  The expected Merkle root
+ *  @param error          Error message on failure
+ *  @return true if the path verifies correctly. */
+bool VerifyMerklePath(const uint256& leaf,
+                      const std::vector<uint256>& path,
+                      size_t total_leaves,
+                      const uint256& expected_root,
+                      std::string& error);
+
+/** Compute a Ladder Script tweaked conditions root for key-path spending.
+ *  tweaked_key = internal_pubkey + H_LadderTweak(internal_pubkey || merkle_root) * G
+ *  @return (tweaked x-only key as uint256, parity) or nullopt on failure. */
+std::optional<std::pair<uint256, bool>> ComputeTweakedConditionsRoot(
+    const std::vector<uint8_t>& internal_pubkey_bytes,
+    const uint256& merkle_root);
+
+/** Compute the Merkle root from a leaf and its path (without checking against an expected root).
+ *  Uses sorted interior nodes. */
+uint256 ComputeMerkleRootFromPath(const uint256& leaf, const std::vector<uint256>& path);
+
 /** Compute the MLSC conditions root for a complete set of conditions.
  *  Leaf order: [rung_leaf[0], ..., rung_leaf[N-1], relay_leaf[0], ..., relay_leaf[M-1], coil_leaf].
  *  @param rung_pubkeys   Per-rung pubkey lists (outer index = rung index)
@@ -158,6 +190,13 @@ struct MLSCVerifiedLeaves {
     uint16_t total_relays;        //!< Number of relay leaves
 };
 
+/** Proof mode for MLSC spending proofs. */
+enum class MLSCProofMode : uint8_t {
+    FULL_LEAVES = 0x00,  //!< Legacy: all unrevealed leaf hashes (O(N) witness size)
+    MERKLE_PATH = 0x01,  //!< Sibling hashes from leaf to root (O(log N) witness size)
+    SHARED      = 0x02,  //!< References another input's proof from the same source tx
+};
+
 /** MLSC spending proof — revealed conditions + Merkle proof hashes.
  *  Carried in witness stack[1] when spending an MLSC (0xDF) output. */
 struct MLSCProof {
@@ -166,7 +205,9 @@ struct MLSCProof {
     uint16_t rung_index;       //!< Which rung leaf is being revealed (0-based)
     Rung revealed_rung;        //!< Condition blocks for the revealed rung
     std::vector<std::pair<uint16_t, Relay>> revealed_relays; //!< (relay_index, condition blocks) for each revealed relay
-    std::vector<uint256> proof_hashes; //!< Leaf hashes for unrevealed leaves, in leaf-order
+    std::vector<uint256> proof_hashes; //!< FULL_LEAVES: unrevealed leaf hashes. MERKLE_PATH: sibling hashes from leaf to root. SHARED: empty.
+    MLSCProofMode proof_mode{MLSCProofMode::FULL_LEAVES}; //!< Proof format
+    uint16_t shared_source_input{0}; //!< SHARED mode: input index carrying the full proof for the same source tx
     std::vector<std::pair<uint16_t, Rung>> revealed_mutation_targets; //!< (rung_index, condition blocks) for cross-rung mutation targets (optional, backward-compatible)
 };
 

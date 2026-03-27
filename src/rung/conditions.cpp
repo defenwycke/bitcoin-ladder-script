@@ -6,6 +6,7 @@
 #include <rung/serialize.h>
 
 #include <crypto/sha256.h>
+#include <pubkey.h>
 #include <streams.h>
 #include <uint256.h>
 #include <util/strencodings.h>
@@ -313,6 +314,114 @@ uint256 BuildMerkleTree(std::vector<uint256> leaves)
     return leaves[0];
 }
 
+std::vector<uint256> BuildMerklePath(std::vector<uint256> leaves, size_t target_index)
+{
+    if (leaves.size() <= 1) return {};
+
+    // Pad to next power of 2
+    size_t padded = NextPowerOf2(leaves.size());
+    while (leaves.size() < padded) {
+        leaves.push_back(MLSC_EMPTY_LEAF);
+    }
+
+    std::vector<uint256> path;
+    size_t idx = target_index;
+
+    // Build tree bottom-up, recording the sibling at each level
+    while (leaves.size() > 1) {
+        // Sibling is the other half of the pair
+        size_t sibling = (idx % 2 == 0) ? idx + 1 : idx - 1;
+        if (sibling < leaves.size()) {
+            path.push_back(leaves[sibling]);
+        } else {
+            path.push_back(MLSC_EMPTY_LEAF);
+        }
+
+        // Compute parent level
+        std::vector<uint256> parents;
+        parents.reserve(leaves.size() / 2);
+        for (size_t i = 0; i < leaves.size(); i += 2) {
+            parents.push_back(MerkleInterior(leaves[i], leaves[i + 1]));
+        }
+        leaves = std::move(parents);
+        idx /= 2;
+    }
+
+    return path;
+}
+
+bool VerifyMerklePath(const uint256& leaf,
+                      const std::vector<uint256>& path,
+                      size_t total_leaves,
+                      const uint256& expected_root,
+                      std::string& error)
+{
+    if (total_leaves == 0) {
+        error = "empty tree";
+        return false;
+    }
+    if (total_leaves == 1) {
+        if (!path.empty()) {
+            error = "path should be empty for single-leaf tree";
+            return false;
+        }
+        if (leaf != expected_root) {
+            error = "single leaf does not match root";
+            return false;
+        }
+        return true;
+    }
+
+    size_t padded = NextPowerOf2(total_leaves);
+    size_t expected_depth = 0;
+    for (size_t p = padded; p > 1; p >>= 1) ++expected_depth;
+
+    if (path.size() != expected_depth) {
+        error = "path length " + std::to_string(path.size()) +
+                " != expected depth " + std::to_string(expected_depth);
+        return false;
+    }
+
+    // Walk up the tree: at each level, combine with sibling using sorted interior hash
+    uint256 current = leaf;
+    for (size_t i = 0; i < path.size(); ++i) {
+        current = MerkleInterior(current, path[i]);
+    }
+
+    if (current != expected_root) {
+        error = "computed root does not match expected root";
+        return false;
+    }
+
+    return true;
+}
+
+uint256 ComputeMerkleRootFromPath(const uint256& leaf, const std::vector<uint256>& path)
+{
+    uint256 current = leaf;
+    for (const auto& sibling : path) {
+        current = MerkleInterior(current, sibling);
+    }
+    return current;
+}
+
+std::optional<std::pair<uint256, bool>> ComputeTweakedConditionsRoot(
+    const std::vector<uint8_t>& internal_pubkey_bytes,
+    const uint256& merkle_root)
+{
+    if (internal_pubkey_bytes.size() != 32) return std::nullopt;
+    XOnlyPubKey internal_key;
+    std::copy(internal_pubkey_bytes.begin(), internal_pubkey_bytes.end(), internal_key.begin());
+    if (!internal_key.IsFullyValid()) return std::nullopt;
+
+    auto result = internal_key.CreateLadderTweak(&merkle_root);
+    if (!result) return std::nullopt;
+
+    uint256 tweaked;
+    std::memcpy(tweaked.data(), result->first.data(), 32);
+    return std::make_pair(tweaked, result->second);
+}
+
 uint256 ComputeConditionsRoot(const RungConditions& conditions,
                                const std::vector<std::vector<std::vector<uint8_t>>>& rung_pubkeys,
                                const std::vector<std::vector<std::vector<uint8_t>>>& relay_pubkeys)
@@ -344,6 +453,67 @@ bool DeserializeMLSCProof(const std::vector<uint8_t>& data, MLSCProof& proof, st
     DataStream ss{data};
 
     try {
+        // Detect proof format: first byte 0x00 = new versioned format,
+        // 0x01-0xFC = legacy format (CompactSize total_rungs, always >= 1).
+        uint8_t first_byte = data[0];
+        if (first_byte == 0x00) {
+            // New versioned format: 0x00 + proof_mode + fields
+            ss.ignore(1); // consume the 0x00 version prefix
+            uint8_t mode_byte;
+            ss >> mode_byte;
+            if (mode_byte > static_cast<uint8_t>(MLSCProofMode::SHARED)) {
+                error = "unknown MLSC proof mode: " + std::to_string(mode_byte);
+                return false;
+            }
+            proof.proof_mode = static_cast<MLSCProofMode>(mode_byte);
+
+            // SHARED mode: compact format — just source_input + rung_index + revealed rung
+            if (proof.proof_mode == MLSCProofMode::SHARED) {
+                proof.shared_source_input = static_cast<uint16_t>(ReadCompactSize(ss));
+                uint64_t total_rungs = ReadCompactSize(ss);
+                uint64_t rung_index = ReadCompactSize(ss);
+                if (total_rungs == 0 || total_rungs > MAX_RUNGS) {
+                    error = "MLSC shared proof total_rungs out of range";
+                    return false;
+                }
+                if (rung_index >= total_rungs) {
+                    error = "MLSC shared proof rung_index out of range";
+                    return false;
+                }
+                proof.total_rungs = static_cast<uint16_t>(total_rungs);
+                proof.total_relays = 0;
+                proof.rung_index = static_cast<uint16_t>(rung_index);
+
+                // Deserialize revealed rung blocks
+                uint64_t n_blocks = ReadCompactSize(ss);
+                if (n_blocks == 0 || n_blocks > MAX_BLOCKS_PER_RUNG) {
+                    error = "MLSC shared proof rung block count invalid";
+                    return false;
+                }
+                uint8_t cond_ctx_s = static_cast<uint8_t>(SerializationContext::CONDITIONS);
+                proof.revealed_rung.blocks.resize(n_blocks);
+                for (uint64_t b = 0; b < n_blocks; ++b) {
+                    std::string block_error;
+                    if (!DeserializeBlock(ss, proof.revealed_rung.blocks[b], cond_ctx_s, block_error)) {
+                        error = "MLSC shared proof rung: " + block_error;
+                        return false;
+                    }
+                }
+                uint64_t n_rung_refs = ReadCompactSize(ss);
+                if (n_rung_refs > MAX_REQUIRES) {
+                    error = "MLSC shared proof too many relay_refs";
+                    return false;
+                }
+                proof.revealed_rung.relay_refs.resize(n_rung_refs);
+                for (uint64_t ri = 0; ri < n_rung_refs; ++ri) {
+                    proof.revealed_rung.relay_refs[ri] = static_cast<uint16_t>(ReadCompactSize(ss));
+                }
+                return true;
+            }
+        } else {
+            proof.proof_mode = MLSCProofMode::FULL_LEAVES;
+        }
+
         uint64_t total_rungs = ReadCompactSize(ss);
         uint64_t total_relays = ReadCompactSize(ss);
         uint64_t rung_index = ReadCompactSize(ss);
@@ -444,14 +614,28 @@ bool DeserializeMLSCProof(const std::vector<uint8_t>& data, MLSCProof& proof, st
             }
         }
 
-        // Read proof hashes (unrevealed leaf hashes)
+        // Read proof hashes
         uint64_t n_proofs = ReadCompactSize(ss);
-        // Max possible unrevealed leaves: total_rungs - 1 + total_relays - revealed_relays
-        size_t max_proofs = (total_rungs - 1) + (total_relays - n_revealed);
-        if (n_proofs > max_proofs) {
-            error = "MLSC proof too many proof hashes: " + std::to_string(n_proofs) +
-                    " > " + std::to_string(max_proofs);
-            return false;
+        if (proof.proof_mode == MLSCProofMode::MERKLE_PATH) {
+            // Merkle path: ceil(log2(padded_size)) sibling hashes
+            size_t total_leaves = total_rungs + total_relays + 1;
+            size_t padded = 1;
+            while (padded < total_leaves) padded <<= 1;
+            size_t max_depth = 0;
+            for (size_t p = padded; p > 1; p >>= 1) ++max_depth;
+            if (n_proofs > max_depth) {
+                error = "MLSC Merkle path too long: " + std::to_string(n_proofs) +
+                        " > depth " + std::to_string(max_depth);
+                return false;
+            }
+        } else {
+            // Full leaves: max unrevealed = total_rungs - 1 + total_relays - revealed_relays
+            size_t max_proofs = (total_rungs - 1) + (total_relays - n_revealed);
+            if (n_proofs > max_proofs) {
+                error = "MLSC proof too many proof hashes: " + std::to_string(n_proofs) +
+                        " > " + std::to_string(max_proofs);
+                return false;
+            }
         }
         proof.proof_hashes.resize(n_proofs);
         for (uint64_t ph = 0; ph < n_proofs; ++ph) {
@@ -519,6 +703,24 @@ bool DeserializeMLSCProof(const std::vector<uint8_t>& data, MLSCProof& proof, st
 std::vector<uint8_t> SerializeMLSCProof(const MLSCProof& proof)
 {
     DataStream ss{};
+
+    // New versioned format: prefix with 0x00 + proof_mode byte
+    if (proof.proof_mode != MLSCProofMode::FULL_LEAVES) {
+        ss << static_cast<uint8_t>(0x00); // version prefix
+        ss << static_cast<uint8_t>(proof.proof_mode);
+
+        // SHARED mode: compact format
+        if (proof.proof_mode == MLSCProofMode::SHARED) {
+            WriteCompactSize(ss, proof.shared_source_input);
+            WriteCompactSize(ss, proof.total_rungs);
+            WriteCompactSize(ss, proof.rung_index);
+            auto rung_bytes = SerializeRungBlocks(proof.revealed_rung, SerializationContext::CONDITIONS);
+            ss.write(MakeByteSpan(rung_bytes));
+            std::vector<uint8_t> result(ss.size());
+            ss.read(MakeWritableByteSpan(result));
+            return result;
+        }
+    }
 
     WriteCompactSize(ss, proof.total_rungs);
     WriteCompactSize(ss, proof.total_relays);

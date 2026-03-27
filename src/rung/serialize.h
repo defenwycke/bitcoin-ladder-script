@@ -51,6 +51,9 @@ static constexpr size_t MAX_RELAYS = 8;
 static constexpr size_t MAX_REQUIRES = 8;
 /** Maximum transitive relay chain depth (relay requiring relay requiring relay...). */
 static constexpr size_t MAX_RELAY_DEPTH = 4;
+/** Compact coil sentinel: 0x00 + output_index(1) = 2 bytes total.
+ *  Expands to default coil: UNLOCK + INLINE + SCHNORR + no address + no rung_destinations. */
+static constexpr uint8_t COMPACT_COIL_SENTINEL = 0x00;
 
 /** Serialization context — determines which implicit field table to use. */
 enum class SerializationContext : uint8_t {

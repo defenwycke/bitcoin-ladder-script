@@ -447,59 +447,67 @@ bool DeserializeLadderWitness(const std::vector<uint8_t>& witness_bytes,
 
             ladder_out.witness_ref = std::move(ref);
 
-            // Read fresh coil (same code as normal path)
-            uint8_t coil_type_byte, attestation_byte, scheme_byte;
-            ss >> coil_type_byte >> attestation_byte >> scheme_byte;
-            if (!IsKnownCoilType(coil_type_byte)) {
-                error = "unknown coil type: 0x" + HexStr(std::span<const uint8_t>{&coil_type_byte, 1});
-                return false;
-            }
-            if (!IsKnownAttestationMode(attestation_byte)) {
-                error = "unknown attestation mode: 0x" + HexStr(std::span<const uint8_t>{&attestation_byte, 1});
-                return false;
-            }
-            if (!IsKnownScheme(scheme_byte)) {
-                error = "unknown coil scheme: 0x" + HexStr(std::span<const uint8_t>{&scheme_byte, 1});
-                return false;
-            }
-            ladder_out.coil.coil_type = static_cast<RungCoilType>(coil_type_byte);
-            ladder_out.coil.attestation = static_cast<RungAttestationMode>(attestation_byte);
-            ladder_out.coil.scheme = static_cast<RungScheme>(scheme_byte);
+            // Read fresh coil (same code as normal path, with compact coil support)
+            uint8_t ref_coil_type_byte;
+            ss >> ref_coil_type_byte;
 
-            // TX_MLSC: read output_index (which output this rung governs)
-            uint8_t output_index_byte;
-            ss >> output_index_byte;
-            ladder_out.coil.output_index = output_index_byte;
-
-            // Read coil address hash (0 = no address, 32 = SHA256 of raw address)
-            uint64_t addr_len = ReadCompactSize(ss);
-            if (addr_len != 0 && addr_len != 32) {
-                error = "coil address_hash must be 0 or 32 bytes, got " + std::to_string(addr_len);
-                return false;
-            }
-            if (addr_len > 0) {
-                ladder_out.coil.address_hash.resize(addr_len);
-                ss.read(MakeWritableByteSpan(ladder_out.coil.address_hash));
-            }
-
-            // Read coil condition count — must be 0 (coil conditions removed, reject non-zero)
-            uint64_t n_coil_rungs = ReadCompactSize(ss);
-            if (n_coil_rungs != 0) {
-                error = "coil conditions not supported: n_coil_conditions must be 0, got " + std::to_string(n_coil_rungs);
-                return false;
-            }
-
-            // Read per-rung destinations (0 = none, backward compatible)
-            if (!ss.empty()) {
-                uint64_t n_rung_dests = ReadCompactSize(ss);
-                if (n_rung_dests > MAX_RUNGS) {
-                    error = "too many rung_destinations: " + std::to_string(n_rung_dests);
+            if (ref_coil_type_byte == COMPACT_COIL_SENTINEL) {
+                // Compact default coil
+                ladder_out.coil.coil_type = RungCoilType::UNLOCK;
+                ladder_out.coil.attestation = RungAttestationMode::INLINE;
+                ladder_out.coil.scheme = RungScheme::SCHNORR;
+                uint8_t output_index_byte;
+                ss >> output_index_byte;
+                ladder_out.coil.output_index = output_index_byte;
+            } else {
+                uint8_t attestation_byte, scheme_byte;
+                ss >> attestation_byte >> scheme_byte;
+                if (!IsKnownCoilType(ref_coil_type_byte)) {
+                    error = "unknown coil type: 0x" + HexStr(std::span<const uint8_t>{&ref_coil_type_byte, 1});
                     return false;
                 }
-                ladder_out.coil.rung_destinations.resize(n_rung_dests);
-                std::set<uint16_t> seen_indices;
-                for (uint64_t rd = 0; rd < n_rung_dests; ++rd) {
-                    uint8_t lo, hi;
+                if (!IsKnownAttestationMode(attestation_byte)) {
+                    error = "unknown attestation mode: 0x" + HexStr(std::span<const uint8_t>{&attestation_byte, 1});
+                    return false;
+                }
+                if (!IsKnownScheme(scheme_byte)) {
+                    error = "unknown coil scheme: 0x" + HexStr(std::span<const uint8_t>{&scheme_byte, 1});
+                    return false;
+                }
+                ladder_out.coil.coil_type = static_cast<RungCoilType>(ref_coil_type_byte);
+                ladder_out.coil.attestation = static_cast<RungAttestationMode>(attestation_byte);
+                ladder_out.coil.scheme = static_cast<RungScheme>(scheme_byte);
+
+                uint8_t output_index_byte;
+                ss >> output_index_byte;
+                ladder_out.coil.output_index = output_index_byte;
+
+                uint64_t addr_len = ReadCompactSize(ss);
+                if (addr_len != 0 && addr_len != 32) {
+                    error = "coil address_hash must be 0 or 32 bytes, got " + std::to_string(addr_len);
+                    return false;
+                }
+                if (addr_len > 0) {
+                    ladder_out.coil.address_hash.resize(addr_len);
+                    ss.read(MakeWritableByteSpan(ladder_out.coil.address_hash));
+                }
+
+                uint64_t n_coil_rungs = ReadCompactSize(ss);
+                if (n_coil_rungs != 0) {
+                    error = "coil conditions not supported: n_coil_conditions must be 0, got " + std::to_string(n_coil_rungs);
+                    return false;
+                }
+
+                if (!ss.empty()) {
+                    uint64_t n_rung_dests = ReadCompactSize(ss);
+                    if (n_rung_dests > MAX_RUNGS) {
+                        error = "too many rung_destinations: " + std::to_string(n_rung_dests);
+                        return false;
+                    }
+                    ladder_out.coil.rung_destinations.resize(n_rung_dests);
+                    std::set<uint16_t> seen_indices;
+                    for (uint64_t rd = 0; rd < n_rung_dests; ++rd) {
+                        uint8_t lo, hi;
                     ss >> lo >> hi;
                     uint16_t rung_idx = static_cast<uint16_t>(lo) | (static_cast<uint16_t>(hi) << 8);
                     if (!seen_indices.insert(rung_idx).second) {
@@ -507,10 +515,11 @@ bool DeserializeLadderWitness(const std::vector<uint8_t>& witness_bytes,
                         return false;
                     }
                     ladder_out.coil.rung_destinations[rd].first = rung_idx;
-                    ladder_out.coil.rung_destinations[rd].second.resize(32);
-                    ss.read(MakeWritableByteSpan(ladder_out.coil.rung_destinations[rd].second));
+                        ladder_out.coil.rung_destinations[rd].second.resize(32);
+                        ss.read(MakeWritableByteSpan(ladder_out.coil.rung_destinations[rd].second));
+                    }
                 }
-            }
+            } // end else (full coil encoding)
 
             // No relays section — inherited from source
 
@@ -549,68 +558,84 @@ bool DeserializeLadderWitness(const std::vector<uint8_t>& witness_bytes,
         }
 
         // Read coil (per-ladder, after all rungs)
-        uint8_t coil_type_byte, attestation_byte, scheme_byte;
-        ss >> coil_type_byte >> attestation_byte >> scheme_byte;
-        if (!IsKnownCoilType(coil_type_byte)) {
-            error = "unknown coil type: 0x" + HexStr(std::span<const uint8_t>{&coil_type_byte, 1});
-            return false;
-        }
-        if (!IsKnownAttestationMode(attestation_byte)) {
-            error = "unknown attestation mode: 0x" + HexStr(std::span<const uint8_t>{&attestation_byte, 1});
-            return false;
-        }
-        if (!IsKnownScheme(scheme_byte)) {
-            error = "unknown coil scheme: 0x" + HexStr(std::span<const uint8_t>{&scheme_byte, 1});
-            return false;
-        }
-        ladder_out.coil.coil_type = static_cast<RungCoilType>(coil_type_byte);
-        ladder_out.coil.attestation = static_cast<RungAttestationMode>(attestation_byte);
-        ladder_out.coil.scheme = static_cast<RungScheme>(scheme_byte);
+        // Compact coil: 0x00 sentinel + output_index = 2 bytes for default (UNLOCK, INLINE, SCHNORR, no address)
+        uint8_t coil_type_byte;
+        ss >> coil_type_byte;
 
-        // TX_MLSC: read output_index
-        uint8_t output_index_byte2;
-        ss >> output_index_byte2;
-        ladder_out.coil.output_index = output_index_byte2;
-
-        // Read coil address hash (0 = no address, 32 = SHA256 of raw address)
-        uint64_t addr_len = ReadCompactSize(ss);
-        if (addr_len != 0 && addr_len != 32) {
-            error = "coil address_hash must be 0 or 32 bytes, got " + std::to_string(addr_len);
-            return false;
-        }
-        if (addr_len > 0) {
-            ladder_out.coil.address_hash.resize(addr_len);
-            ss.read(MakeWritableByteSpan(ladder_out.coil.address_hash));
-        }
-
-        // Read coil condition count — must be 0 (coil conditions removed, reject non-zero)
-        uint64_t n_coil_rungs = ReadCompactSize(ss);
-        if (n_coil_rungs != 0) {
-            error = "coil conditions not supported: n_coil_conditions must be 0, got " + std::to_string(n_coil_rungs);
-            return false;
-        }
-
-        // Read per-rung destinations (0 = none, backward compatible)
-        if (!ss.empty()) {
-            uint64_t n_rung_dests = ReadCompactSize(ss);
-            if (n_rung_dests > MAX_RUNGS) {
-                error = "too many rung_destinations: " + std::to_string(n_rung_dests);
+        if (coil_type_byte == COMPACT_COIL_SENTINEL) {
+            // Compact default coil: UNLOCK + INLINE + SCHNORR + no address + no conditions
+            ladder_out.coil.coil_type = RungCoilType::UNLOCK;
+            ladder_out.coil.attestation = RungAttestationMode::INLINE;
+            ladder_out.coil.scheme = RungScheme::SCHNORR;
+            uint8_t output_index_byte2;
+            ss >> output_index_byte2;
+            ladder_out.coil.output_index = output_index_byte2;
+            // No address, no conditions, no rung_destinations
+        } else {
+            // Full coil encoding
+            uint8_t attestation_byte, scheme_byte;
+            ss >> attestation_byte >> scheme_byte;
+            if (!IsKnownCoilType(coil_type_byte)) {
+                error = "unknown coil type: 0x" + HexStr(std::span<const uint8_t>{&coil_type_byte, 1});
                 return false;
             }
-            if (n_rung_dests > 0) {
-                ladder_out.coil.rung_destinations.resize(n_rung_dests);
-                std::set<uint16_t> seen_indices;
-                for (uint64_t rd = 0; rd < n_rung_dests; ++rd) {
-                    uint8_t lo, hi;
-                    ss >> lo >> hi;
-                    uint16_t rung_idx = static_cast<uint16_t>(lo) | (static_cast<uint16_t>(hi) << 8);
-                    if (!seen_indices.insert(rung_idx).second) {
-                        error = "duplicate rung_destination index: " + std::to_string(rung_idx);
-                        return false;
+            if (!IsKnownAttestationMode(attestation_byte)) {
+                error = "unknown attestation mode: 0x" + HexStr(std::span<const uint8_t>{&attestation_byte, 1});
+                return false;
+            }
+            if (!IsKnownScheme(scheme_byte)) {
+                error = "unknown coil scheme: 0x" + HexStr(std::span<const uint8_t>{&scheme_byte, 1});
+                return false;
+            }
+            ladder_out.coil.coil_type = static_cast<RungCoilType>(coil_type_byte);
+            ladder_out.coil.attestation = static_cast<RungAttestationMode>(attestation_byte);
+            ladder_out.coil.scheme = static_cast<RungScheme>(scheme_byte);
+
+            // TX_MLSC: read output_index
+            uint8_t output_index_byte2;
+            ss >> output_index_byte2;
+            ladder_out.coil.output_index = output_index_byte2;
+
+            // Read coil address hash (0 = no address, 32 = SHA256 of raw address)
+            uint64_t addr_len = ReadCompactSize(ss);
+            if (addr_len != 0 && addr_len != 32) {
+                error = "coil address_hash must be 0 or 32 bytes, got " + std::to_string(addr_len);
+                return false;
+            }
+            if (addr_len > 0) {
+                ladder_out.coil.address_hash.resize(addr_len);
+                ss.read(MakeWritableByteSpan(ladder_out.coil.address_hash));
+            }
+
+            // Read coil condition count — must be 0 (coil conditions removed, reject non-zero)
+            uint64_t n_coil_rungs = ReadCompactSize(ss);
+            if (n_coil_rungs != 0) {
+                error = "coil conditions not supported: n_coil_conditions must be 0, got " + std::to_string(n_coil_rungs);
+                return false;
+            }
+
+            // Read per-rung destinations (0 = none, backward compatible)
+            if (!ss.empty()) {
+                uint64_t n_rung_dests = ReadCompactSize(ss);
+                if (n_rung_dests > MAX_RUNGS) {
+                    error = "too many rung_destinations: " + std::to_string(n_rung_dests);
+                    return false;
+                }
+                if (n_rung_dests > 0) {
+                    ladder_out.coil.rung_destinations.resize(n_rung_dests);
+                    std::set<uint16_t> seen_indices;
+                    for (uint64_t rd = 0; rd < n_rung_dests; ++rd) {
+                        uint8_t lo, hi;
+                        ss >> lo >> hi;
+                        uint16_t rung_idx = static_cast<uint16_t>(lo) | (static_cast<uint16_t>(hi) << 8);
+                        if (!seen_indices.insert(rung_idx).second) {
+                            error = "duplicate rung_destination index: " + std::to_string(rung_idx);
+                            return false;
+                        }
+                        ladder_out.coil.rung_destinations[rd].first = rung_idx;
+                        ladder_out.coil.rung_destinations[rd].second.resize(32);
+                        ss.read(MakeWritableByteSpan(ladder_out.coil.rung_destinations[rd].second));
                     }
-                    ladder_out.coil.rung_destinations[rd].first = rung_idx;
-                    ladder_out.coil.rung_destinations[rd].second.resize(32);
-                    ss.read(MakeWritableByteSpan(ladder_out.coil.rung_destinations[rd].second));
                 }
             }
         }
@@ -763,22 +788,32 @@ std::vector<uint8_t> SerializeLadderWitness(const LadderWitness& ladder,
             SerializeField(ss, diff.new_field, true);
         }
 
-        // Write fresh coil (same as normal path)
-        ss << static_cast<uint8_t>(ladder.coil.coil_type);
-        ss << static_cast<uint8_t>(ladder.coil.attestation);
-        ss << static_cast<uint8_t>(ladder.coil.scheme);
-        ss << ladder.coil.output_index; // TX_MLSC: which output this rung governs
-        WriteCompactSize(ss, ladder.coil.address_hash.size());
-        if (!ladder.coil.address_hash.empty()) {
-            ss.write(MakeByteSpan(ladder.coil.address_hash));
-        }
-        WriteCompactSize(ss, 0); // n_coil_conditions: always 0 (wire format compat)
-        // Write per-rung destinations
-        WriteCompactSize(ss, ladder.coil.rung_destinations.size());
-        for (const auto& [rung_idx, addr_hash] : ladder.coil.rung_destinations) {
-            ss << static_cast<uint8_t>(rung_idx & 0xFF);
-            ss << static_cast<uint8_t>((rung_idx >> 8) & 0xFF);
-            ss.write(MakeByteSpan(addr_hash));
+        // Write fresh coil (same as normal path, with compact encoding)
+        bool is_ref_default_coil = (ladder.coil.coil_type == RungCoilType::UNLOCK &&
+                                    ladder.coil.attestation == RungAttestationMode::INLINE &&
+                                    ladder.coil.scheme == RungScheme::SCHNORR &&
+                                    ladder.coil.address_hash.empty() &&
+                                    ladder.coil.rung_destinations.empty());
+        if (is_ref_default_coil) {
+            ss << COMPACT_COIL_SENTINEL;
+            ss << ladder.coil.output_index;
+        } else {
+            ss << static_cast<uint8_t>(ladder.coil.coil_type);
+            ss << static_cast<uint8_t>(ladder.coil.attestation);
+            ss << static_cast<uint8_t>(ladder.coil.scheme);
+            ss << ladder.coil.output_index; // TX_MLSC: which output this rung governs
+            WriteCompactSize(ss, ladder.coil.address_hash.size());
+            if (!ladder.coil.address_hash.empty()) {
+                ss.write(MakeByteSpan(ladder.coil.address_hash));
+            }
+            WriteCompactSize(ss, 0); // n_coil_conditions: always 0 (wire format compat)
+            // Write per-rung destinations
+            WriteCompactSize(ss, ladder.coil.rung_destinations.size());
+            for (const auto& [rung_idx, addr_hash] : ladder.coil.rung_destinations) {
+                ss << static_cast<uint8_t>(rung_idx & 0xFF);
+                ss << static_cast<uint8_t>((rung_idx >> 8) & 0xFF);
+                ss.write(MakeByteSpan(addr_hash));
+            }
         }
 
         // No relays section — inherited from source
@@ -797,26 +832,37 @@ std::vector<uint8_t> SerializeLadderWitness(const LadderWitness& ladder,
     }
 
     // Write coil (per-ladder, after all rungs)
-    ss << static_cast<uint8_t>(ladder.coil.coil_type);
-    ss << static_cast<uint8_t>(ladder.coil.attestation);
-    ss << static_cast<uint8_t>(ladder.coil.scheme);
-    ss << ladder.coil.output_index; // TX_MLSC: which output this rung governs
+    // Compact coil: default (UNLOCK, INLINE, SCHNORR, no address, no destinations) = 0x00 + output_index
+    bool is_default_coil = (ladder.coil.coil_type == RungCoilType::UNLOCK &&
+                            ladder.coil.attestation == RungAttestationMode::INLINE &&
+                            ladder.coil.scheme == RungScheme::SCHNORR &&
+                            ladder.coil.address_hash.empty() &&
+                            ladder.coil.rung_destinations.empty());
+    if (is_default_coil) {
+        ss << COMPACT_COIL_SENTINEL;
+        ss << ladder.coil.output_index;
+    } else {
+        ss << static_cast<uint8_t>(ladder.coil.coil_type);
+        ss << static_cast<uint8_t>(ladder.coil.attestation);
+        ss << static_cast<uint8_t>(ladder.coil.scheme);
+        ss << ladder.coil.output_index; // TX_MLSC: which output this rung governs
 
-    // Write coil address
-    WriteCompactSize(ss, ladder.coil.address_hash.size());
-    if (!ladder.coil.address_hash.empty()) {
-        ss.write(MakeByteSpan(ladder.coil.address_hash));
-    }
+        // Write coil address
+        WriteCompactSize(ss, ladder.coil.address_hash.size());
+        if (!ladder.coil.address_hash.empty()) {
+            ss.write(MakeByteSpan(ladder.coil.address_hash));
+        }
 
-    // Write coil condition count: always 0 (wire format compat)
-    WriteCompactSize(ss, 0);
+        // Write coil condition count: always 0 (wire format compat)
+        WriteCompactSize(ss, 0);
 
-    // Write per-rung destinations
-    WriteCompactSize(ss, ladder.coil.rung_destinations.size());
-    for (const auto& [rung_idx, addr_hash] : ladder.coil.rung_destinations) {
-        ss << static_cast<uint8_t>(rung_idx & 0xFF);
-        ss << static_cast<uint8_t>((rung_idx >> 8) & 0xFF);
-        ss.write(MakeByteSpan(addr_hash));
+        // Write per-rung destinations
+        WriteCompactSize(ss, ladder.coil.rung_destinations.size());
+        for (const auto& [rung_idx, addr_hash] : ladder.coil.rung_destinations) {
+            ss << static_cast<uint8_t>(rung_idx & 0xFF);
+            ss << static_cast<uint8_t>((rung_idx >> 8) & 0xFF);
+            ss.write(MakeByteSpan(addr_hash));
+        }
     }
 
     // Write relays (only if any relays or rung relay_refs exist)

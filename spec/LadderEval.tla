@@ -195,9 +195,12 @@ DoubleInversionIdentity ==
         ApplyInversion(ApplyInversion(result, TRUE), TRUE) = result
 
 \* PROPERTY 4: Empty rung is always ERROR
+\* Bounded quantifier for TLC tractability (relay results don't matter
+\* when there are no relay_refs, and EvalRung checks Len(blocks)==0 first)
 EmptyRungError ==
-    \A relayResults \in Seq(EvalResults) :
-        EvalRung([blocks |-> <<>>, relayRefs |-> {}], relayResults) = "ERROR"
+    \A n \in 0..MaxRelays :
+        \A relayResults \in [1..n -> EvalResults] :
+            EvalRung([blocks |-> <<>>, relayRefs |-> {}], relayResults) = "ERROR"
 
 \* PROPERTY 5: Empty ladder never satisfies
 EmptyLadderNeverSatisfied ==
@@ -255,7 +258,12 @@ RecurseTerminates ==
     recurseDepth \in 0..MaxRecurseDepth /\
     (recurseDepth > 0 => recurseDepth' < recurseDepth)
 
-RecurseSpec == RecurseInit /\ [][RecurseStep]_recurseDepth
+\* Done step: recurseDepth = 0, stuttering
+RecurseDone == recurseDepth = 0 /\ UNCHANGED recurseDepth
+
+RecurseNext == RecurseStep \/ RecurseDone
+
+RecurseSpec == RecurseInit /\ [][RecurseNext]_recurseDepth
 
 (***************************************************************************)
 (* Anti-spam properties                                                    *)
@@ -267,13 +275,11 @@ RecurseSpec == RecurseInit /\ [][RecurseStep]_recurseDepth
 \* PREIMAGE fields are capped at MAX_PREIMAGE_FIELDS_PER_TX = 2 (across all inputs).
 \* DATA type is restricted to DATA_RETURN blocks only.
 \*
-\* TX_MLSC addition: conditions_root is protocol-derived from creation proof.
-\* leaf = TaggedHash(structural_template || value_commitment).
-\* structural_template: validated block types + inverted flags + coil (enums).
-\* value_commitment: SHA256(field_values || pubkeys) — hash output, not user-chosen.
-\* Total readable attacker data per transaction: 112 bytes (flat).
+\* Conditions are embedded directly in scriptPubKey (prefix 0xc1).
+\* Conditions deserialization enforces type restrictions (no PUBKEY/SIGNATURE/PREIMAGE).
+\* Total readable attacker data per transaction: ~116 bytes (flat).
 \*
-\* This property is structural (enforced by deserialization + creation proof
+\* This property is structural (enforced by deserialization + conditions
 \* validation) and cannot be fully modeled in TLA+ without the wire format.
 \* We assert the key invariant: key-consuming blocks cannot be inverted.
 AntiSpamKeyInvariant == KeyConsumingNeverInvertible

@@ -17,7 +17,8 @@ CONSTANTS
 
 \* Abstract SPK hashes (small integers)
 SpkHashes == 1..NumInputs
-\* Field types (reduced set for tractability)
+\* Field types (reduced set for tractability — code allows all 9 data types
+\* in diffs, only constraint is type must match source field)
 FieldTypes == {"PUBKEY", "SIGNATURE"}
 
 (***************************************************************************)

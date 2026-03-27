@@ -15,11 +15,21 @@
 #include <primitives/transaction.h>
 #include <pubkey.h>
 #include <script/script.h>
+#include <secp256k1.h>
+#include <secp256k1_schnorrsig.h>
 
 #include <algorithm>
 #include <map>
 
 namespace rung {
+
+/** Lazily initialized secp256k1 context for EC operations that require ecmult_gen
+ *  (e.g., pubkey_create, pubkey_tweak_add). Thread-safe via function-local static. */
+static const secp256k1_context* GetVerifyContext()
+{
+    static secp256k1_context* ctx = secp256k1_context_create(SECP256K1_CONTEXT_NONE);
+    return ctx;
+}
 
 bool LadderSignatureChecker::CheckSchnorrSignature(std::span<const unsigned char> sig,
                                                     std::span<const unsigned char> pubkey_in,
@@ -80,19 +90,190 @@ bool LadderSignatureChecker::CheckSchnorrSignature(std::span<const unsigned char
 
 bool BatchVerifier::Verify() const
 {
-    // Fall back to individual verification (batch API not yet available in secp256k1)
+    // Separate inline and aggregated entries
+    bool has_aggregated = false;
     for (const auto& entry : entries) {
+        if (entry.aggregated) { has_aggregated = true; break; }
+    }
+
+    // Verify inline (non-aggregated) entries individually
+    for (const auto& entry : entries) {
+        if (entry.aggregated) continue;
         std::span<const unsigned char> sig_span{entry.sig.data(), entry.sig.size()};
         if (!entry.pubkey.VerifySchnorr(entry.sighash, sig_span)) {
             return false;
         }
     }
+
+    // Half-aggregation verification for aggregated entries
+    // Equation: s_agg * G == sum(z_i * (R_i + e_i * P_i))
+    // where z_i are deterministic weights and e_i are BIP-340 challenges
+    if (has_aggregated) {
+        if (aggregated_s.size() != 32) return false;
+
+        // Collect aggregated entries
+        std::vector<const Entry*> agg_entries;
+        for (const auto& entry : entries) {
+            if (entry.aggregated) agg_entries.push_back(&entry);
+        }
+        if (agg_entries.empty()) return true;
+
+        // Compute deterministic weights: z_0 = 1, z_i = H(all_R || all_pk || i) for i > 0
+        // Build the aggregation context: concatenation of all R values and pubkeys
+        HashWriter agg_ctx{TaggedHash("LadderHalfAggCtx")};
+        for (const auto* e : agg_entries) {
+            agg_ctx.write(std::as_bytes(std::span<const unsigned char>{e->sig.data(), e->sig.size()}));   // R_i (32 bytes)
+            agg_ctx.write(std::as_bytes(std::span<const unsigned char>{e->pubkey.data(), 32})); // pk_i
+        }
+        uint256 ctx_hash = agg_ctx.GetSHA256();
+
+        // For each aggregated entry, reconstruct (R_i, s_i) where s_i = s_agg's contribution
+        // and verify individually with weight applied.
+        // Simple approach: verify s_agg * G == sum(z_i * R_i + z_i * e_i * P_i)
+        // using secp256k1 multi-point operations.
+        //
+        // Since secp256k1 doesn't expose a direct multi-scalar-mult API, we use
+        // the available pubkey combine/tweak_mul operations.
+        //
+        // TODO: Replace with dedicated secp256k1_schnorr_halfagg_verify when available.
+        // For now, use a conservative approach: compute each z_i * s_i from the aggregated
+        // s and verify the sum equation holds.
+
+        // Conservative verification: decompose and verify individually.
+        // This is correct but doesn't save verification time (saves only witness bytes).
+        // A proper multi-scalar-mult implementation would be faster.
+
+        // For N=1 aggregated entry: z_0 = 1, s_agg = s_0. Just verify normally.
+        if (agg_entries.size() == 1) {
+            std::vector<unsigned char> full_sig(64);
+            std::memcpy(full_sig.data(), agg_entries[0]->sig.data(), 32);
+            std::memcpy(full_sig.data() + 32, aggregated_s.data(), 32);
+            if (!agg_entries[0]->pubkey.VerifySchnorr(
+                    agg_entries[0]->sighash,
+                    std::span<const unsigned char>{full_sig.data(), 64})) {
+                return false;
+            }
+        } else {
+            // Multi-entry half-aggregation verification using EC math.
+            // Verify: s_agg * G == sum(z_i * R_i + z_i * e_i * P_i)
+            // Uses secp256k1 pubkey_create, tweak_mul, and combine operations.
+
+            // Step 1: Compute LHS = s_agg * G
+            const secp256k1_context* vctx = GetVerifyContext();
+            secp256k1_pubkey lhs;
+            if (!secp256k1_ec_pubkey_create(vctx, &lhs, aggregated_s.data())) {
+                LogPrintf("BatchVerifier: failed to compute s_agg * G\n");
+                return false;
+            }
+
+            // Step 2: Compute RHS = sum(z_i * R_i + z_i * e_i * P_i)
+            std::vector<secp256k1_pubkey> terms;
+            terms.reserve(agg_entries.size() * 2);
+
+            for (size_t i = 0; i < agg_entries.size(); ++i) {
+                const auto* e = agg_entries[i];
+                if (e->sig.size() != 32) return false;
+
+                // Weight z_i: z_0 = 1, z_i = H(ctx || i) for i > 0
+                unsigned char z_i[32];
+                if (i == 0) {
+                    std::memset(z_i, 0, 31);
+                    z_i[31] = 1; // big-endian 1
+                } else {
+                    uint256 z_hash = (HashWriter{TaggedHash("LadderHalfAggWeight")} << ctx_hash << static_cast<uint32_t>(i)).GetSHA256();
+                    std::memcpy(z_i, z_hash.data(), 32);
+                }
+
+                // Parse R_i as full pubkey (0x02 || x-coordinate for even Y, BIP-340 convention)
+                unsigned char R_compressed[33];
+                R_compressed[0] = 0x02;
+                std::memcpy(R_compressed + 1, e->sig.data(), 32);
+                secp256k1_pubkey R_full;
+                if (!secp256k1_ec_pubkey_parse(secp256k1_context_static, &R_full, R_compressed, 33)) {
+                    LogPrintf("BatchVerifier: failed to parse R_%zu\n", i);
+                    return false;
+                }
+
+                // Parse P_i as full pubkey (0x02 || x-coordinate)
+                unsigned char P_compressed[33];
+                P_compressed[0] = 0x02;
+                std::memcpy(P_compressed + 1, e->pubkey.data(), 32);
+                secp256k1_pubkey P_full;
+                if (!secp256k1_ec_pubkey_parse(secp256k1_context_static, &P_full, P_compressed, 33)) {
+                    LogPrintf("BatchVerifier: failed to parse P_%zu\n", i);
+                    return false;
+                }
+
+                // Compute BIP-340 challenge: e_i = H("BIP0340/challenge", R_x || P_x || m_i)
+                unsigned char e_i[32];
+                {
+                    CSHA256 hasher;
+                    // Pre-compute tagged hash prefix for "BIP0340/challenge"
+                    unsigned char tag_hash[32];
+                    CSHA256().Write(reinterpret_cast<const unsigned char*>("BIP0340/challenge"), 17).Finalize(tag_hash);
+                    hasher.Write(tag_hash, 32);
+                    hasher.Write(tag_hash, 32);
+                    hasher.Write(e->sig.data(), 32);      // R_x
+                    hasher.Write(e->pubkey.data(), 32);    // P_x
+                    hasher.Write(e->sighash.data(), 32);   // m
+                    hasher.Finalize(e_i);
+                }
+
+                // Compute z_i * e_i (scalar multiplication mod n)
+                unsigned char z_e_i[32];
+                std::memcpy(z_e_i, e_i, 32);
+                if (!secp256k1_ec_seckey_tweak_mul(secp256k1_context_static, z_e_i, z_i)) {
+                    LogPrintf("BatchVerifier: scalar mul failed for entry %zu\n", i);
+                    return false;
+                }
+
+                // Compute z_i * R_i (point scalar multiplication)
+                secp256k1_pubkey R_scaled = R_full;
+                if (!secp256k1_ec_pubkey_tweak_mul(secp256k1_context_static, &R_scaled, z_i)) {
+                    LogPrintf("BatchVerifier: R scaling failed for entry %zu\n", i);
+                    return false;
+                }
+                terms.push_back(R_scaled);
+
+                // Compute z_i * e_i * P_i (point scalar multiplication)
+                secp256k1_pubkey P_scaled = P_full;
+                if (!secp256k1_ec_pubkey_tweak_mul(secp256k1_context_static, &P_scaled, z_e_i)) {
+                    LogPrintf("BatchVerifier: P scaling failed for entry %zu\n", i);
+                    return false;
+                }
+                terms.push_back(P_scaled);
+            }
+
+            // Step 3: Sum all terms to get RHS
+            std::vector<const secp256k1_pubkey*> term_ptrs;
+            term_ptrs.reserve(terms.size());
+            for (const auto& t : terms) term_ptrs.push_back(&t);
+
+            secp256k1_pubkey rhs;
+            if (!secp256k1_ec_pubkey_combine(secp256k1_context_static, &rhs, term_ptrs.data(), term_ptrs.size())) {
+                LogPrintf("BatchVerifier: point combination failed\n");
+                return false;
+            }
+
+            // Step 4: Compare LHS (s_agg * G) == RHS (sum of terms)
+            unsigned char lhs_ser[33], rhs_ser[33];
+            size_t lhs_len = 33, rhs_len = 33;
+            secp256k1_ec_pubkey_serialize(secp256k1_context_static, lhs_ser, &lhs_len, &lhs, SECP256K1_EC_COMPRESSED);
+            secp256k1_ec_pubkey_serialize(secp256k1_context_static, rhs_ser, &rhs_len, &rhs, SECP256K1_EC_COMPRESSED);
+            if (lhs_len != rhs_len || std::memcmp(lhs_ser, rhs_ser, lhs_len) != 0) {
+                LogPrintf("BatchVerifier: half-aggregation verification failed (LHS != RHS)\n");
+                return false;
+            }
+        }
+    }
+
     return true;
 }
 
 int BatchVerifier::FindFailure() const
 {
     for (size_t i = 0; i < entries.size(); ++i) {
+        if (entries[i].aggregated) continue; // Aggregated entries fail as a group
         std::span<const unsigned char> sig_span{entries[i].sig.data(), entries[i].sig.size()};
         if (!entries[i].pubkey.VerifySchnorr(entries[i].sighash, sig_span)) {
             return static_cast<int>(i);
@@ -3357,7 +3538,8 @@ bool VerifyRungTx(const CTransaction& tx,
                   const BaseSignatureChecker& checker,
                   const PrecomputedTransactionData& txdata,
                   ScriptError* serror,
-                  int32_t block_height)
+                  int32_t block_height,
+                  SharedTreeCache* shared_cache)
 {
     if (nIn >= tx.vin.size()) {
         if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
@@ -3365,14 +3547,11 @@ bool VerifyRungTx(const CTransaction& tx,
     }
 
     // Consensus: validate creation proof (structural templates + root match).
-    {
+    // Creation proof is optional — when absent, the conditions_root is unverified
+    // (user-supplied). Spend-time Merkle proof still validates each output's conditions.
+    if (!tx.creation_proof.empty()) {
         CreationProof proof;
         std::string cp_error;
-        if (tx.creation_proof.empty()) {
-            LogPrintf("TX_MLSC: missing creation proof\n");
-            if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
-            return false;
-        }
         if (!DeserializeCreationProof(tx.creation_proof, proof, cp_error)) {
             LogPrintf("TX_MLSC creation proof deserialization failed: %s\n", cp_error);
             if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
@@ -3388,14 +3567,15 @@ bool VerifyRungTx(const CTransaction& tx,
             if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
             return false;
         }
-        // Dust threshold: every spendable output must carry minimum value
-        for (size_t i = 0; i < tx.vout.size(); ++i) {
-            if (tx.vout[i].nValue > 0 && tx.vout[i].nValue < MIN_RUNG_OUTPUT_VALUE) {
-                LogPrintf("TX_MLSC output %zu: value %lld below minimum %lld\n",
-                          i, (long long)tx.vout[i].nValue, (long long)MIN_RUNG_OUTPUT_VALUE);
-                if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
-                return false;
-            }
+    }
+
+    // Dust threshold: every spendable output must carry minimum value (unconditional)
+    for (size_t i = 0; i < tx.vout.size(); ++i) {
+        if (tx.vout[i].nValue > 0 && tx.vout[i].nValue < MIN_RUNG_OUTPUT_VALUE) {
+            LogPrintf("TX_MLSC output %zu: value %lld below minimum %lld\n",
+                      i, (long long)tx.vout[i].nValue, (long long)MIN_RUNG_OUTPUT_VALUE);
+            if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
+            return false;
         }
     }
 
@@ -3409,14 +3589,79 @@ bool VerifyRungTx(const CTransaction& tx,
 
     const auto& witness = tx.vin[nIn].scriptWitness;
 
-    // Exact witness stack size enforcement (prevents data stuffing via extra elements).
-    // MLSC (0xDF): exactly 2 elements (LadderWitness + MLSCProof).
-    if (witness.stack.size() != 2) {
+    // Witness stack size determines spending path:
+    //   1 element  = key-path spend (signature only)
+    //   2 elements = script-path (LadderWitness + MLSCProof, legacy — no tweak check)
+    //   3 elements = script-path with tweak (LadderWitness + MLSCProof + internal_pubkey)
+    if (witness.stack.empty() || witness.stack.size() > 3) {
         if (serror) *serror = SCRIPT_ERR_WITNESS_PROGRAM_WITNESS_EMPTY;
         return false;
     }
 
-    // The ladder witness is the first element of the witness stack
+    // Only MLSC (0xDF) outputs accepted. Inline (0xC1) removed.
+    if (!IsMLSCScript(spent_output.scriptPubKey)) {
+        if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
+        return false;
+    }
+
+    // ================================================================
+    // KEY-PATH SPEND: witness = [signature]
+    // Verify Schnorr signature directly against the output's conditions_root
+    // treated as an x-only public key. No conditions revealed, no Merkle proof.
+    // ================================================================
+    if (witness.stack.size() == 1) {
+        uint256 conditions_root;
+        if (!GetMLSCRoot(spent_output.scriptPubKey, conditions_root)) {
+            if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
+            return false;
+        }
+
+        const auto& sig = witness.stack[0];
+        if (sig.size() != 64 && sig.size() != 65) {
+            if (serror) *serror = SCRIPT_ERR_SCHNORR_SIG_SIZE;
+            return false;
+        }
+
+        // Parse the conditions_root as an x-only public key
+        XOnlyPubKey output_key;
+        std::memcpy(output_key.begin(), conditions_root.data(), 32);
+        if (!output_key.IsFullyValid()) {
+            if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
+            return false;
+        }
+
+        // Extract sighash type from trailing byte (BIP341 convention)
+        uint8_t hashtype = SIGHASH_DEFAULT;
+        std::vector<unsigned char> sig_data(sig.begin(), sig.end());
+        if (sig_data.size() == 65) {
+            hashtype = sig_data.back();
+            sig_data.pop_back();
+            if (hashtype == SIGHASH_DEFAULT) {
+                if (serror) *serror = SCRIPT_ERR_SCHNORR_SIG_HASHTYPE;
+                return false;
+            }
+        }
+
+        // Compute key-path sighash (no conditions commitment)
+        uint256 sighash;
+        if (!SignatureHashLadderKeyPath(txdata, tx, nIn, hashtype, sighash)) {
+            if (serror) *serror = SCRIPT_ERR_SCHNORR_SIG_HASHTYPE;
+            return false;
+        }
+
+        // Verify Schnorr signature against the output key
+        if (!output_key.VerifySchnorr(sighash, std::span<const unsigned char>{sig_data.data(), sig_data.size()})) {
+            if (serror) *serror = SCRIPT_ERR_SCHNORR_SIG;
+            return false;
+        }
+
+        return true;
+    }
+
+    // ================================================================
+    // SCRIPT-PATH SPEND: witness = [LadderWitness, MLSCProof] or
+    //                               [LadderWitness, MLSCProof, internal_pubkey]
+    // ================================================================
     const auto& witness_bytes = witness.stack[0];
 
     LadderWitness witness_ladder;
@@ -3433,12 +3678,6 @@ bool VerifyRungTx(const CTransaction& tx,
             if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
             return false;
         }
-    }
-
-    // Only MLSC (0xDF) outputs accepted. Inline (0xC1) removed.
-    if (!IsMLSCScript(spent_output.scriptPubKey)) {
-        if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
-        return false;
     }
 
     RungConditions conditions;
@@ -3466,6 +3705,42 @@ bool VerifyRungTx(const CTransaction& tx,
         if (!DeserializeMLSCProof(witness.stack[1], mlsc_proof, proof_error)) {
             if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
             return false;
+        }
+
+        // SHARED proof mode: validate against a previously verified input from the same source tx
+        if (mlsc_proof.proof_mode == MLSCProofMode::SHARED) {
+            if (!shared_cache) {
+                LogPrintf("MLSC shared proof: no cache available\n");
+                if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
+                return false;
+            }
+            uint16_t src_idx = mlsc_proof.shared_source_input;
+            if (src_idx >= nIn) {
+                LogPrintf("MLSC shared proof: source_input %u >= current input %u (must reference earlier input)\n",
+                          src_idx, nIn);
+                if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
+                return false;
+            }
+            // Verify same source tx
+            if (tx.vin[src_idx].prevout.hash != tx.vin[nIn].prevout.hash) {
+                LogPrintf("MLSC shared proof: source input %u has different prevout hash\n", src_idx);
+                if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
+                return false;
+            }
+            // Look up the verified root from the source input
+            auto it = shared_cache->find(tx.vin[src_idx].prevout.hash);
+            if (it == shared_cache->end()) {
+                LogPrintf("MLSC shared proof: source input %u not in cache\n", src_idx);
+                if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
+                return false;
+            }
+            if (it->second != conditions_root) {
+                LogPrintf("MLSC shared proof: cached root mismatch\n");
+                if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
+                return false;
+            }
+            // Shared proof verified — the root is valid. Continue to rung evaluation below.
+            // (The revealed rung + coil still need to be evaluated for the spending conditions.)
         }
 
         // Single rung rule: standard spends reveal exactly 1 rung
@@ -3512,31 +3787,88 @@ bool VerifyRungTx(const CTransaction& tx,
         cp_rung.value_commitment = ComputeValueCommitment(
             mlsc_proof.revealed_rung, rung_pks);
 
-        // Compute leaf and verify against conditions_root
+        // Compute leaf (needed for rung evaluation even in SHARED mode)
         uint256 my_leaf = ComputeTxMLSCLeaf(cp_rung);
 
-        size_t total_leaves = mlsc_proof.total_rungs;
-        std::vector<uint256> leaves(total_leaves);
-        leaves[mlsc_proof.rung_index] = my_leaf;
+        // Skip Merkle verification for SHARED proofs (already validated via cache)
+        if (mlsc_proof.proof_mode == MLSCProofMode::SHARED) {
+            // Root was already verified by the shared cache lookup above.
+            // Fall through to rung evaluation.
+        } else if (witness.stack.size() == 3) {
+            // Compute raw Merkle root from proof, then verify tweak
+            uint256 computed_merkle_root;
+            if (mlsc_proof.proof_mode == MLSCProofMode::MERKLE_PATH) {
+                computed_merkle_root = ComputeMerkleRootFromPath(my_leaf, mlsc_proof.proof_hashes);
+            } else {
+                size_t total_leaves = mlsc_proof.total_rungs;
+                std::vector<uint256> leaves(total_leaves);
+                leaves[mlsc_proof.rung_index] = my_leaf;
+                size_t ph_idx = 0;
+                for (size_t i = 0; i < total_leaves; ++i) {
+                    if (i == mlsc_proof.rung_index) continue;
+                    if (ph_idx >= mlsc_proof.proof_hashes.size()) {
+                        LogPrintf("MLSC proof failed: not enough proof hashes\n");
+                        if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
+                        return false;
+                    }
+                    leaves[i] = mlsc_proof.proof_hashes[ph_idx++];
+                }
+                computed_merkle_root = BuildMerkleTree(std::move(leaves));
+            }
 
-        // Fill unrevealed leaves from proof_hashes
-        size_t ph_idx = 0;
-        for (size_t i = 0; i < total_leaves; ++i) {
-            if (i == mlsc_proof.rung_index) continue;
-            if (ph_idx >= mlsc_proof.proof_hashes.size()) {
-                LogPrintf("MLSC proof failed: not enough proof hashes\n");
+            // Verify tweak: conditions_root == internal_pubkey + H(internal_pubkey || merkle_root) * G
+            if (witness.stack[2].size() != 32) {
+                LogPrintf("MLSC tweak: internal pubkey must be 32 bytes\n");
                 if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
                 return false;
             }
-            leaves[i] = mlsc_proof.proof_hashes[ph_idx++];
-        }
-
-        uint256 computed_root = BuildMerkleTree(std::move(leaves));
-        if (computed_root != conditions_root) {
-            LogPrintf("MLSC root mismatch: computed %s != expected %s\n",
-                      computed_root.GetHex(), conditions_root.GetHex());
-            if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
-            return false;
+            XOnlyPubKey internal_key;
+            std::memcpy(internal_key.begin(), witness.stack[2].data(), 32);
+            if (!internal_key.IsFullyValid()) {
+                LogPrintf("MLSC tweak: invalid internal pubkey\n");
+                if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
+                return false;
+            }
+            XOnlyPubKey output_key;
+            std::memcpy(output_key.begin(), conditions_root.data(), 32);
+            if (!output_key.CheckLadderTweak(internal_key, computed_merkle_root, false) &&
+                !output_key.CheckLadderTweak(internal_key, computed_merkle_root, true)) {
+                LogPrintf("MLSC tweak verification failed\n");
+                if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
+                return false;
+            }
+        } else {
+            // 2-element witness (legacy): verify Merkle proof directly against conditions_root
+            if (mlsc_proof.proof_mode == MLSCProofMode::MERKLE_PATH) {
+                std::string path_error;
+                if (!VerifyMerklePath(my_leaf, mlsc_proof.proof_hashes,
+                                      mlsc_proof.total_rungs, conditions_root, path_error)) {
+                    LogPrintf("MLSC Merkle path verification failed: %s\n", path_error.c_str());
+                    if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
+                    return false;
+                }
+            } else {
+                size_t total_leaves = mlsc_proof.total_rungs;
+                std::vector<uint256> leaves(total_leaves);
+                leaves[mlsc_proof.rung_index] = my_leaf;
+                size_t ph_idx = 0;
+                for (size_t i = 0; i < total_leaves; ++i) {
+                    if (i == mlsc_proof.rung_index) continue;
+                    if (ph_idx >= mlsc_proof.proof_hashes.size()) {
+                        LogPrintf("MLSC proof failed: not enough proof hashes\n");
+                        if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
+                        return false;
+                    }
+                    leaves[i] = mlsc_proof.proof_hashes[ph_idx++];
+                }
+                uint256 computed_root = BuildMerkleTree(std::move(leaves));
+                if (computed_root != conditions_root) {
+                    LogPrintf("MLSC root mismatch: computed %s != expected %s\n",
+                              computed_root.GetHex(), conditions_root.GetHex());
+                    if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
+                    return false;
+                }
+            }
         }
 
         // Verify coil.output_index matches the output being spent
@@ -3546,6 +3878,11 @@ bool VerifyRungTx(const CTransaction& tx,
                       witness_ladder.coil.output_index, spent_vout);
             if (serror) *serror = SCRIPT_ERR_UNKNOWN_ERROR;
             return false;
+        }
+
+        // Populate shared tree cache for same-source proof sharing
+        if (shared_cache && mlsc_proof.proof_mode != MLSCProofMode::SHARED) {
+            (*shared_cache)[tx.vin[nIn].prevout.hash] = conditions_root;
         }
 
         // Build RungConditions from MLSC proof (1 rung + relays + coil)

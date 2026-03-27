@@ -480,6 +480,7 @@ enum class RungCoilType : uint8_t {
 /** Attestation mode for signatures in this rung. */
 enum class RungAttestationMode : uint8_t {
     INLINE    = 0x01, //!< Signatures inline in witness
+    AGGREGATE = 0x02, //!< Half-aggregated: R per input in witness, aggregated s at tx level
 };
 
 /** Signature scheme for this rung. */
@@ -508,6 +509,7 @@ inline bool IsKnownAttestationMode(uint8_t a)
 {
     switch (static_cast<RungAttestationMode>(a)) {
     case RungAttestationMode::INLINE:
+    case RungAttestationMode::AGGREGATE:
         return true;
     }
     return false;

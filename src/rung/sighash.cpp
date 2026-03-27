@@ -15,6 +15,7 @@
 namespace rung {
 
 const HashWriter HASHER_LADDERSIGHASH{TaggedHash("LadderSighash")};
+const HashWriter HASHER_LADDERKEYPATH{TaggedHash("LadderKeyPathSighash")};
 
 /** Compute the conditions commitment for sighash.
  *  For MLSC outputs: use conditions_root directly (already commits to all data via Merkle tree).
@@ -126,6 +127,76 @@ bool SignatureHashLadder(const PrecomputedTransactionData& cache,
     return true;
 }
 
+template <class T>
+bool SignatureHashLadderKeyPath(const PrecomputedTransactionData& cache,
+                                const T& tx,
+                                unsigned int nIn,
+                                uint8_t hash_type,
+                                uint256& hash_out)
+{
+    assert(nIn < tx.vin.size());
+
+    // Key-path only supports standard sighash types (no ANYPREVOUT)
+    if (hash_type > 0x03 && hash_type != 0x81 && hash_type != 0x82 && hash_type != 0x83) {
+        return false;
+    }
+
+    if (!cache.m_ladder_ready || !cache.m_spent_outputs_ready) {
+        return false;
+    }
+
+    const uint8_t output_type = (hash_type == SIGHASH_DEFAULT || (hash_type & 0x03) == 0) ? SIGHASH_ALL : (hash_type & 0x03);
+    const uint8_t input_type = hash_type & SIGHASH_INPUT_MASK;
+
+    HashWriter ss{HASHER_LADDERKEYPATH};
+
+    // Epoch
+    static constexpr uint8_t EPOCH = 0;
+    ss << EPOCH;
+
+    // Hash type
+    ss << hash_type;
+
+    // Transaction level data
+    ss << tx.version;
+    ss << tx.nLockTime;
+
+    if (input_type != SIGHASH_ANYONECANPAY) {
+        ss << cache.m_prevouts_single_hash;
+        ss << cache.m_spent_amounts_single_hash;
+        ss << cache.m_sequences_single_hash;
+    }
+    if (output_type == SIGHASH_ALL) {
+        ss << cache.m_outputs_single_hash;
+    }
+
+    // Spend type: 0x00 for key-path (no conditions, no annex)
+    static constexpr uint8_t SPEND_TYPE_KEYPATH = 0x00;
+    ss << SPEND_TYPE_KEYPATH;
+
+    // Input-specific data
+    if (input_type == SIGHASH_ANYONECANPAY) {
+        ss << tx.vin[nIn].prevout;
+        ss << cache.m_spent_outputs[nIn];
+        ss << tx.vin[nIn].nSequence;
+    } else {
+        ss << nIn;
+    }
+
+    // Output for SIGHASH_SINGLE
+    if (output_type == SIGHASH_SINGLE) {
+        if (nIn >= tx.vout.size()) return false;
+        HashWriter sha_single_output{};
+        sha_single_output << tx.vout[nIn];
+        ss << sha_single_output.GetSHA256();
+    }
+
+    // NO conditions hash for key-path — conditions are not revealed
+
+    hash_out = ss.GetSHA256();
+    return true;
+}
+
 // Explicit template instantiations
 template bool SignatureHashLadder<CTransaction>(
     const PrecomputedTransactionData& cache,
@@ -141,6 +212,20 @@ template bool SignatureHashLadder<CMutableTransaction>(
     unsigned int nIn,
     uint8_t hash_type,
     const RungConditions& conditions,
+    uint256& hash_out);
+
+template bool SignatureHashLadderKeyPath<CTransaction>(
+    const PrecomputedTransactionData& cache,
+    const CTransaction& tx,
+    unsigned int nIn,
+    uint8_t hash_type,
+    uint256& hash_out);
+
+template bool SignatureHashLadderKeyPath<CMutableTransaction>(
+    const PrecomputedTransactionData& cache,
+    const CMutableTransaction& tx,
+    unsigned int nIn,
+    uint8_t hash_type,
     uint256& hash_out);
 
 } // namespace rung
