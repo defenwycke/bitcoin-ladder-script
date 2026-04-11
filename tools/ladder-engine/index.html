@@ -9427,7 +9427,14 @@ function SignetPanel() {
   };
   const handleCreate = async () => {
     const txData = exportCreateTxMLSC(rungs, txOutputs, txInputs, locktime);
-    const data = await apiCall('/api/ladder/create', txData);
+    // exportCreateTxMLSC produces the TX_MLSC shape (flat `outputs: [amount_btc]`
+    // + shared `rungs[]` with `output_index`). That matches the new `createtxmlsc`
+    // RPC, not the legacy `createrungtx` that the `/api/ladder/create` endpoint
+    // routes to. Routing to `/api/ladder/create` here hits the legacy RPC which
+    // expects `outputs: [{amount, conditions}]`, so `outputs_arr[i]["amount"]`
+    // lands on a bare number, returns null, and the evaluator throws
+    // "Amount is not a number or string". Use the typed endpoint instead.
+    const data = await apiCall('/api/ladder/createtxmlsc', txData);
     if (data) { setTxHex(data.hex); setSignedHex(''); setTxid(''); setMined(false); }
   };
   const handleSign = async () => {
@@ -10124,8 +10131,8 @@ function SignetPanel() {
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
           <div style={{ flex: '1 1 160px', minWidth: 140, textAlign: 'center' }}>
             <div style={sty.label}>1. CREATE</div>
-            <button style={{ ...sty.btn, ...(txHex ? sty.btnGreen : sty.btnPrimary), opacity: online ? 1 : 0.3 }} onClick={handleCreate} disabled={!online || loading === '/api/ladder/create'}>
-              {loading === '/api/ladder/create' ? 'CREATING...' : txHex ? '\u2713 CREATED' : 'CREATERUNGTX'}
+            <button style={{ ...sty.btn, ...(txHex ? sty.btnGreen : sty.btnPrimary), opacity: online ? 1 : 0.3 }} onClick={handleCreate} disabled={!online || loading === '/api/ladder/createtxmlsc'}>
+              {loading === '/api/ladder/createtxmlsc' ? 'CREATING...' : txHex ? '\u2713 CREATED' : 'CREATETXMLSC'}
             </button>
           </div>
           <div style={{ color: txHex ? 'var(--green-bright)' : 'var(--border-light)', fontSize: 20 }}>&#x2192;</div>
