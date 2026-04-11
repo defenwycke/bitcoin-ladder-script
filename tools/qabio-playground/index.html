@@ -494,6 +494,17 @@ const u32LeHex = (n) => {
   return bytes.map(b => b.toString(16).padStart(2, '0')).join('');
 };
 
+// Bitcoin Core's uint256::GetHex() returns bytes in REVERSED order (txid
+// display convention). The qabi_authchain / qabi_buildblock RPCs emit the
+// auth_tip and qabi_root in this form, but createtxmlsc's HASH256 fields
+// want raw in-memory bytes. reverseHex flips the byte order so the two
+// representations match at the consensus-check boundary.
+const reverseHex = (hex) => {
+  if (!hex) return hex;
+  const bytes = hex.match(/.{2}/g) || [];
+  return bytes.reverse().join('');
+};
+
 const randHex = (bytes) => {
   const arr = new Uint8Array(bytes);
   crypto.getRandomValues(arr);
@@ -1003,8 +1014,12 @@ function StagePanel({ apiCall }) {
       dispatch({ type: 'PART_UPDATE', id: p.id, patch: { status: 'pending' } });
 
       // ---- 1. Build the initial (unprimed) QABI UTXO via createtxmlsc. ----
+      // auth_tip from qabi_authchain is in uint256 display order (byte-reversed);
+      // createtxmlsc's HASH256 field wants raw in-memory bytes. reverseHex flips
+      // it so consensus's sha256^N(preimage) comparison lines up.
+      const authTipWire = reverseHex(p.authTip);
       const initialConditions = buildQabiConditionsForCreate({
-        authTipHex: p.authTip,
+        authTipHex: authTipWire,
         committedRootHex: '00'.repeat(32),
         committedDepth: 0,
         committedExpiry: 0,
@@ -1043,9 +1058,14 @@ function StagePanel({ apiCall }) {
       }});
 
       // ---- 2. Build the priming tx template via createtxmlsc. ----
+      // qabiRoot from qabi_buildblock is assumed display-order like auth_tip,
+      // so reverse both when writing HASH256 fields. new_committed_root in
+      // the signrungtx block spec below must match byte-for-byte, so reverse
+      // it there too (state below).
+      const qabiRootWire = reverseHex(state.coordinator.qabiRoot);
       const primedConditions = buildQabiConditionsForCreate({
-        authTipHex: p.authTip,
-        committedRootHex: state.coordinator.qabiRoot,
+        authTipHex: authTipWire,
+        committedRootHex: qabiRootWire,
         committedDepth: state.primeDepth,
         committedExpiry: state.coordinator.expiryHeight,
         ownerIdHex: p.ownerId,
@@ -1068,14 +1088,14 @@ function StagePanel({ apiCall }) {
         rung: 1,
         blocks: [{
           type: 'QABI_PRIME',
-          new_committed_root: state.coordinator.qabiRoot,
+          new_committed_root: qabiRootWire,
           prime_depth: state.primeDepth,
           new_committed_expiry: state.coordinator.expiryHeight,
           auth_seed: p.authSeed,
           chain_length: state.chainLength,
         }],
         conditions: buildQabiConditionsForSign({
-          authTipHex: p.authTip,
+          authTipHex: authTipWire,
           committedRootHex: '00'.repeat(32),
           committedDepth: 0,
           committedExpiry: 0,
@@ -1104,7 +1124,9 @@ function StagePanel({ apiCall }) {
           amount_sats: p.contributionSats - 500,
           spk: primeTemplate.scriptPubKey,
           conditions_root: primeTemplate.conditions_root,
-          committed_root: state.coordinator.qabiRoot,
+          // Store the wire-format (in-memory) root so the escape-sweep
+          // path can rebuild the primed conditions tree bit-identical.
+          committed_root: qabiRootWire,
           committed_depth: state.primeDepth,
           committed_expiry: state.coordinator.expiryHeight,
         },
@@ -1234,8 +1256,8 @@ function StagePanel({ apiCall }) {
         rung: 0,
         blocks: [{ type: 'SIG', privkey: p.walletKey.privkey_wif }],
         conditions: buildQabiConditionsForSign({
-          authTipHex: p.authTip,
-          committedRootHex: p.primedUtxo.committed_root,
+          authTipHex: reverseHex(p.authTip),
+          committedRootHex: p.primedUtxo.committed_root, // already wire-format (stored reversed)
           committedDepth: p.primedUtxo.committed_depth,
           committedExpiry: p.primedUtxo.committed_expiry,
           ownerIdHex: p.ownerId,
