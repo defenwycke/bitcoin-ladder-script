@@ -1181,16 +1181,23 @@ coordinator's signature. They CAN rebroadcast the same transaction
 unchanged (no modification → no signature invalidation), but this
 is a no-op.
 
-### Post-quantum fail-closed
+### Post-quantum cryptographic dependency
 
-Nodes without liboqs cannot compile the QABI_SPEND evaluator's
-FALCON-512 verification path. The reference implementation wires
-`EvalQABISpendBlock` to return ERROR on such nodes — QABI_SPEND is
-fail-closed in the absence of the cryptographic primitive, matching
-BIP-XXXX's treatment of other PQ schemes. This means a node that
-compiles bitcoin-core-ladder without liboqs support cannot validate
-QABIO transactions at all, and must either compile with liboqs or
-not act as a full validator for QABIO-activated chains.
+FALCON-512 verification requires a post-quantum signature library.
+The reference implementation uses liboqs, which is already a hard
+build dependency of base Ladder Script (BIP-XXXX) because the base
+`SIG` block supports FALCON-512, FALCON-1024, Dilithium3, and
+SPHINCS+ as consensus-critical signature schemes. QABIO reuses the
+same FALCON-512 verification path as the base SIG block and adds no
+new cryptographic primitives — a node that can validate a FALCON-512
+`SIG` spend under base Ladder Script can also validate a QABIO
+coordinator signature, because the underlying `rung::VerifyPQSignature`
+call is identical.
+
+Alternative implementations of FALCON-512 must match liboqs's
+verification semantics exactly, or a chain split will occur. The
+FALCON-512 specification and NIST standardisation artefacts define
+the reference behaviour; this BIP does not re-specify the primitive.
 
 ### Batch size vs. block-propagation budget
 
