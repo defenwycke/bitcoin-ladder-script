@@ -1150,7 +1150,7 @@ All source files are under `src/rung/`. Key files:
 | `sighash.cpp`     | `SignatureHashLadder` implementation                 |
 | `descriptor.cpp`  | Descriptor language parser and formatter             |
 | `policy.cpp`      | Standardness rules                                   |
-| `pq_verify.cpp`   | PQ signature verification via liboqs (optional)      |
+| `pq_verify.cpp`   | PQ signature verification via liboqs (mandatory)     |
 
 ## Test Vectors
 
@@ -1202,11 +1202,26 @@ depth-limited at evaluation time.
 signature to the full condition set. Replay across condition sets is
 prevented unless the signer opts out via ANYPREVOUTANYSCRIPT (`0xC0`).
 
-### Post-Quantum: Fail-Closed
+### Post-Quantum: Hard Dependency
 
-PQ support is compile-time optional (liboqs). Without liboqs, PQ scheme
-verification returns UNSATISFIED (fail-closed). The SIGNATURE field max
-of 50,000 bytes accommodates SPHINCS+-SHA2-256f (~49,216 bytes).
+Post-quantum signature verification (FALCON-512, FALCON-1024,
+Dilithium3, SPHINCS+) is a hard build dependency of Ladder Script. The
+reference implementation uses liboqs; alternative implementations must
+match its verification semantics exactly or risk a consensus split.
+liboqs cannot be treated as an optional compile-time feature, because
+PQ schemes are consensus-critical: a node that silently returned
+UNSATISFIED for PQ-signed spends would disagree with liboqs-enabled
+peers on transaction validity, fork the chain, and become a partial
+validator without its operator realising it. Making liboqs mandatory is
+the honest choice — analogous to how secp256k1 is a hard dependency of
+Bitcoin Core today.
+
+The SIGNATURE field max of 50,000 bytes accommodates SPHINCS+-SHA2-256f
+(~49,216 bytes). Nodes that cannot or will not link liboqs can still
+act as pre-activation peers (treating v4 transactions as
+anyone-can-spend per the soft-fork forward-compatibility rule in §
+Backwards Compatibility) but cannot participate as full validators
+after Ladder Script activates.
 
 ### Batch Verification
 
