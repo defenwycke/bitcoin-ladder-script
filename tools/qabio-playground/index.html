@@ -1179,7 +1179,7 @@ function StagePanel({ apiCall }) {
   const handleSignBatch = async () => {
     if (!state.batchTx.unsignedHex) { log('Build batch first', 'err'); return; }
     log('Computing SIGHASH_QABO…');
-    const sh = await apiCall('/api/ladder/qabi/sighash', { hex_tx: state.batchTx.unsignedHex });
+    const sh = await apiCall('/api/ladder/qabi/sighash', { hex:state.batchTx.unsignedHex });
     if (!sh) { log('sighash failed', 'err'); return; }
     storeJson('sighash', 'SIGHASH_QABO', sh);
 
@@ -1446,11 +1446,11 @@ function StagePanel({ apiCall }) {
 
     // ── 7. Sign batch with FALCON-512 ──
     log('Step 7/8: Signing batch with FALCON-512…');
-    const shRes = await apiCall('/api/ladder/qabi/sighash', { hex_tx: batchRes.hex });
+    const shRes = await apiCall('/api/ladder/qabi/sighash', { hex:batchRes.hex });
     if (!shRes) { log('sighash failed', 'err'); return; }
     storeJson('sighash', 'SIGHASH_QABO', shRes);
     const t0 = performance.now();
-    const sigRes = await apiCall('/api/ladder/qabi/signqabo', { hex_tx: batchRes.hex, privkey: coordKp.privkey });
+    const sigRes = await apiCall('/api/ladder/qabi/signqabo', { hex:batchRes.hex, privkey: coordKp.privkey });
     const signMs = performance.now() - t0;
     if (!sigRes) { log('signqabo failed', 'err'); return; }
     storeJson('signqabo', 'qabi_signqabo resp', sigRes);
@@ -1717,6 +1717,8 @@ function MetricsPanel() {
 // ────────────────────────────────────────────────────────────
 function LogPanel() {
   const state = useContext(StateCtx);
+  const logEnd = useRef(null);
+  useEffect(() => { logEnd.current?.scrollIntoView({ behavior: 'smooth' }); }, [state.log.length]);
   if (state.log.length === 0) return null;
   return (
     <div className="json-panel">
@@ -1724,12 +1726,13 @@ function LogPanel() {
         <span className="json-panel-title">Activity Log ({state.log.length})</span>
       </div>
       <div className="json-panel-body" style={{ maxHeight: 180 }}>
-        {state.log.slice().reverse().map((l, i) => (
+        {state.log.map((l, i) => (
           <div key={i} className={'log-line ' + l.kind}>
             <span className="ts">{l.ts}</span>{' '}
             <span className="msg">{l.msg}</span>
           </div>
         ))}
+        <div ref={logEnd} />
       </div>
     </div>
   );
