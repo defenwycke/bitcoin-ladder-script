@@ -26,7 +26,7 @@ This BIP specifies a large system (61 block types). For efficient review:
    protocol. The byte-level examples in Appendix B let you verify by hand.
 5. **Check Anti-Spam Properties** (5 min) — the key innovation that makes
    this practical.
-6. **Try it** — live signet: `bitcoinghost.org/labs/ladder-engine.html`
+6. **Try it** — live signet: `ladder-script.com/ladder-engine.html`
 
 ## Abstract
 
@@ -768,7 +768,7 @@ p2pkh(@pk)                                            # Legacy
 
 The complete grammar covering all 61 block types is documented at
 `src/rung/descriptor.h` and at
-[bitcoinghost.org/labs/descriptor-notation.html](https://bitcoinghost.org/labs/descriptor-notation.html).
+[ladder-script.com/descriptor-notation.html](https://ladder-script.com/descriptor-notation.html).
 
 #### Scheme Names
 
@@ -1195,7 +1195,7 @@ ECDSA and PQ signatures are verified individually.
 
 ## Acknowledgements
 
-This specification was developed as part of the Bitcoin Ghost project. The
+This specification was developed as part of the Ladder Script project. The
 MLSC Merkle tree design follows the BIP-341 tagged hash pattern. The CTV
 block implements BIP-119 template hash verification. The ANYPREVOUT and
 ANYPREVOUTANYSCRIPT sighash flags follow the design principles of BIP-118.

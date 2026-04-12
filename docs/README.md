@@ -1,6 +1,6 @@
 # Ladder Script Documentation
 
-Ladder Script is a typed, structured transaction scripting system for Bitcoin Ghost.
+Ladder Script is a typed, structured transaction scripting system for Bitcoin.
 It replaces Bitcoin Script's stack machine with declarative function blocks, typed fields,
 and Merkelized conditions (MLSC). Transactions use version 4 (`RUNG_TX_VERSION = 4`).
 
@@ -49,4 +49,4 @@ and Merkelized conditions (MLSC). Transactions use version 4 (`RUNG_TX_VERSION =
 
 ## Repository
 
-Source: [github.com/bitcoin-ghost/ghost-labs-ladder-script](https://github.com/bitcoin-ghost/ghost-labs-ladder-script)
+Source: [github.com/defenwycke/ladder-script-labs](https://github.com/defenwycke/ladder-script-labs)

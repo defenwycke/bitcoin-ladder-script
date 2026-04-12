@@ -616,4 +616,4 @@ per-output root in UTXO set). Standard soft fork activation boundary.
 
 ---
 
-*TX_MLSC Specification v0.2 · Bitcoin Ghost Project · March 2026*
+*TX_MLSC Specification v0.2 · Ladder Script Project · March 2026*

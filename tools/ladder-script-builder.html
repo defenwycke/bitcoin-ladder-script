@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ghost Labs — Ladder Script Builder</title>
+<title>Ladder Script — Ladder Script Builder</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -615,11 +615,11 @@ nav {
       <a href="how-it-works.html">How It Works</a>
       <a href="economics.html">Economics</a>
       <a href="docs/index.html">Docs</a>
-      <a href="ghost-labs.html" class="active">Labs</a>
+      <a href="index.html" class="active">Labs</a>
     </div>
     <div class="nav-right">
       <div class="labs-badge"><span class="dot"></span> LABS</div>
-      <a href="https://github.com/bitcoin-ghost/ghost-labs-ladder-script" class="btn btn-ghost">GitHub</a>
+      <a href="https://github.com/defenwycke/ladder-script-labs" class="btn btn-ghost">GitHub</a>
       <a href="get-started.html" class="btn btn-primary">Get Started</a>
     </div>
   </div>
@@ -2173,6 +2173,6 @@ buildPalette();
 buildTemplatesBar();
 render();
 </script>
-<script>(function(){var a=(location.hostname==='localhost'||location.hostname==='127.0.0.1')?'http://localhost:8801':'https://bitcoinghost.org';fetch(a+'/api/ladder/analytics/visit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page:location.pathname,referrer:document.referrer})}).catch(function(){});})()</script>
+<script>(function(){var a=(location.hostname==='localhost'||location.hostname==='127.0.0.1')?'http://localhost:8801':location.origin;fetch(a+'/api/ladder/analytics/visit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page:location.pathname,referrer:document.referrer})}).catch(function(){});})()</script>
 </body>
 </html>

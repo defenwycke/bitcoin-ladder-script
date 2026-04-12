@@ -4,7 +4,7 @@
 
 ## Q1: What is Ladder Script?
 
-Ladder Script is the spending-condition language for Bitcoin Ghost v4 (`RUNG_TX`)
+Ladder Script is the spending-condition language for Bitcoin v4 transaction format (`RUNG_TX`)
 transactions. It replaces Bitcoin Script with a structured, typed system of
 **function blocks** organized into **rungs**. Each block evaluates exactly one
 spending condition (signature check, timelock, hash preimage, covenant, etc.),

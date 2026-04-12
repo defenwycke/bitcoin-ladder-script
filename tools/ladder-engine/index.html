@@ -8498,7 +8498,7 @@ seedSessionLogIfEmpty();
 
 const SIGNET_API = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
   ? 'http://localhost:8801'
-  : 'https://bitcoinghost.org';
+  : location.origin;
 
 // ═══════════════════════════════════════════════════════════════
 // SHARED API CLIENT
@@ -12611,7 +12611,7 @@ ${ladderRows.map(r => `
 <h1>APPENDIX B --JSON</h1>
 <div class="json-block">${jsonOutput.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
 
-<div class="footer">Ladder Script Engine --Bitcoin Ghost</div>
+<div class="footer">Ladder Script Engine --Ladder Script</div>
 
 </body></html>`);
 
@@ -13105,6 +13105,6 @@ ${ladderRows.map(r => `
 
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);
 </script>
-<script>(function(){var a=(location.hostname==='localhost'||location.hostname==='127.0.0.1')?'http://localhost:8801':'https://bitcoinghost.org';fetch(a+'/api/ladder/analytics/visit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page:location.pathname,referrer:document.referrer})}).catch(function(){});})()</script>
+<script>(function(){var a=(location.hostname==='localhost'||location.hostname==='127.0.0.1')?'http://localhost:8801':location.origin;fetch(a+'/api/ladder/analytics/visit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page:location.pathname,referrer:document.referrer})}).catch(function(){});})()</script>
 </body>
 </html>

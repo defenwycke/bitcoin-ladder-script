@@ -3,9 +3,11 @@
 // No dependencies. Expose as window.LadderAPI.
 
 (function(){
-  const SIGNET_API = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
-    ? 'http://localhost:8801'
-    : 'https://bitcoinghost.org';
+  // Use the current origin for API calls, so the playground works on any
+  // domain that has the proxy routed to /api/ladder/*. Local dev falls back
+  // to the dev proxy on localhost:8801.
+  const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  const SIGNET_API = isLocal ? 'http://localhost:8801' : location.origin;
 
   async function apiCallBase(endpoint, body) {
     const opts = body !== undefined

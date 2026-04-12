@@ -97,10 +97,10 @@ tr:nth-child(even) td { background: #fafafa; }
 <header class="site-header">
   <div class="site-header-inner">
     <div class="header-top">
-      <a href="../ghost-labs.html" class="header-title">Ghost Labs</a>
+      <a href="../index.html" class="header-title">Ladder Script</a>
       <div class="header-right">
-        <a href="https://bitcoinghost.org">Bitcoin Ghost</a>
-        <a href="https://github.com/bitcoin-ghost/ghost-labs-ladder-script" target="_blank" class="gh-icon">
+        
+        <a href="https://github.com/defenwycke/ladder-script-labs" target="_blank" class="gh-icon">
           <svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
         </a>
       </div>
@@ -554,19 +554,19 @@ $ ghost-cli -signet signladder \
   <!-- PROXY API -->
   <div class="section">
     <div class="section-head">HTTP API (no node required)</div>
-    <p>If you don't want to run a node, the same flow works via the public proxy API at <code>bitcoinghost.org</code>:</p>
+    <p>If you don't want to run a node, the same flow works via the public proxy API at <code>ladder-script.com</code>:</p>
     <div class="code-block"><span class="cm"># Create</span>
-$ curl -X POST https://bitcoinghost.org/api/ladder/create \
+$ curl -X POST https://ladder-script.com/api/ladder/create \
   -H "Content-Type: application/json" \
   -d '{"inputs":[...],"outputs":[{"amount":0.001,"conditions":[...]}]}'
 
 <span class="cm"># Sign (descriptor path)</span>
-$ curl -X POST https://bitcoinghost.org/api/ladder/sign-descriptor \
+$ curl -X POST https://ladder-script.com/api/ladder/sign-descriptor \
   -H "Content-Type: application/json" \
   -d '{"hex":"...","descriptor":"ladder(sig(@alice))","keys":{"alice":"cVt..."},"spent_outputs":[...]}'
 
 <span class="cm"># Broadcast</span>
-$ curl -X POST https://bitcoinghost.org/api/ladder/broadcast \
+$ curl -X POST https://ladder-script.com/api/ladder/broadcast \
   -H "Content-Type: application/json" \
   -d '{"hex":"...signed..."}'</div>
   </div>
@@ -575,7 +575,7 @@ $ curl -X POST https://bitcoinghost.org/api/ladder/broadcast \
 </div>
 
 <footer class="site-footer">
-  <a href="../ghost-labs.html">Ghost Labs</a> &middot; <a href="https://bitcoinghost.org">Bitcoin Ghost</a>
+  <a href="../index.html">Ladder Script</a> &middot; 
 </footer>
 
 </body>

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>QABIO Playground — Ghost Labs</title>
+<title>QABIO Playground — Ladder Script</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -1703,7 +1703,7 @@ function StagePanel({ apiCall }) {
       )}
       {!state.online && (
         <div className="pg-info">
-          The playground talks to the live signet proxy at bitcoinghost.org.
+          The playground talks to the live Ladder Script signet proxy.
           Health check failed — the backend is either offline or this page is running detached. You can still explore the UI and prebuilt JSON examples below.
         </div>
       )}
@@ -2025,6 +2025,6 @@ function Footer() {
 
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);
 </script>
-<script>(function(){var a=(location.hostname==='localhost'||location.hostname==='127.0.0.1')?'http://localhost:8801':'https://bitcoinghost.org';fetch(a+'/api/ladder/analytics/visit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page:location.pathname,referrer:document.referrer})}).catch(function(){});})()</script>
+<script>(function(){var a=(location.hostname==='localhost'||location.hostname==='127.0.0.1')?'http://localhost:8801':location.origin;fetch(a+'/api/ladder/analytics/visit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page:location.pathname,referrer:document.referrer})}).catch(function(){});})()</script>
 </body>
 </html>
