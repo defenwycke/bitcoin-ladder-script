@@ -8,8 +8,8 @@
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-<script src="../shared/ladder-api.js"></script>
-<script src="../shared/qabi-helpers.js"></script>
+<script src="../shared/ladder-api.js?v=2"></script>
+<script src="../shared/qabi-helpers.js?v=2"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -1819,8 +1819,9 @@ function MetricsPanel() {
   const totalContribSats = active.reduce((s, p) => s + p.contributionSats, 0);
   const estBatchVb = QABI.estimateBatchVsize(active.length || 1, active.length || 1);
   const savings = QABI.estimatePerInputCostSavings(active.length || 1);
-  const batchVb = state.batchTx.vbytes;
+  // Use measured vsize if available, otherwise estimate from raw bytes (÷ ~2.8 witness discount)
   const batchBytes = state.batchTx.totalBytes;
+  const batchVb = state.batchTx.vbytes || (batchBytes ? Math.ceil(batchBytes / 2.8) : null);
 
   return (
     <div className="pg-metrics">
