@@ -1463,12 +1463,14 @@ function StagePanel({ apiCall }) {
     dispatch({ type: 'COORD_UPDATE', patch: { qabiBlockHex, qabiRoot } });
     log('QABI block: ' + (qabiBlockHex.length / 2) + ' bytes, root=' + shortHex(qabiRoot, 14), 'ok');
 
-    // ── 5. Prime every participant UTXO ──
-    addModalStep('Priming ' + parts.length + ' participant UTXOs (create + prime + mine each)…', 'active');
-    log('Step 5/9: Priming ' + parts.length + ' participant UTXOs…');
+    // ── 5. Prime every participant UTXO (batched: 2 mines instead of 2N) ──
+    addModalStep('Creating ' + parts.length + ' unprimed QABI UTXOs…', 'active');
+    log('Step 5a/9: Creating ' + parts.length + ' unprimed UTXOs…');
+
+    // 5a. Create + sign + broadcast ALL unprimed UTXOs, then mine ONCE.
     for (const p of parts) {
       const authTipWire = reverseHex(p.authTip);
-      // 5a. Create unprimed UTXO
+      p._authTipWire = authTipWire;
       const unprimedConds = buildQabiConditionsForCreate({
         authTipHex: authTipWire, committedRootHex: '00'.repeat(32), committedDepth: 0, committedExpiry: 0, ownerIdHex: p.ownerId, sigPkCompressedHex: p.pubkey,
       });
@@ -1477,19 +1479,23 @@ function StagePanel({ apiCall }) {
       });
       if (!unprimedRes) { log(p.label + ': create unprimed failed', 'err'); return; }
       storeJson('unprimed_' + p.id, p.label + ' unprimed resp', unprimedRes);
-
       const signedUn = await apiCall('/api/ladder/sign', { hex: unprimedRes.hex });
       if (!signedUn || !signedUn.hex) { log(p.label + ': sign unprimed failed', 'err'); return; }
       const bcastUn = await apiCall('/api/ladder/broadcast', { hex: signedUn.hex });
       if (!bcastUn) { log(p.label + ': broadcast unprimed failed', 'err'); return; }
-      await apiCall('/api/ladder/mine', { blocks: 1 });
       p.unprimedTxid = bcastUn.txid;
       p.unprimedSpk = unprimedRes.scriptPubKey;
-      log(p.label + ': unprimed mined ' + shortHex(bcastUn.txid, 14), 'ok');
+      log(p.label + ': unprimed broadcast ' + shortHex(bcastUn.txid, 14), 'ok');
+    }
+    await apiCall('/api/ladder/mine', { blocks: 1 });
+    log('Mined ' + parts.length + ' unprimed UTXOs in one block', 'ok');
 
-      // 5b. Create primed template
+    // 5b. Create + sign + broadcast ALL priming txs, then mine ONCE.
+    addModalStep('Priming ' + parts.length + ' UTXOs via QABI_PRIME covenant…', 'active');
+    log('Step 5b/9: Priming ' + parts.length + ' UTXOs…');
+    for (const p of parts) {
       const primedConds = buildQabiConditionsForCreate({
-        authTipHex: authTipWire, committedRootHex: qabiRootWire, committedDepth: state.primeDepth, committedExpiry: expiryHeight, ownerIdHex: p.ownerId, sigPkCompressedHex: p.pubkey,
+        authTipHex: p._authTipWire, committedRootHex: qabiRootWire, committedDepth: state.primeDepth, committedExpiry: expiryHeight, ownerIdHex: p.ownerId, sigPkCompressedHex: p.pubkey,
       });
       const primeAmt = (p.contribution - 500) / 1e8;
       const primeRes = await apiCall('/api/ladder/createtxmlsc', {
@@ -1497,21 +1503,17 @@ function StagePanel({ apiCall }) {
       });
       if (!primeRes) { log(p.label + ': prime template failed', 'err'); return; }
       storeJson('prime_' + p.id, p.label + ' prime resp', primeRes);
-
-      // 5c. signrungtx with QABI_PRIME
       const signersSpec = [{ input: 0, rung: 1, blocks: [{
         type: 'QABI_PRIME', new_committed_root: qabiRootWire, prime_depth: state.primeDepth,
         new_committed_expiry: expiryHeight, auth_seed: p.authSeed, chain_length: state.chainLength,
       }], conditions: buildQabiConditionsForSign({
-        authTipHex: authTipWire, committedRootHex: '00'.repeat(32), committedDepth: 0, committedExpiry: 0, ownerIdHex: p.ownerId, sigPkCompressedHex: p.pubkey,
+        authTipHex: p._authTipWire, committedRootHex: '00'.repeat(32), committedDepth: 0, committedExpiry: 0, ownerIdHex: p.ownerId, sigPkCompressedHex: p.pubkey,
       }) }];
       const spentOutputs = [{ amount: (p.contribution / 1e8).toFixed(8), scriptPubKey: p.unprimedSpk }];
       const signPrime = await apiCall('/api/ladder/sign', { hex: primeRes.hex, signers: signersSpec, spent_outputs: spentOutputs });
       if (!signPrime || !signPrime.hex) { log(p.label + ': signrungtx prime failed', 'err'); return; }
       const bcastPrime = await apiCall('/api/ladder/broadcast', { hex: signPrime.hex });
       if (!bcastPrime) { log(p.label + ': broadcast prime failed', 'err'); return; }
-      await apiCall('/api/ladder/mine', { blocks: 1 });
-
       p.primedTxid = bcastPrime.txid;
       p.primedSpk = primeRes.scriptPubKey;
       p.primedAmtSats = p.contribution - 500;
@@ -1522,6 +1524,8 @@ function StagePanel({ apiCall }) {
       }});
       log(p.label + ': primed ' + shortHex(bcastPrime.txid, 14), 'ok');
     }
+    await apiCall('/api/ladder/mine', { blocks: 1 });
+    log('Mined ' + parts.length + ' priming txs in one block', 'ok');
     dispatch({ type: 'SET_PHASE', phase: 'primed' });
 
     // ── 6. Build batch tx ──
