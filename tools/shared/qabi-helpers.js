@@ -59,14 +59,22 @@
     return fixedOverhead + perInput * n + perOutput * outs;
   }
 
-  function estimatePerInputCostSavings(n, singleTxVsize) {
+  // A solo QABIO spend (1 participant, own tx) costs significantly more than
+  // a regular tx because it carries its own FALCON-512 sig (666B witness ≈
+  // 167 vB) + a per-participant QABI block (~150B ≈ 38 vB) + MLSC witness
+  // + primed input. Approximate: 450 vB per individual QABIO spend.
+  const SOLO_QABIO_SPEND_VBYTES = 450;
+
+  function estimatePerInputCostSavings(n) {
     const batch = estimateBatchVsize(n, n);
-    const individual = (singleTxVsize || 150) * n;
+    const individual = SOLO_QABIO_SPEND_VBYTES * n;
     return {
       batch,
       individual,
       savedVbytes: individual - batch,
       savedPct: individual > 0 ? ((individual - batch) / individual) * 100 : 0,
+      perInputBatch: Math.ceil(batch / n),
+      perInputSolo: SOLO_QABIO_SPEND_VBYTES,
     };
   }
 

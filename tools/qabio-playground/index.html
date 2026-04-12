@@ -1818,7 +1818,7 @@ function MetricsPanel() {
   const primedActive = active.filter(p => p.primedUtxo);
   const totalContribSats = active.reduce((s, p) => s + p.contributionSats, 0);
   const estBatchVb = QABI.estimateBatchVsize(active.length || 1, active.length || 1);
-  const savings = QABI.estimatePerInputCostSavings(active.length || 1, 150);
+  const savings = QABI.estimatePerInputCostSavings(active.length || 1);
   const batchVb = state.batchTx.vbytes;
   const batchBytes = state.batchTx.totalBytes;
 
@@ -1884,13 +1884,14 @@ function MetricsPanel() {
         </tbody>
       </table>
 
-      <div className="pg-label">Counterfactual</div>
+      <div className="pg-label">Counterfactual: Batch vs N Solo QABIO Txs</div>
       <table className="metric-table">
         <tbody>
-          <tr><td>Batch (est.)</td><td>{savings.batch} vB</td></tr>
-          <tr><td>N individual</td><td>{savings.individual} vB</td></tr>
-          <tr><td>Saved</td><td>{savings.savedVbytes} vB</td></tr>
-          <tr><td>Saved %</td><td>{fmtPct(savings.savedPct)}</td></tr>
+          <tr><td>Solo QABIO spend</td><td>{savings.perInputSolo} vB/tx</td></tr>
+          <tr><td>Batched per-input</td><td>{savings.perInputBatch} vB/input</td></tr>
+          <tr><td>N solo txs total</td><td>{savings.individual} vB</td></tr>
+          <tr><td>1 batch tx total</td><td>{savings.batch} vB</td></tr>
+          <tr><td>Saved</td><td>{savings.savedVbytes} vB ({fmtPct(savings.savedPct)})</td></tr>
         </tbody>
       </table>
     </div>
