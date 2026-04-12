@@ -1517,10 +1517,14 @@ function StagePanel({ apiCall }) {
       p.primedTxid = bcastPrime.txid;
       p.primedSpk = primeRes.scriptPubKey;
       p.primedAmtSats = p.contribution - 500;
+      // Estimate prime tx vbytes from raw hex length (~47.5% for witness-heavy MLSC txs)
+      const primeRawBytes = signPrime.hex.length / 2;
+      const primeVbEst = Math.ceil(primeRawBytes * 0.475);
       dispatch({ type: 'PART_UPDATE', id: p.id, patch: {
         unprimedUtxo: { txid: p.unprimedTxid, vout: 0, amount_sats: p.contribution, spk: p.unprimedSpk },
         primedUtxo: { txid: bcastPrime.txid, vout: 0, amount_sats: p.primedAmtSats, spk: primeRes.scriptPubKey, conditions_root: primeRes.conditions_root, committed_root: qabiRootWire, committed_depth: state.primeDepth, committed_expiry: expiryHeight },
-        primeTxid: bcastPrime.txid, primeTxHex: signPrime.hex, primeTxFeeSats: 500, status: 'primed',
+        primeTxid: bcastPrime.txid, primeTxHex: signPrime.hex, primeTxFeeSats: 500,
+        primeTxVbytes: primeVbEst, status: 'primed',
       }});
       log(p.label + ': primed ' + shortHex(bcastPrime.txid, 14), 'ok');
     }
@@ -1831,24 +1835,24 @@ function MetricsPanel() {
 
       <div className="metric-big">
         <div className="metric-big-item">
-          <div className="metric-big-label">Active</div>
+          <div className="metric-big-label">Participants</div>
           <div className="metric-big-val">{active.length}/{state.participants.length}</div>
           <div className="metric-big-sub">{state.participants.filter(p => p.failOnDemand).length} failing</div>
         </div>
         <div className="metric-big-item">
-          <div className="metric-big-label">Batch vbytes</div>
-          <div className="metric-big-val">{batchVb || estBatchVb}</div>
-          <div className="metric-big-sub">{batchVb ? 'measured' : 'estimated'}</div>
+          <div className="metric-big-label">Batch Size</div>
+          <div className="metric-big-val">{batchVb ? batchVb + ' vB' : estBatchVb + ' vB'}</div>
+          <div className="metric-big-sub">{batchBytes ? fmtBytes(batchBytes) + ' raw' : 'estimated'}</div>
         </div>
         <div className="metric-big-item">
-          <div className="metric-big-label">Per-input vB</div>
-          <div className="metric-big-val">{((batchVb || estBatchVb) / Math.max(1, active.length)).toFixed(0)}</div>
-          <div className="metric-big-sub">amortised</div>
+          <div className="metric-big-label">Per-Input Cost</div>
+          <div className="metric-big-val">{((batchVb || estBatchVb) / Math.max(1, active.length)).toFixed(0)} vB</div>
+          <div className="metric-big-sub">vs {savings.perInputSolo || 450} vB solo</div>
         </div>
         <div className="metric-big-item">
           <div className="metric-big-label">Savings</div>
-          <div className="metric-big-val">{fmtPct(savings.savedPct)}</div>
-          <div className="metric-big-sub">vs N individual txs</div>
+          <div className="metric-big-val" style={{ color: savings.savedPct > 0 ? 'var(--green)' : 'var(--red)' }}>{fmtPct(savings.savedPct)}</div>
+          <div className="metric-big-sub">{savings.savedVbytes > 0 ? savings.savedVbytes + ' vB saved' : 'vs N solo QABIO txs'}</div>
         </div>
       </div>
 
@@ -1867,18 +1871,23 @@ function MetricsPanel() {
       <div className="pg-label">Per-Participant</div>
       <table className="metric-table">
         <thead>
-          <tr><th>P</th><th>Contrib</th><th>Prime vB</th><th>Share vB</th><th>Fail</th></tr>
+          <tr><th>P</th><th>Status</th><th>Contrib</th><th>Prime vB</th><th>Prime Fee</th><th>Share vB</th><th>Share Fee</th><th>Fail</th></tr>
         </thead>
         <tbody>
           {state.participants.map(p => {
-            const shareVb = batchVb && active.length ? (batchVb / active.length).toFixed(0) : '—';
+            const shareVb = batchVb && active.length && !p.failOnDemand ? (batchVb / active.length).toFixed(0) : '—';
+            const batchFeeSats = batchBytes ? Math.ceil(batchBytes * 0.5) : null;
+            const shareFee = batchFeeSats && active.length && !p.failOnDemand ? Math.ceil(batchFeeSats / active.length) : null;
             return (
               <tr key={p.id}>
                 <td>{p.label}</td>
-                <td>{p.contributionSats || '—'}</td>
-                <td>{p.primeTxVbytes || '—'}</td>
-                <td>{p.failOnDemand ? '—' : shareVb}</td>
-                <td>{p.failOnDemand ? 'YES' : ''}</td>
+                <td style={{ color: p.status === 'confirmed' ? 'var(--green)' : p.status === 'swept' ? 'var(--text-dim)' : p.status === 'primed' ? 'var(--amber)' : 'inherit' }}>{p.status}</td>
+                <td>{p.contributionSats ? fmtBtc(p.contributionSats) : '—'}</td>
+                <td>{p.primeTxVbytes ? p.primeTxVbytes + ' vB' : '—'}</td>
+                <td>{p.primeTxFeeSats ? p.primeTxFeeSats + ' sat' : '—'}</td>
+                <td>{shareVb !== '—' ? shareVb + ' vB' : '—'}</td>
+                <td>{shareFee ? shareFee + ' sat' : '—'}</td>
+                <td style={{ color: 'var(--red)' }}>{p.failOnDemand ? 'YES' : ''}</td>
               </tr>
             );
           })}
