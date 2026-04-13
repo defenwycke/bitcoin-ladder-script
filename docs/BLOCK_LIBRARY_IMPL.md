@@ -32,11 +32,13 @@ Every parameter in every block must be one of the following enumerated types. No
 | `HASH160` | `0x04` | 20B exact | HASH160 | Legacy compatibility |
 | `PREIMAGE` | `0x05` | 1–32B | Raw preimage, max 32 bytes | Hash preimage reveal. Max 2 preimage blocks per witness (policy). |
 | `SIGNATURE` | `0x06` | 1–50,000B | Schnorr=64B, ECDSA/DER≈73B, PQ up to 49,216B | INLINE attestation signatures only |
-| `SPEND_INDEX` | `0x07` | 4B exact | uint32 spend index | AGGREGATE attestation reference |
+| `SPEND_INDEX` | `0x07` | 4B exact | uint32 spend index | Cross-input spend reference |
 | `NUMERIC` | `0x08` | 1–4B | uint32 value | Timelocks, thresholds, counts, rates |
 | `SCHEME` | `0x09` | 1B exact | Enum value from RungScheme | Signature algorithm selector |
 
 **Key principle:** Type enforcement happens at the deserializer — before any cryptographic operation, before mempool admission, before everything. PUBKEY is witness-only; conditions use merkle_pub_key (keys folded into the Merkle leaf hash — no key field in conditions at all). PUBKEY_COMMIT is reserved and rejected in both contexts. The condition data types are: HASH256, HASH160, NUMERIC, SCHEME, SPEND_INDEX, DATA. Conditions contain zero user-chosen bytes. A maximum of 2 preimage-bearing fields are permitted per witness (`MAX_PREIMAGE_FIELDS_PER_WITNESS = 2`, fast reject) and per transaction (`MAX_PREIMAGE_FIELDS_PER_TX = 2`, binding constraint across all inputs). The preimage-bearing blocks are TAGGED_HASH and HASH_GUARDED. Compound blocks HTLC and HASH_SIG also consume PREIMAGE fields. Enum values `0x0201` and `0x0202` are reserved and rejected at deserialization. This is what makes spam structurally impossible.
+
+**TX_MLSC format:** Each output is 8 bytes (value only); the transaction carries one shared `conditions_root` with prefix byte `0xDF`. A creation proof in the witness is validated at block acceptance. Leaf computation uses `TaggedHash("LadderLeaf", structural_template || value_commitment)`. One shared Merkle tree per transaction (PLC model: one program, multiple output coils). Each rung's coil has an `output_index` field declaring which output it governs. Anti-spam surface: 112 bytes per transaction (flat, no contiguous block). UTXO spam: zero readable attacker data (root is protocol-derived). Simple payment: 647 WU / 162 vB. Batch 100: 7,867 WU / ~1,967 vB.
 
 ---
 
@@ -121,10 +123,10 @@ Signature using a key resolved from a relay block. Enables multiple rungs to sha
 |---|---|---|---|
 | `SCHNORR` | `0x01` | 64 bytes | BIP-340. Primary scheme. Batch-verifiable. Use by default. |
 | `ECDSA` | `0x02` | ~73 bytes | Legacy compatibility only. DER-encoded. Not batch-verifiable. |
-| `FALCON512` | `0x10` | 666 bytes | NIST PQC standard. Post-quantum secure. AGGREGATE mode reduces tx cost to ~80 vB. |
+| `FALCON512` | `0x10` | 666 bytes | NIST PQC standard. Post-quantum secure. |
 | `FALCON1024` | `0x11` | 1280 bytes | Post-quantum. Higher security level. 256-bit post-quantum security. |
 | `DILITHIUM3` | `0x12` | 3293 bytes | NIST PQC standard. Better batch verification properties than FALCON. |
-| `SPHINCS_SHA` | `0x13` | 49,216 bytes | Post-quantum. Hash-based. Most conservative PQ assumption. Very large sigs — AGGREGATE essential. |
+| `SPHINCS_SHA` | `0x13` | 49,216 bytes | Post-quantum. Hash-based. Most conservative PQ assumption. |
 
 ---
 
@@ -374,11 +376,10 @@ All recursive blocks enforce these at consensus level:
 
 Output inherits the identical rung set as the input. Covenant propagates forward unchanged.
 
-**Params:** `NUMERIC max_depth` · `SCHEME value_rule`
+**Params:** `NUMERIC max_depth`
 
 **Use case:** Perpetual custody rules, sustained governance covenants, channel state propagation
 
-**Note:** `value_rule` must be `VALUE_CONSERVED` or `VALUE_DECREASING`. `max_depth` is a hard ceiling — parse error without it.
 
 ---
 
@@ -398,7 +399,7 @@ Output inherits rung set with one typed mutation applied per recursion. The muta
 
 Recurse until a termination block height is reached. After that height the covenant terminates and coins are unconditionally free.
 
-**Params:** `NUMERIC until_height` · `SCHEME value_rule`
+**Params:** `NUMERIC until_height`
 
 **Use case:** Time-bounded custody, expiring governance rules, temporary spending restrictions
 
@@ -410,7 +411,7 @@ Recurse until a termination block height is reached. After that height the coven
 
 Recurse exactly N times. After N recursions the covenant terminates. Counter verifiable on-chain via sequence numbers.
 
-**Params:** `NUMERIC max_count` · `SCHEME value_rule`
+**Params:** `NUMERIC max_count`
 
 **Use case:** Fixed-term custody agreements, N-round DLC resolution, graduated vesting schedules
 
@@ -420,7 +421,7 @@ Recurse exactly N times. After N recursions the covenant terminates. Counter ver
 
 Split output value, each piece re-encumbers with the same rung set minus one recursion count. Enables streaming and pool exit patterns.
 
-**Params:** `NUMERIC max_splits` · `NUMERIC min_split_sats` · `SCHEME value_rule`
+**Params:** `NUMERIC max_splits` · `NUMERIC min_split_sats`
 
 **Use case:** Salary streaming, subscription payments, Ark pool participant exit, vesting releases
 
@@ -588,7 +589,7 @@ Comparators check relationships between values, enabling amount-conditional spen
 
 Evaluates a comparison between transaction amounts or block height and a threshold. Supports EQ, NEQ, GT, LT, GTE, LTE, IN_RANGE operators.
 
-**Params:** `SCHEME operator` · `NUMERIC value_b` · `NUMERIC value_c` (IN_RANGE upper bound)
+**Params:** `NUMERIC operator` · `NUMERIC value_b` · `NUMERIC value_c` (IN_RANGE upper bound)
 
 **Invertible:** Yes
 
@@ -678,17 +679,16 @@ The coil declares what happens when all contacts on a rung are satisfied. It is 
 |---|---|---|---|
 | `UNLOCK` | `0x01` | Standard UTXO unlock. Output spendable freely by satisfying witness. | Simple payment, channel cooperative close |
 | `UNLOCK_TO` | `0x02` | Unlock with output address constraint. The coil stores `address_hash` (SHA256 of destination scriptPubKey). Raw address never on-chain. | Forced routing, payment forwarding, sequential stages |
-| `COVENANT` | `0x03` | Output must re-encumber with specified rung set. | Vault propagation, recursive covenant initiation |
 
 ### Attestation Modes
 
 | Mode | Enum | Witness Size | Proof Location |
 |---|---|---|---|
 | `INLINE` | `0x01` | Full sig (64B Schnorr / 666B FALCON512) | In transaction witness |
-| `AGGREGATE` | `0x02` | 36 bytes (4B spend_index + 32B pubkey_commit) | Block-level aggregate proof (~3.5KB amortised) |
-| `DEFERRED` | `0x03` | 32 bytes (template hash only) | Prior committed state |
+| `AGGREGATE` | `0x02` | Reserved for future extension | Rejected at deserialization |
+| `DEFERRED` | `0x03` | Reserved for future extension | Rejected at deserialization |
 
-**The key insight:** Coil declares claim type. Protocol validates claim. Transaction carries minimum necessary data. `AGGREGATE` mode is what enables post-quantum signatures at classical transaction sizes — a FALCON512 signature in `AGGREGATE` mode produces an ~80 vB transaction, identical to a classical Schnorr transaction today.
+Only INLINE attestation is active. AGGREGATE and DEFERRED bytes are reserved for future soft fork extensions.
 
 ---
 
@@ -742,7 +742,7 @@ All block type enum values. Unrecognised blocks return `UNSATISFIED` — forward
 | `0x0681` | `COSIGN` | PLC (cross-input) | Co-spend constraint (cross-input scriptPubKey hash) |
 | `0x0701` | `TIMELOCKED_SIG` | Compound | SIG + CSV combined |
 | `0x0702` | `HTLC` | Compound | Hash + Timelock + Sig (Lightning HTLC). 5-field witness: PUBKEY + SIGNATURE + PUBKEY + PREIMAGE + NUMERIC. |
-| `0x0703` | `HASH_SIG` | Compound | HASH_PREIMAGE + SIG combined |
+| `0x0703` | `HASH_SIG` | Compound | Hash preimage + SIG combined |
 | `0x0704` | `PTLC` | Compound | ADAPTOR_SIG + CSV (point time-lock contract) |
 | `0x0705` | `CLTV_SIG` | Compound | SIG + CLTV combined |
 | `0x0706` | `TIMELOCKED_MULTISIG` | Compound | MULTISIG + CSV combined |

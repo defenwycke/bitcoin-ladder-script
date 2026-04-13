@@ -1,4 +1,4 @@
-// Copyright (c) 2026 The Bitcoin Ghost developers
+// Copyright (c) 2026 The Ladder Script developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or https://opensource.org/license/mit/.
 
@@ -26,6 +26,9 @@ static constexpr uint8_t LADDER_SIGHASH_ANYPREVOUTANYSCRIPT = 0xC0;
 
 /** Tagged hash writer for LadderSighash, pre-fed with the tag. */
 extern const HashWriter HASHER_LADDERSIGHASH;
+
+/** Tagged hash writer for LadderKeyPathSighash, pre-fed with the tag. */
+extern const HashWriter HASHER_LADDERKEYPATH;
 
 /** Compute the signature hash for a v4 RUNG_TX input.
  *
@@ -58,6 +61,18 @@ bool SignatureHashLadder(const PrecomputedTransactionData& cache,
                          uint8_t hash_type,
                          const RungConditions& conditions,
                          uint256& hash_out);
+
+/** Compute the key-path signature hash for a v4 RUNG_TX input.
+ *  Same as SignatureHashLadder but:
+ *  - Uses TaggedHash("LadderKeyPathSighash")
+ *  - Does NOT commit to conditions (conditions not revealed in key-path)
+ *  - spend_type = 0x00 (key-path marker) */
+template <class T>
+bool SignatureHashLadderKeyPath(const PrecomputedTransactionData& cache,
+                                const T& tx,
+                                unsigned int nIn,
+                                uint8_t hash_type,
+                                uint256& hash_out);
 
 } // namespace rung
 

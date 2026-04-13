@@ -1,6 +1,6 @@
 # Ladder Script Documentation
 
-Ladder Script is a typed, structured transaction scripting system for Bitcoin Ghost.
+Ladder Script is a typed, structured transaction scripting system for Bitcoin.
 It replaces Bitcoin Script's stack machine with declarative function blocks, typed fields,
 and Merkelized conditions (MLSC). Transactions use version 4 (`RUNG_TX_VERSION = 4`).
 
@@ -33,13 +33,11 @@ and Merkelized conditions (MLSC). Transactions use version 4 (`RUNG_TX_VERSION =
 | `src/rung/conditions.cpp` | MLSC proof verification, Merkle tree construction, template reference resolution |
 | `src/rung/descriptor.h` | ParseDescriptor, FormatDescriptor |
 | `src/rung/descriptor.cpp` | Descriptor language parser and formatter |
-| `src/rung/aggregate.h` | TxAggregateContext, AggregateProof |
-| `src/rung/aggregate.cpp` | Aggregate and deferred attestation verification |
 | `src/rung/policy.h` | IsBaseBlockType, IsCovenantBlockType, IsStatefulBlockType, IsStandardRungTx |
 | `src/rung/policy.cpp` | Mempool policy checks |
 | `src/rung/adaptor.h/cpp` | Adaptor signature utilities |
 | `src/rung/pq_verify.h/cpp` | Post-quantum signature verification |
-| `src/rung/rpc.cpp` | 14 RPC commands (decoderung, createrung, validateladder, createrungtx, signrungtx, signladder, computectvhash, computemutation, generatepqkeypair, pqpubkeycommit, extractadaptorsecret, verifyadaptorpresig, parseladder, formatladder) |
+| `src/rung/rpc.cpp` | 15 RPC commands (decoderung, createrung, validateladder, createtxmlsc, signladder, createrungtx (legacy), signrungtx (legacy), computectvhash, computemutation, generatepqkeypair, pqpubkeycommit, extractadaptorsecret, verifyadaptorpresig, parseladder, formatladder) |
 
 ## Test Coverage
 
@@ -51,4 +49,4 @@ and Merkelized conditions (MLSC). Transactions use version 4 (`RUNG_TX_VERSION =
 
 ## Repository
 
-Source: [github.com/bitcoin-ghost/ghost-labs-ladder-script](https://github.com/bitcoin-ghost/ghost-labs-ladder-script)
+Source: [github.com/defenwycke/ladder-script-labs](https://github.com/defenwycke/ladder-script-labs)

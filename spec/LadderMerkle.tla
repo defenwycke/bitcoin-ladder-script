@@ -168,6 +168,77 @@ Inv_PubkeyDifferentiation ==
         \A pk1, pk2 \in PubKeyValues :
             pk1 # pk2 => LeafHash(lv, pk1) # LeafHash(lv, pk2)
 
+(***************************************************************************)
+(* TX_MLSC: Shared Tree Properties                                         *)
+(* In TX_MLSC, all outputs share one Merkle tree. Each rung leaf includes  *)
+(* a structural template (block types + coil with output_index) and a      *)
+(* value_commitment (hash of field values + pubkeys).                      *)
+(***************************************************************************)
+
+\* TX_MLSC P1: output_index in leaf means changing output_index changes the leaf
+\* (modeled as: different abstract output_index values → different leaves)
+Inv_OutputIndexBinding ==
+    \A lv \in LeafValues :
+        \A pk \in PubKeyValues :
+            \A oi1, oi2 \in 1..4 :
+                oi1 # oi2 => Hash(lv, oi1) # Hash(lv, oi2)
+
+\* TX_MLSC P2: conditions tree root is deterministic from leaf data
+Inv_SharedTreeDeterministic == Inv_RootDeterministic
+
+(***************************************************************************)
+(* O(log N) Merkle Path Proof Verification                                 *)
+(* A path proof consists of sibling hashes at each tree level.            *)
+(* With sorted interior nodes, no direction bits are needed —             *)
+(* the verifier sorts the pair before hashing at each level.              *)
+(***************************************************************************)
+
+\* Sorted hash: Hash(min(a,b), max(a,b))
+SortedHash(a, b) == IF a <= b THEN Hash(a, b) ELSE Hash(b, a)
+
+\* Compute root using sorted interior nodes (4 leaves)
+SortedRoot4(l1, l2, l3, l4) ==
+    SortedHash(SortedHash(l1, l2), SortedHash(l3, l4))
+
+\* Build Merkle path for a given leaf index (4-leaf tree)
+\* Returns <<sibling, uncle>> as before, but verification uses SortedHash
+BuildPath4(leafIdx, lvs) ==
+    LET sibling == CASE leafIdx = 1 -> lvs[2]
+                     [] leafIdx = 2 -> lvs[1]
+                     [] leafIdx = 3 -> lvs[4]
+                     [] leafIdx = 4 -> lvs[3]
+        uncle == CASE leafIdx \in {1, 2} -> SortedHash(lvs[3], lvs[4])
+                   [] leafIdx \in {3, 4} -> SortedHash(lvs[1], lvs[2])
+    IN <<sibling, uncle>>
+
+\* Verify path proof using sorted interior nodes (no direction bits needed)
+VerifyPathSorted(leafVal, path, root) ==
+    LET level1 == SortedHash(leafVal, path[1])    \* combine with sibling
+        level2 == SortedHash(level1, path[2])       \* combine with uncle
+    IN level2 = root
+
+\* P3: Valid path proof verifies correctly with sorted nodes
+Inv_SortedPathVerifies ==
+    LET root == SortedRoot4(leaves[1], leaves[2], leaves[3], leaves[4])
+        path == BuildPath4(targetIdx, leaves)
+    IN VerifyPathSorted(leaves[targetIdx], path, root) = TRUE
+
+\* P4: Wrong leaf with valid path fails (sorted nodes)
+Inv_SortedPathWrongLeafFails ==
+    (leaves[1] # leaves[2] /\ leaves[1] # leaves[3] /\ leaves[1] # leaves[4]
+     /\ leaves[2] # leaves[3] /\ leaves[2] # leaves[4]
+     /\ leaves[3] # leaves[4]) =>
+        \A wrongVal \in LeafValues :
+            wrongVal # leaves[targetIdx] =>
+                LET root == SortedRoot4(leaves[1], leaves[2], leaves[3], leaves[4])
+                    path == BuildPath4(targetIdx, leaves)
+                IN ~VerifyPathSorted(wrongVal, path, root)
+
+\* P5: Sorted hash is commutative (critical for directionless proofs)
+Inv_SortedHashCommutative ==
+    \A a, b \in LeafValues :
+        SortedHash(a, b) = SortedHash(b, a)
+
 \* Combined
 SafetyInvariant ==
     /\ Inv_RootDeterministic
@@ -176,5 +247,10 @@ SafetyInvariant ==
     /\ Inv_WrongIndexFails
     /\ Inv_TamperEvidence
     /\ Inv_PubkeyDifferentiation
+    /\ Inv_OutputIndexBinding
+    /\ Inv_SharedTreeDeterministic
+    /\ Inv_SortedPathVerifies
+    /\ Inv_SortedPathWrongLeafFails
+    /\ Inv_SortedHashCommutative
 
 =============================================================================

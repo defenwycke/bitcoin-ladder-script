@@ -1,4 +1,4 @@
-// Copyright (c) 2026 The Bitcoin Ghost developers
+// Copyright (c) 2026 The Ladder Script developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or https://opensource.org/license/mit/.
 
@@ -13,6 +13,10 @@
 #include <rung/types.h>
 
 #include <core_io.h>
+#include <node/context.h>
+#include <node/transaction.h>
+#include <rpc/server_util.h>
+#include <validation.h>
 #include <crypto/sha256.h>
 #include <hash.h>
 #include <key.h>
@@ -908,7 +912,7 @@ static RPCHelpMan createrungtx()
                                     {"address", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "Destination scriptPubKey hex"},
                                 },
                             },
-                            {"mlsc", RPCArg::Type::BOOL, RPCArg::Optional::OMITTED, "Create MLSC output (0xC2 + Merkle root) instead of inline conditions"},
+                            {"mlsc", RPCArg::Type::BOOL, RPCArg::Optional::OMITTED, "Create MLSC output (0xDF + Merkle root) instead of inline conditions"},
                         },
                     },
                 },
@@ -999,7 +1003,7 @@ static RPCHelpMan createrungtx()
         CTxOut txout;
         txout.nValue = amount;
 
-        // Always MLSC: compute Merkle root and create 0xC2 output
+        // Always MLSC: compute Merkle root and create 0xDF output
         uint256 root = rung::ComputeConditionsRoot(conditions, rung_pubkeys, relay_pubkeys);
 
         // DATA_RETURN: append data payload to MLSC scriptPubKey
@@ -1725,92 +1729,10 @@ static RPCHelpMan signrungtx()
                             {"input", RPCArg::Type::NUM, RPCArg::Optional::NO, "Input index to sign"},
                             {"privkey", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "WIF key (legacy SIG-only format)"},
                             {"rung", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "Target rung index for multi-rung conditions (default 0)"},
-                            {"blocks", RPCArg::Type::ARR, RPCArg::Optional::OMITTED, "Block signing specs (new format)",
-                                {
-                                    {"block", RPCArg::Type::OBJ, RPCArg::Optional::NO, "A block spec",
-                                        {
-                                            {"type", RPCArg::Type::STR, RPCArg::Optional::NO, "Block type"},
-                                            {"privkey", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "WIF key for SIG"},
-                                            {"privkeys", RPCArg::Type::ARR, RPCArg::Optional::OMITTED, "WIF keys for MULTISIG",
-                                                {{"key", RPCArg::Type::STR, RPCArg::Optional::NO, "A WIF key"}},
-                                            },
-                                            {"preimage", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "Preimage hex for hash-based blocks (HTLC, HASH_SIG, HASH_GUARDED)"},
-                                        },
-                                    },
-                                },
-                            },
-                            {"relay_blocks", RPCArg::Type::ARR, RPCArg::Optional::OMITTED, "Per-relay signing specs (indexed same as conditions relays)",
-                                {
-                                    {"relay", RPCArg::Type::OBJ, RPCArg::Optional::NO, "Relay signing spec (null/empty to skip)",
-                                        {
-                                            {"blocks", RPCArg::Type::ARR, RPCArg::Optional::OMITTED, "Block signing specs for this relay",
-                                                {
-                                                    {"block", RPCArg::Type::OBJ, RPCArg::Optional::NO, "A block spec",
-                                                        {
-                                                            {"type", RPCArg::Type::STR, RPCArg::Optional::NO, "Block type"},
-                                                            {"privkey", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "WIF key for SIG"},
-                                                            {"privkeys", RPCArg::Type::ARR, RPCArg::Optional::OMITTED, "WIF keys for MULTISIG",
-                                                                {{"key", RPCArg::Type::STR, RPCArg::Optional::NO, "A WIF key"}},
-                                                            },
-                                                            {"preimage", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "Preimage hex"},
-                                                        },
-                                                    },
-                                                },
-                                            },
-                                        },
-                                    },
-                                },
-                            },
-                            {"conditions", RPCArg::Type::ARR, RPCArg::Optional::OMITTED, "Full conditions (required for MLSC inputs — conditions are not on-chain). Same format as createrungtx output conditions.",
-                                {
-                                    {"rung", RPCArg::Type::OBJ, RPCArg::Optional::NO, "A rung spec",
-                                        {
-                                            {"blocks", RPCArg::Type::ARR, RPCArg::Optional::NO, "Block specs (same format as createrungtx)",
-                                                {
-                                                    {"block", RPCArg::Type::OBJ, RPCArg::Optional::NO, "A block spec",
-                                                        {
-                                                            {"type", RPCArg::Type::STR, RPCArg::Optional::NO, "Block type"},
-                                                            {"fields", RPCArg::Type::ARR, RPCArg::Optional::NO, "Field specs",
-                                                                {
-                                                                    {"field", RPCArg::Type::OBJ, RPCArg::Optional::NO, "A field",
-                                                                        {
-                                                                            {"type", RPCArg::Type::STR, RPCArg::Optional::NO, "Data type"},
-                                                                            {"hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Field data hex"},
-                                                                        },
-                                                                    },
-                                                                },
-                                                            },
-                                                        },
-                                                    },
-                                                },
-                                            },
-                                        },
-                                    },
-                                },
-                            },
-                            {"diff_witness", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "Diff witness: inherit from another input's witness with field-level diffs",
-                                {
-                                    {"source_input", RPCArg::Type::NUM, RPCArg::Optional::NO, "Source input index to inherit witness from"},
-                                    {"diffs", RPCArg::Type::ARR, RPCArg::Optional::OMITTED, "Field-level diffs to apply",
-                                        {
-                                            {"diff", RPCArg::Type::OBJ, RPCArg::Optional::NO, "A field diff",
-                                                {
-                                                    {"rung_index", RPCArg::Type::NUM, RPCArg::Optional::NO, "Target rung index"},
-                                                    {"block_index", RPCArg::Type::NUM, RPCArg::Optional::NO, "Target block index"},
-                                                    {"field_index", RPCArg::Type::NUM, RPCArg::Optional::NO, "Target field index"},
-                                                    {"field", RPCArg::Type::OBJ, RPCArg::Optional::NO, "Replacement field",
-                                                        {
-                                                            {"type", RPCArg::Type::STR, RPCArg::Optional::NO, "Data type (SIGNATURE, PUBKEY, PREIMAGE, SCHEME)"},
-                                                            {"hex", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "Field data hex (raw replacement)"},
-                                                            {"privkey", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "WIF key (auto-sign for SIGNATURE, auto-derive for PUBKEY)"},
-                                                        },
-                                                    },
-                                                },
-                                            },
-                                        },
-                                    },
-                                },
-                            },
+                            {"blocks", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Block signing specs as JSON array [{type,privkey,privkeys,preimage}]"},
+                            {"relay_blocks", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Per-relay signing specs as JSON array [{blocks:[{type,privkey}]}]"},
+                            {"conditions", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Full conditions as JSON string of rung array [{blocks:[{type,fields:[{type,hex}]}]}]. Required for MLSC inputs."},
+                            {"diff_witness", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Diff witness as JSON: {source_input, diffs:[{rung_index, block_index, field_index, field:{type,hex,privkey}}]}"},
                         },
                     },
                 },
@@ -1912,6 +1834,7 @@ static RPCHelpMan signrungtx()
         }
 
         LadderWitness ladder;
+        unsigned int target_rung = 0; // declared here for visibility across all signing paths
 
         if (signer_obj.exists("privkey") && !signer_obj.exists("blocks")) {
             // Legacy format: single SIG block
@@ -1946,11 +1869,11 @@ static RPCHelpMan signrungtx()
         } else if (signer_obj.exists("blocks")) {
             const UniValue& blocks_arr = signer_obj["blocks"].get_array();
 
+            if (signer_obj.exists("rung")) {
+                target_rung = signer_obj["rung"].getInt<unsigned int>();
+            }
+
             if (has_conditions) {
-                unsigned int target_rung = 0;
-                if (signer_obj.exists("rung")) {
-                    target_rung = signer_obj["rung"].getInt<unsigned int>();
-                }
 
                 if (is_mlsc) {
                     // MLSC: build witness for only the target rung (1 rung in witness)
@@ -2131,9 +2054,10 @@ static RPCHelpMan signrungtx()
                     ladder.relays.push_back(std::move(wit_relay));
                 }
             }
-            // Copy relay_refs from conditions to witness rungs
-            for (size_t r = 0; r < ladder.rungs.size() && r < conditions.rungs.size(); ++r) {
-                ladder.rungs[r].relay_refs = conditions.rungs[r].relay_refs;
+            // Copy relay_refs from the target rung's conditions to the witness rung.
+            // For MLSC spends, ladder has exactly 1 rung (the target).
+            if (!ladder.rungs.empty() && target_rung < conditions.rungs.size()) {
+                ladder.rungs[0].relay_refs = conditions.rungs[target_rung].relay_refs;
             }
         }
 
@@ -2206,28 +2130,28 @@ static RPCHelpMan signrungtx()
                 }
             }
 
-            // Compute proof hashes for unrevealed leaves
-            // Leaf order: [rung_leaf[0..N-1], relay_leaf[0..M-1], coil_leaf]
-            std::set<uint16_t> revealed_relay_indices;
-            for (const auto& [idx, _] : mlsc_proof.revealed_relays) {
-                revealed_relay_indices.insert(idx);
-            }
-
-            for (uint16_t r = 0; r < conditions.rungs.size(); ++r) {
-                if (r != target_rung) {
+            // TX_MLSC: build all leaves and compute O(log N) Merkle path.
+            // Leaf order: [rung_leaf[0..N-1]] (no separate relay/coil leaves in TX_MLSC)
+            {
+                std::vector<uint256> all_leaves;
+                for (uint16_t r = 0; r < conditions.rungs.size(); ++r) {
+                    rung::CreationProofRung cp_rung;
+                    for (const auto& block : conditions.rungs[r].blocks) {
+                        cp_rung.blocks.push_back({
+                            static_cast<uint16_t>(block.type),
+                            static_cast<uint8_t>(block.inverted ? 1 : 0)
+                        });
+                    }
+                    cp_rung.coil = conditions.coil;
+                    cp_rung.coil.output_index = mtx.vin[input_idx].prevout.n;
                     std::vector<std::vector<uint8_t>> rpks;
                     if (r < rung_pubkeys2.size()) rpks = rung_pubkeys2[r];
-                    mlsc_proof.proof_hashes.push_back(rung::ComputeRungLeaf(conditions.rungs[r], rpks));
+                    cp_rung.value_commitment = rung::ComputeValueCommitment(conditions.rungs[r], rpks);
+                    all_leaves.push_back(rung::ComputeTxMLSCLeaf(cp_rung));
                 }
+                mlsc_proof.proof_mode = rung::MLSCProofMode::MERKLE_PATH;
+                mlsc_proof.proof_hashes = rung::BuildMerklePath(all_leaves, target_rung);
             }
-            for (uint16_t rl = 0; rl < conditions.relays.size(); ++rl) {
-                if (revealed_relay_indices.find(rl) == revealed_relay_indices.end()) {
-                    std::vector<std::vector<uint8_t>> rlpks;
-                    if (rl < relay_pubkeys2.size()) rlpks = relay_pubkeys2[rl];
-                    mlsc_proof.proof_hashes.push_back(rung::ComputeRelayLeaf(conditions.relays[rl], rlpks));
-                }
-            }
-            // Coil leaf is NOT a proof hash — it's computed from the witness coil
 
             auto proof_bytes = rung::SerializeMLSCProof(mlsc_proof);
             mtx.vin[input_idx].scriptWitness.stack.push_back(proof_bytes);
@@ -2703,6 +2627,9 @@ static RPCHelpMan signladder()
             },
             {"input_index", RPCArg::Type::NUM, RPCArg::DefaultHint{"0"}, "Input index to sign"},
             {"rung_index", RPCArg::Type::NUM, RPCArg::DefaultHint{"0"}, "Target rung index (for multi-rung conditions)"},
+            {"keypath_key", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "WIF private key for key-path spending. When provided, produces a 1-element witness (signature only)."},
+            {"keypath_merkle_root", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "32-byte Merkle root hex for key-path spending with script tree. Omit for key-path-only (no conditions)."},
+            {"shared_source", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "Input index of an already-signed input from the same source tx. Uses SHARED proof mode (compact, references existing proof)."},
         },
         RPCResult{RPCResult::Type::OBJ, "", "", {
             {RPCResult::Type::STR_HEX, "hex", "The signed transaction hex"},
@@ -2723,6 +2650,86 @@ static RPCHelpMan signladder()
         }
         if (mtx.version != CTransaction::RUNG_TX_VERSION) {
             throw JSONRPCError(RPC_INVALID_PARAMETER, "Transaction is not v4 RUNG_TX");
+        }
+
+        // Key-path signing: produce 1-element witness (signature only)
+        // The keypath_key WIF is the INTERNAL private key. The signing uses the
+        // tweaked key: internal_privkey + H_LadderTweak(internal_pubkey || merkle_root).
+        // When merkle_root is null (key-path-only, no conditions tree), the tweak is
+        // H_LadderTweak(internal_pubkey).
+        if (!request.params[6].isNull() && !request.params[6].get_str().empty()) {
+            CKey keypath_key = DecodeSecret(request.params[6].get_str());
+            if (!keypath_key.IsValid()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid keypath_key WIF");
+            }
+
+            unsigned int input_idx = 0;
+            if (!request.params[4].isNull()) {
+                input_idx = request.params[4].getInt<unsigned int>();
+            }
+            if (input_idx >= mtx.vin.size()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "input_index out of range");
+            }
+
+            // Parse spent outputs for sighash computation
+            const UniValue& spent_arr = request.params[3].get_array();
+            std::vector<CTxOut> spent_outputs;
+            for (size_t i = 0; i < spent_arr.size(); ++i) {
+                CTxOut out;
+                out.nValue = AmountFromValue(spent_arr[i]["amount"]);
+                auto spk_hex = spent_arr[i]["scriptPubKey"].get_str();
+                auto spk_bytes = ParseHex(spk_hex);
+                out.scriptPubKey = CScript(spk_bytes.begin(), spk_bytes.end());
+                spent_outputs.push_back(out);
+            }
+
+            // Build precomputed transaction data
+            CTransaction ctx(mtx);
+            PrecomputedTransactionData txdata;
+            txdata.Init(ctx, std::move(spent_outputs), true);
+
+            // Compute key-path sighash
+            uint256 sighash;
+            if (!rung::SignatureHashLadderKeyPath(txdata, ctx, input_idx, SIGHASH_DEFAULT, sighash)) {
+                throw JSONRPCError(RPC_INTERNAL_ERROR, "Failed to compute key-path sighash");
+            }
+
+            // Sign with the INTERNAL key tweaked by LadderTweak.
+            // CKey::SignSchnorr(hash, sig, merkle_root, aux) uses TapTweak internally.
+            // We need LadderTweak instead. Use a null merkle_root to get H_LadderTweak(pubkey)
+            // and apply the tweak manually via ComputeLadderTweakHash.
+            //
+            // For now: sign with null merkle_root (key-path-only, no script tree).
+            // For outputs created with createtxmlsc + internal_pubkey, the merkle_root
+            // was used during tweaking and would need to be passed here too.
+            // TODO: Accept optional merkle_root parameter for script-tree-enabled key-path.
+            std::vector<unsigned char> sig(64);
+            uint256 aux; // zero aux for deterministic signing
+
+            // Determine merkle_root: null for key-path-only, provided hex for script tree
+            uint256 merkle_root; // default = null (key-path-only)
+            const uint256* mr_ptr = &merkle_root;
+            if (!request.params[7].isNull() && !request.params[7].get_str().empty()) {
+                auto mr_opt = uint256::FromHex(request.params[7].get_str());
+                if (!mr_opt) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid keypath_merkle_root hex");
+                }
+                merkle_root = *mr_opt;
+                mr_ptr = &merkle_root;
+            }
+
+            if (!keypath_key.SignSchnorrLadder(sighash, sig, mr_ptr, aux)) {
+                throw JSONRPCError(RPC_INTERNAL_ERROR, "Schnorr signing failed");
+            }
+
+            // Set 1-element witness (key-path)
+            mtx.vin[input_idx].scriptWitness.stack.clear();
+            mtx.vin[input_idx].scriptWitness.stack.push_back(sig);
+
+            UniValue result(UniValue::VOBJ);
+            result.pushKV("hex", EncodeHexTx(CTransaction(mtx)));
+            result.pushKV("complete", true);
+            return result;
         }
 
         // 2. Parse keys — WIF private keys, derive pubkeys
@@ -2878,18 +2885,51 @@ static RPCHelpMan signladder()
         ladder.rungs.push_back(std::move(wit_rung));
         ladder.coil = conditions.coil;
 
+        // TX_MLSC: output_index comes from the spent prevout
+        if (is_mlsc) {
+            ladder.coil.output_index = mtx.vin[input_idx].prevout.n;
+            conditions.coil.output_index = mtx.vin[input_idx].prevout.n;
+        }
+
         // 8. Serialize witness
         auto witness_bytes = rung::SerializeLadderWitness(ladder);
         mtx.vin[input_idx].scriptWitness.stack.clear();
         mtx.vin[input_idx].scriptWitness.stack.push_back(witness_bytes);
 
-        // 9. Build MLSC proof
+        // 9. Build MLSC proof (or SHARED proof if shared_source is specified)
         if (is_mlsc) {
+            // Check for shared_source parameter (param index 8)
+            if (!request.params[8].isNull()) {
+                unsigned int shared_src = request.params[8].getInt<unsigned int>();
+                if (shared_src >= mtx.vin.size()) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "shared_source out of range");
+                }
+                if (shared_src == input_idx) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "shared_source cannot reference self");
+                }
+                // Build SHARED proof: reference the source input's full proof
+                rung::MLSCProof shared_proof;
+                shared_proof.proof_mode = rung::MLSCProofMode::SHARED;
+                shared_proof.shared_source_input = static_cast<uint16_t>(shared_src);
+                shared_proof.total_rungs = static_cast<uint16_t>(conditions.rungs.size());
+                shared_proof.total_relays = 0;
+                shared_proof.rung_index = static_cast<uint16_t>(target_rung);
+                shared_proof.revealed_rung = conditions.rungs[target_rung];
+
+                auto proof_bytes = rung::SerializeMLSCProof(shared_proof);
+                mtx.vin[input_idx].scriptWitness.stack.push_back(proof_bytes);
+
+                UniValue result(UniValue::VOBJ);
+                result.pushKV("hex", EncodeHexTx(CTransaction(mtx)));
+                result.pushKV("complete", true);
+                return result;
+            }
+
             rung::MLSCProof mlsc_proof;
-            mlsc_proof.total_rungs = static_cast<uint16_t>(conditions.rungs.size());
-            mlsc_proof.total_relays = static_cast<uint16_t>(conditions.relays.size());
             mlsc_proof.rung_index = static_cast<uint16_t>(target_rung);
             mlsc_proof.revealed_rung = conditions.rungs[target_rung];
+            mlsc_proof.total_rungs = static_cast<uint16_t>(conditions.rungs.size());
+            mlsc_proof.total_relays = static_cast<uint16_t>(conditions.relays.size());
 
             // Reveal relays referenced by target rung
             for (uint16_t ref : conditions.rungs[target_rung].relay_refs) {
@@ -2898,24 +2938,29 @@ static RPCHelpMan signladder()
                 }
             }
 
-            // Compute leaf hashes for unrevealed rungs
+            // Build all rung leaves from the descriptor for Merkle path computation.
+            // Each rung's coil.output_index must match what was used at creation time.
+            uint32_t spent_vout = mtx.vin[input_idx].prevout.n;
+            std::vector<uint256> all_leaves;
             for (uint16_t r = 0; r < conditions.rungs.size(); ++r) {
-                if (r != target_rung) {
-                    std::vector<std::vector<uint8_t>> rpks;
-                    if (r < rung_pubkeys.size()) rpks = rung_pubkeys[r];
-                    mlsc_proof.proof_hashes.push_back(rung::ComputeRungLeaf(conditions.rungs[r], rpks));
+                rung::CreationProofRung cp_rung;
+                for (const auto& block : conditions.rungs[r].blocks) {
+                    cp_rung.blocks.push_back({
+                        static_cast<uint16_t>(block.type),
+                        static_cast<uint8_t>(block.inverted ? 1 : 0)
+                    });
                 }
+                cp_rung.coil = conditions.coil;
+                cp_rung.coil.output_index = spent_vout;
+                std::vector<std::vector<uint8_t>> rpks;
+                if (r < rung_pubkeys.size()) rpks = rung_pubkeys[r];
+                cp_rung.value_commitment = rung::ComputeValueCommitment(conditions.rungs[r], rpks);
+                all_leaves.push_back(rung::ComputeTxMLSCLeaf(cp_rung));
             }
-            // Compute leaf hashes for unrevealed relays
-            std::set<uint16_t> revealed_relay_indices;
-            for (const auto& [idx, _] : mlsc_proof.revealed_relays) {
-                revealed_relay_indices.insert(idx);
-            }
-            for (uint16_t rl = 0; rl < conditions.relays.size(); ++rl) {
-                if (revealed_relay_indices.find(rl) == revealed_relay_indices.end()) {
-                    mlsc_proof.proof_hashes.push_back(rung::ComputeRelayLeaf(conditions.relays[rl], {}));
-                }
-            }
+
+            // Build O(log N) Merkle path
+            mlsc_proof.proof_mode = rung::MLSCProofMode::MERKLE_PATH;
+            mlsc_proof.proof_hashes = rung::BuildMerklePath(all_leaves, target_rung);
 
             auto proof_bytes = rung::SerializeMLSCProof(mlsc_proof);
             mtx.vin[input_idx].scriptWitness.stack.push_back(proof_bytes);
@@ -2929,6 +2974,226 @@ static RPCHelpMan signladder()
     };
 }
 
+// ============================================================================
+// TX_MLSC: Create a transaction with shared condition tree
+// ============================================================================
+
+static RPCHelpMan createtxmlsc()
+{
+    return RPCHelpMan{
+        "createtxmlsc",
+        "Create an unsigned v4 TX_MLSC transaction with a shared condition tree.\n"
+        "One conditions_root for the entire transaction. Outputs are value-only.\n"
+        "Each rung's coil specifies which output it governs (output_index).\n",
+        {
+            {"inputs", RPCArg::Type::ARR, RPCArg::Optional::NO, "Transaction inputs",
+                {
+                    {"input", RPCArg::Type::OBJ, RPCArg::Optional::NO, "An input",
+                        {
+                            {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction id"},
+                            {"vout", RPCArg::Type::NUM, RPCArg::Optional::NO, "The output index"},
+                            {"sequence", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "nSequence value"},
+                        },
+                    },
+                },
+            },
+            {"outputs", RPCArg::Type::ARR, RPCArg::Optional::NO, "Output values (satoshi amounts)",
+                {
+                    {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "Amount in BTC for this output"},
+                },
+            },
+            {"rungs", RPCArg::Type::ARR, RPCArg::Optional::NO, "Rung definitions for the shared tree",
+                {
+                    {"rung", RPCArg::Type::OBJ, RPCArg::Optional::NO, "A rung in the shared tree",
+                        {
+                            {"output_index", RPCArg::Type::NUM, RPCArg::Optional::NO, "Which output this rung governs (0-based)"},
+                            {"blocks", RPCArg::Type::ARR, RPCArg::Optional::NO, "Block specs",
+                                {
+                                    {"block", RPCArg::Type::OBJ, RPCArg::Optional::NO, "A block",
+                                        {
+                                            {"type", RPCArg::Type::STR, RPCArg::Optional::NO, "Block type"},
+                                            {"inverted", RPCArg::Type::BOOL, RPCArg::Optional::OMITTED, "Invert evaluation"},
+                                            {"fields", RPCArg::Type::ARR, RPCArg::Optional::NO, "Fields",
+                                                {
+                                                    {"field", RPCArg::Type::OBJ, RPCArg::Optional::NO, "A field",
+                                                        {
+                                                            {"type", RPCArg::Type::STR, RPCArg::Optional::NO, "Data type"},
+                                                            {"hex", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "Field data hex"},
+                                                        },
+                                                    },
+                                                },
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                            {"coil", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "Coil metadata",
+                                {
+                                    {"type", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "UNLOCK or UNLOCK_TO"},
+                                    {"attestation", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "INLINE"},
+                                    {"scheme", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "SCHNORR or ECDSA"},
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+            {"locktime", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "Transaction nLockTime (default 0)"},
+            {"internal_pubkey", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "32-byte x-only internal pubkey for key-path spending. When provided, conditions_root is tweaked."},
+        },
+        RPCResult{RPCResult::Type::OBJ, "", "", {
+            {RPCResult::Type::STR_HEX, "hex", "The unsigned TX_MLSC transaction hex"},
+            {RPCResult::Type::STR_HEX, "conditions_root", "The shared conditions root (tweaked if internal_pubkey provided)"},
+            {RPCResult::Type::STR_HEX, "merkle_root", "The raw Merkle root (before tweaking)"},
+            {RPCResult::Type::NUM, "n_rungs", "Total rungs in the shared tree"},
+        }},
+        RPCExamples{
+            HelpExampleCli("createtxmlsc",
+                "'[{\"txid\":\"...\",\"vout\":0}]' "
+                "'[0.001, 0.002]' "
+                "'[{\"output_index\":0,\"blocks\":[{\"type\":\"SIG\",\"fields\":[{\"type\":\"SCHEME\",\"hex\":\"01\"}]}]},"
+                "{\"output_index\":1,\"blocks\":[{\"type\":\"SIG\",\"fields\":[{\"type\":\"SCHEME\",\"hex\":\"01\"}]}]}]'")
+        },
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+{
+    const UniValue& inputs_arr = request.params[0].get_array();
+    const UniValue& outputs_arr = request.params[1].get_array();
+    const UniValue& rungs_arr = request.params[2].get_array();
+
+    CMutableTransaction mtx;
+    mtx.version = CTransaction::RUNG_TX_VERSION;
+
+    if (!request.params[3].isNull()) {
+        mtx.nLockTime = request.params[3].getInt<uint32_t>();
+    }
+
+    // Parse inputs
+    for (size_t i = 0; i < inputs_arr.size(); ++i) {
+        const UniValue& inp = inputs_arr[i];
+        CTxIn txin;
+        auto hash = uint256::FromHex(inp["txid"].get_str());
+        if (!hash) throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid txid");
+        txin.prevout.hash = Txid::FromUint256(*hash);
+        txin.prevout.n = inp["vout"].getInt<uint32_t>();
+        if (inp.exists("sequence")) {
+            txin.nSequence = inp["sequence"].getInt<uint32_t>();
+        } else {
+            txin.nSequence = CTxIn::MAX_SEQUENCE_NONFINAL;
+        }
+        mtx.vin.push_back(txin);
+    }
+
+    // Parse output values
+    for (size_t i = 0; i < outputs_arr.size(); ++i) {
+        CTxOut txout;
+        txout.nValue = AmountFromValue(outputs_arr[i]);
+        // scriptPubKey will be set by the serializer (inflation from conditions_root)
+        mtx.vout.push_back(txout);
+    }
+
+    // Parse rungs and compute conditions root
+    std::vector<rung::CreationProofRung> cp_rungs;
+    std::vector<rung::Rung> all_rungs;
+    std::vector<std::vector<std::vector<uint8_t>>> all_rung_pubkeys;
+
+    for (size_t r = 0; r < rungs_arr.size(); ++r) {
+        const UniValue& rung_obj = rungs_arr[r];
+        uint8_t output_index = rung_obj["output_index"].getInt<int>();
+
+        if (output_index >= outputs_arr.size()) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER,
+                "Rung " + std::to_string(r) + ": output_index " +
+                std::to_string(output_index) + " >= n_outputs " +
+                std::to_string(outputs_arr.size()));
+        }
+
+        // Parse blocks as CONDITIONS (no witness fields like PUBKEY/SIGNATURE).
+        // This matches what the spending descriptor produces at spend time.
+        const UniValue& blocks_arr = rung_obj["blocks"].get_array();
+        rung::Rung rung;
+        std::vector<std::vector<uint8_t>> rung_pks;
+        for (size_t b = 0; b < blocks_arr.size(); ++b) {
+            rung.blocks.push_back(ParseBlockSpec(blocks_arr[b], /*conditions_only=*/true, &rung_pks));
+        }
+
+        // TX_MLSC: pubkeys for merkle_pub_key binding (folded into value_commitment).
+        // Provided separately since they're witness-side, not in conditions fields.
+        if (rung_obj.exists("pubkeys")) {
+            const UniValue& pks_arr = rung_obj["pubkeys"].get_array();
+            for (size_t p = 0; p < pks_arr.size(); ++p) {
+                rung_pks.push_back(ParseHex(pks_arr[p].get_str()));
+            }
+        }
+
+        all_rungs.push_back(rung);
+        all_rung_pubkeys.push_back(rung_pks);
+
+        // Build creation proof rung
+        rung::CreationProofRung cp_rung;
+        for (const auto& block : rung.blocks) {
+            cp_rung.blocks.push_back({
+                static_cast<uint16_t>(block.type),
+                static_cast<uint8_t>(block.inverted ? 1 : 0)
+            });
+        }
+
+        // Coil
+        cp_rung.coil.output_index = output_index;
+        if (rung_obj.exists("coil")) {
+            const UniValue& coil_obj = rung_obj["coil"];
+            if (coil_obj.exists("type")) {
+                std::string ct = coil_obj["type"].get_str();
+                if (ct == "UNLOCK_TO") cp_rung.coil.coil_type = rung::RungCoilType::UNLOCK_TO;
+                // COVENANT coil type removed — only UNLOCK and UNLOCK_TO
+            }
+        }
+
+        // Compute value_commitment = SHA256(field_values || pubkeys)
+        cp_rung.value_commitment = rung::ComputeValueCommitment(rung, rung_pks);
+
+        cp_rungs.push_back(std::move(cp_rung));
+    }
+
+    // Compute raw Merkle root from rung leaves
+    uint256 merkle_root = rung::ComputeTxMLSCRoot(cp_rungs);
+
+    // Apply key-path tweak if internal_pubkey is provided
+    bool has_internal_pubkey = !request.params[4].isNull() && !request.params[4].get_str().empty();
+    if (has_internal_pubkey) {
+        auto pk_hex = request.params[4].get_str();
+        auto pk_bytes = ParseHex(pk_hex);
+        if (pk_bytes.size() != 32) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "internal_pubkey must be 32 bytes (x-only)");
+        }
+        auto tweaked = rung::ComputeTweakedConditionsRoot(pk_bytes, merkle_root);
+        if (!tweaked) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Failed to compute tweaked key from internal_pubkey");
+        }
+        mtx.conditions_root = tweaked->first;
+    } else {
+        mtx.conditions_root = merkle_root;
+    }
+
+    // No creation proof — conditions_root is an opaque commitment
+
+    // Inflate outputs with shared scriptPubKey (for UTXO compatibility)
+    CScript mlsc_spk;
+    mlsc_spk.push_back(0xDF);
+    mlsc_spk.insert(mlsc_spk.end(), mtx.conditions_root.begin(), mtx.conditions_root.end());
+    for (auto& out : mtx.vout) {
+        out.scriptPubKey = mlsc_spk;
+    }
+
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("hex", EncodeHexTx(CTransaction(mtx)));
+    result.pushKV("conditions_root", mtx.conditions_root.GetHex());
+    result.pushKV("merkle_root", merkle_root.GetHex());
+    result.pushKV("n_rungs", (int)cp_rungs.size());
+    return result;
+},
+    };
+}
+
 void RegisterRungRPCCommands(CRPCTable& t)
 {
     static const CRPCCommand commands[]{
@@ -2936,6 +3201,7 @@ void RegisterRungRPCCommands(CRPCTable& t)
         {"rung", &createrung},
         {"rung", &validateladder},
         {"rung", &createrungtx},
+        {"rung", &createtxmlsc},
         {"rung", &signrungtx},
         {"rung", &signladder},
         {"rung", &computemutation},

@@ -2,7 +2,7 @@
 
 A typed transaction format for Bitcoin, derived from industrial PLC ladder logic.
 
-**[Full overview, examples, and live demo](https://bitcoinghost.org/labs/ladder-script.html)** | **[Try the Engine](https://bitcoinghost.org/labs/ladder-engine.html)** | **[BIP Draft](docs/BIP-XXXX.md)**
+**[Full overview, examples, and live demo](https://ladder-script.org/ladder-script.html)** | **[Try the Engine](https://ladder-script.org/ladder-engine.html)** | **[BIP Draft](docs/BIP-XXXX.md)**
 
 ```
   RUNG 0: ──[ SIG: Alice ]──[ CSV: 144 ]──────────────( UNLOCK )──
@@ -18,7 +18,7 @@ Ladder Script replaces this with **typed function blocks** organised into **rung
 
 The name and structure are borrowed from ladder logic, the programming model used in industrial PLCs (programmable logic controllers) for decades. A spending policy is a ladder. Each rung is a possible spending path containing typed condition blocks. Blocks on the same rung are AND —all must be satisfied. Rungs are OR —the first satisfied rung authorises the spend.
 
-The output format is **MLSC** (Merkelized Ladder Script Conditions): a 33-byte scriptPubKey (`0xC2 || merkle_root`) regardless of policy complexity. Only the exercised spending path is revealed at spend time. Unused paths stay permanently hidden. The UTXO footprint is 40 bytes per entry.
+The output format is **MLSC** (Merkelized Ladder Script Conditions): a shared 33-byte commitment (`0xDF || conditions_root`) regardless of policy complexity. Only the exercised spending path is revealed at spend time. Unused paths stay permanently hidden. Each UTXO entry stores its value (8 bytes) plus a reference to the shared conditions_root.
 
 Transaction version 4 (`RUNG_TX`). Soft fork activation —non-upgraded nodes see v4 as anyone-can-spend, the same upgrade path as SegWit and Taproot.
 
@@ -51,7 +51,7 @@ Transaction version 4 (`RUNG_TX`). Soft fork activation —non-upgraded nodes se
 
 ## Try it
 
-The [Ladder Engine](https://bitcoinghost.org/labs/ladder-engine.html) is a browser-based visual builder. Load an example from the preset library, switch to SIMULATE, step through evaluation. The RPC tab shows the wire-format JSON. The SIGNET tab lets you fund, sign, and broadcast transactions on the live signet.
+The [Ladder Engine](https://ladder-script.org/ladder-engine.html) is a browser-based visual builder. Load an example from the preset library, switch to SIMULATE, step through evaluation. The RPC tab shows the wire-format JSON. The SIGNET tab lets you fund, sign, and broadcast transactions on the live signet.
 
 ## Tests
 
@@ -105,16 +105,15 @@ proxy/                 FastAPI signet proxy for live testing
 | `src/rung/sighash.cpp` | Tagged sighash computation |
 | `src/rung/pq_verify.cpp` | Post-quantum signature verification (liboqs) |
 | `src/rung/adaptor.cpp` | Adaptor signature support |
-| `src/rung/aggregate.cpp` | Block-level signature aggregation |
 | `src/rung/descriptor.cpp` | Descriptor language: `parseladder` / `formatladder` RPCs |
-| `src/rung/rpc.cpp` | 14 RPC commands: `signladder`, `signrungtx`, `createrungtx`, `parseladder`, `formatladder`, etc. |
+| `src/rung/rpc.cpp` | 15 RPC commands: `createtxmlsc`, `signladder`, `parseladder`, `formatladder`, etc. |
 | `src/rung/policy.cpp` | Mempool policy enforcement |
 
 ## Links
 
-- [Ladder Engine (hosted)](https://bitcoinghost.org/labs/ladder-engine.html) —build and broadcast on signet
-- [Block Reference (hosted)](https://bitcoinghost.org/labs/block-docs/) —visual docs for all block types
-- [Ladder Script Overview](https://bitcoinghost.org/labs/ladder-script.html) —how it works, use cases, diagrams
+- [Ladder Engine (hosted)](https://ladder-script.org/ladder-engine.html) —build and broadcast on signet
+- [Block Reference (hosted)](https://ladder-script.org/block-docs/) —visual docs for all block types
+- [Ladder Script Overview](https://ladder-script.org/ladder-script.html) —how it works, use cases, diagrams
 
 ## License
 

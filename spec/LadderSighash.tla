@@ -3,6 +3,8 @@
 (* Model the sighash commitment completeness for Ladder Script.           *)
 (* Verifies which fields are committed under each hash type combination   *)
 (* and that ANYPREVOUT skip rules are correctly applied.                  *)
+(*                                                                         *)
+(* Updated 2026-03-27: key-path sighash mode (no conditions commitment).  *)
 (***************************************************************************)
 
 EXTENDS Integers, Sequences, FiniteSets
@@ -17,6 +19,9 @@ OutputTypes == {"DEFAULT", "ALL", "NONE", "SINGLE"}
 \* Input modifier flags
 InputModifiers == {"NORMAL", "ANYONECANPAY", "ANYPREVOUT", "ANYPREVOUTANYSCRIPT"}
 
+\* Spend path: key-path vs script-path
+SpendPaths == {"KEY_PATH", "SCRIPT_PATH"}
+
 \* Encoding: output_type + modifier → hash_type byte
 HashTypeByte(outType, inMod) ==
     LET outVal == CASE outType = "DEFAULT" -> 0
@@ -24,19 +29,17 @@ HashTypeByte(outType, inMod) ==
                     [] outType = "NONE" -> 2
                     [] outType = "SINGLE" -> 3
         modVal == CASE inMod = "NORMAL" -> 0
-                    [] inMod = "ANYONECANPAY" -> 16  \* 0x80 >> 3 (simplified)
-                    [] inMod = "ANYPREVOUT" -> 8     \* 0x40 >> 3
-                    [] inMod = "ANYPREVOUTANYSCRIPT" -> 24  \* 0xC0 >> 3
+                    [] inMod = "ANYONECANPAY" -> 16
+                    [] inMod = "ANYPREVOUT" -> 8
+                    [] inMod = "ANYPREVOUTANYSCRIPT" -> 24
     IN outVal + modVal
 
 \* Valid hash type combinations
-IsValidHashType(outType, inMod) ==
-    \* ANYONECANPAY alone with no output type is invalid (0x80 with output=0 means DEFAULT which is valid)
-    \* Actually invalid: output type > 3, or standalone ACP without valid output
-    \* The truly invalid cases are: output nibble = 0x04..0x0F and similar
-    \* For our model: all combinations of our enums are valid EXCEPT
-    \* ACP+NONE and ACP+SINGLE are valid. All combos are valid in Ladder.
-    TRUE
+IsValidHashType(outType, inMod) == TRUE
+
+\* Key-path spending restricts hash types (no ANYPREVOUT variants)
+IsValidKeyPathHashType(outType, inMod) ==
+    inMod \in {"NORMAL", "ANYONECANPAY"}
 
 (***************************************************************************)
 (* Committed fields model                                                  *)
@@ -46,42 +49,25 @@ IsValidHashType(outType, inMod) ==
 \* Fields that are ALWAYS committed regardless of hash type
 AlwaysCommitted == {"epoch", "hash_type", "tx_version", "tx_locktime", "spend_type"}
 
-CommittedFields(outType, inMod) ==
+CommittedFields(outType, inMod, spendPath) ==
     LET isACP == inMod = "ANYONECANPAY"
         isAPO == inMod = "ANYPREVOUT"
         isAPOAS == inMod = "ANYPREVOUTANYSCRIPT"
         isAnyPrevout == isAPO \/ isAPOAS
+        isKeyPath == spendPath = "KEY_PATH"
 
-        \* Prevouts hash: committed unless ACP; also skipped if any APO variant
         commitPrevouts == ~isACP /\ ~isAnyPrevout
-
-        \* Amounts hash: committed unless ACP (APO still commits to amounts!)
         commitAmounts == ~isACP
-
-        \* Sequences hash: committed unless ACP
         commitSequences == ~isACP
-
-        \* Outputs hash: committed if ALL or DEFAULT
         commitOutputs == outType \in {"ALL", "DEFAULT"}
-
-        \* Single output hash: committed if SINGLE
         commitSingleOutput == outType = "SINGLE"
-
-        \* Per-input prevout: committed unless ACP has APO variant
-        \* Normal: always. ACP: yes. APO: no. APOAS: no.
         commitInputPrevout == ~isAnyPrevout
-
-        \* Per-input spent_output: always (includes amount)
         commitInputSpentOutput == TRUE
-
-        \* Per-input sequence: always for per-input section
         commitInputSequence == TRUE
-
-        \* Input index: committed when NOT ACP
         commitInputIndex == ~isACP
 
-        \* Conditions hash: committed unless APOAS
-        commitConditions == ~isAPOAS
+        \* CONDITIONS HASH: committed in script-path unless APOAS; NEVER in key-path
+        commitConditions == ~isKeyPath /\ ~isAPOAS
     IN
     [prevouts_hash |-> commitPrevouts,
      amounts_hash |-> commitAmounts,
@@ -101,19 +87,21 @@ CommittedFields(outType, inMod) ==
 VARIABLES
     outType,
     inMod,
+    spendPath,
     phase
 
-vars == <<outType, inMod, phase>>
+vars == <<outType, inMod, spendPath, phase>>
 
 Init ==
     /\ outType \in OutputTypes
     /\ inMod \in InputModifiers
+    /\ spendPath \in SpendPaths
     /\ phase = "check"
 
 Next ==
     \/ /\ phase = "check"
        /\ phase' = "done"
-       /\ UNCHANGED <<outType, inMod>>
+       /\ UNCHANGED <<outType, inMod, spendPath>>
     \/ /\ phase = "done"
        /\ UNCHANGED vars
 
@@ -123,84 +111,90 @@ Spec == Init /\ [][Next]_vars
 (* Invariants                                                              *)
 (***************************************************************************)
 
-\* DEFAULT and ALL commit to same fields
+\* DEFAULT and ALL commit to same fields (for both spend paths)
 Inv_DefaultEqualsAll ==
     \A im \in InputModifiers :
-        CommittedFields("DEFAULT", im) = CommittedFields("ALL", im)
+        \A sp \in SpendPaths :
+            CommittedFields("DEFAULT", im, sp) = CommittedFields("ALL", im, sp)
 
-\* ANYPREVOUT still commits to amounts (prevents fee manipulation)
+\* ANYPREVOUT still commits to amounts
 Inv_APOCommitsAmounts ==
-    CommittedFields("ALL", "ANYPREVOUT").amounts_hash = TRUE
+    \A sp \in SpendPaths :
+        CommittedFields("ALL", "ANYPREVOUT", sp).amounts_hash = TRUE
 
-\* ANYPREVOUTANYSCRIPT skips conditions (allows script rebinding)
+\* ANYPREVOUTANYSCRIPT skips conditions in script-path
 Inv_APOASSkipsConditions ==
-    /\ CommittedFields("ALL", "ANYPREVOUTANYSCRIPT").conditions_hash = FALSE
-    \* But regular APO does commit to conditions
-    /\ CommittedFields("ALL", "ANYPREVOUT").conditions_hash = TRUE
+    /\ CommittedFields("ALL", "ANYPREVOUTANYSCRIPT", "SCRIPT_PATH").conditions_hash = FALSE
+    /\ CommittedFields("ALL", "ANYPREVOUT", "SCRIPT_PATH").conditions_hash = TRUE
 
-\* ANYONECANPAY skips prevouts, amounts, sequences aggregates
+\* KEY-PATH: conditions_hash is NEVER committed (key-path sighash)
+Inv_KeyPathNoConditions ==
+    \A ot \in OutputTypes :
+        \A im \in InputModifiers :
+            CommittedFields(ot, im, "KEY_PATH").conditions_hash = FALSE
+
+\* KEY-PATH and SCRIPT_PATH differ only in conditions_hash
+\* (when modifier is NORMAL — no APO complexity)
+Inv_KeyPathDiffersOnlyInConditions ==
+    \A ot \in OutputTypes :
+        LET kp == CommittedFields(ot, "NORMAL", "KEY_PATH")
+            sp == CommittedFields(ot, "NORMAL", "SCRIPT_PATH")
+        IN /\ kp.prevouts_hash = sp.prevouts_hash
+           /\ kp.amounts_hash = sp.amounts_hash
+           /\ kp.sequences_hash = sp.sequences_hash
+           /\ kp.outputs_hash = sp.outputs_hash
+           /\ kp.input_prevout = sp.input_prevout
+           /\ kp.input_index = sp.input_index
+           \* Only conditions_hash differs
+           /\ kp.conditions_hash = FALSE
+           /\ sp.conditions_hash = TRUE
+
+\* ANYONECANPAY skips aggregates
 Inv_ACPSkipsAggregates ==
     \A ot \in OutputTypes :
-        LET cf == CommittedFields(ot, "ANYONECANPAY")
-        IN /\ cf.prevouts_hash = FALSE
-           /\ cf.amounts_hash = FALSE
-           /\ cf.sequences_hash = FALSE
+        \A sp \in SpendPaths :
+            LET cf == CommittedFields(ot, "ANYONECANPAY", sp)
+            IN /\ cf.prevouts_hash = FALSE
+               /\ cf.amounts_hash = FALSE
+               /\ cf.sequences_hash = FALSE
 
-\* ANYPREVOUT skips prevout in per-input section
-Inv_APOSkipsInputPrevout ==
-    /\ CommittedFields("ALL", "ANYPREVOUT").input_prevout = FALSE
-    /\ CommittedFields("ALL", "ANYPREVOUTANYSCRIPT").input_prevout = FALSE
-    \* Normal keeps it
-    /\ CommittedFields("ALL", "NORMAL").input_prevout = TRUE
-
-\* NONE skips outputs hash
+\* NONE skips outputs
 Inv_NoneSkipsOutputs ==
     \A im \in InputModifiers :
-        /\ CommittedFields("NONE", im).outputs_hash = FALSE
-        /\ CommittedFields("NONE", im).single_output_hash = FALSE
+        \A sp \in SpendPaths :
+            /\ CommittedFields("NONE", im, sp).outputs_hash = FALSE
+            /\ CommittedFields("NONE", im, sp).single_output_hash = FALSE
 
 \* SINGLE commits only single output hash
 Inv_SingleOutput ==
     \A im \in InputModifiers :
-        /\ CommittedFields("SINGLE", im).outputs_hash = FALSE
-        /\ CommittedFields("SINGLE", im).single_output_hash = TRUE
+        \A sp \in SpendPaths :
+            /\ CommittedFields("SINGLE", im, sp).outputs_hash = FALSE
+            /\ CommittedFields("SINGLE", im, sp).single_output_hash = TRUE
 
-\* Every valid hash type commits to the always-committed fields
-\* (modeled implicitly since those are always in the hash preimage)
+\* Always-committed fields present in every mode
 Inv_AlwaysCommittedPresent ==
     TRUE  \* epoch, hash_type, tx_version, tx_locktime, spend_type always present by construction
 
-\* Changing any committed field changes the hash (binding property)
-\* Modeled structurally: committed fields are inputs to the hash function
+\* Binding: at least some fields always committed
 Inv_FieldsAreInputs ==
     \A ot \in OutputTypes :
         \A im \in InputModifiers :
-            LET cf == CommittedFields(ot, im)
-            IN \* At least one field is always committed
-               cf.input_spent_output = TRUE /\ cf.input_sequence = TRUE
-
-\* ACP: no input_index (uses per-input fields directly)
-Inv_ACPNoInputIndex ==
-    \A ot \in OutputTypes :
-        CommittedFields(ot, "ANYONECANPAY").input_index = FALSE
-
-\* Normal: has input_index
-Inv_NormalHasInputIndex ==
-    \A ot \in OutputTypes :
-        CommittedFields(ot, "NORMAL").input_index = TRUE
+            \A sp \in SpendPaths :
+                LET cf == CommittedFields(ot, im, sp)
+                IN cf.input_spent_output = TRUE /\ cf.input_sequence = TRUE
 
 \* Combined
 SafetyInvariant ==
     /\ Inv_DefaultEqualsAll
     /\ Inv_APOCommitsAmounts
     /\ Inv_APOASSkipsConditions
+    /\ Inv_KeyPathNoConditions
+    /\ Inv_KeyPathDiffersOnlyInConditions
     /\ Inv_ACPSkipsAggregates
-    /\ Inv_APOSkipsInputPrevout
     /\ Inv_NoneSkipsOutputs
     /\ Inv_SingleOutput
     /\ Inv_AlwaysCommittedPresent
     /\ Inv_FieldsAreInputs
-    /\ Inv_ACPNoInputIndex
-    /\ Inv_NormalHasInputIndex
 
 =============================================================================

@@ -1733,6 +1733,7 @@ body {
 .example-tag.rec { border-color: #8e44ad66; color: #8e44ad; }
 .example-tag.plc { border-color: #c0392b66; color: #c0392b; }
 .example-tag.legacy { border-color: #c2185b66; color: #c2185b; }
+.example-tag.qabi { border-color: #9b59b666; color: #9b59b6; }
 
 /* Fullscreen mode */
 .app.fullscreen .main-content {
@@ -2696,6 +2697,25 @@ const BLOCK_FAMILIES = [
       ]},
     ]
   },
+  {
+    name: 'QABIO', color: '#9b59b6',
+    blocks: [
+      { type: 'QABI_PRIME', label: 'QABI_PRIME', desc: 'QABIO priming state transition --reveal auth preimage, mutate committed batch root (covenant)', fields: [
+        { name: 'new_committed_root', dataType: 'HASH256', label: 'New Committed Root', placeholder: '32-byte Merkle root of the batch being primed for (witness-only)' },
+        { name: 'prime_depth', dataType: 'NUMERIC', label: 'Prime Depth', placeholder: 'uint32 LE --depth in auth chain (must exceed current committed_depth)' },
+        { name: 'new_committed_expiry', dataType: 'NUMERIC', label: 'New Committed Expiry', placeholder: 'uint32 LE --max block height the QABI_SPEND may fire at' },
+        { name: 'prime_preimage', dataType: 'PREIMAGE', label: 'Prime Preimage', placeholder: '32-byte preimage such that SHA256^prime_depth(preimage) == committed auth_tip' }
+      ]},
+      { type: 'QABI_SPEND', label: 'QABI_SPEND', desc: 'QABIO batch spend --verifies primed state, FALCON-512 coordinator signature (SIGHASH_QABO), full output-set match', fields: [
+        { name: 'auth_tip', dataType: 'HASH256', label: 'Auth Tip', placeholder: '32-byte H^N(auth_seed) committed at creation time (conditions)' },
+        { name: 'committed_root', dataType: 'HASH256', label: 'Committed Root', placeholder: '32-byte primed batch root (0 if unprimed; conditions)' },
+        { name: 'committed_depth', dataType: 'NUMERIC', label: 'Committed Depth', placeholder: 'uint32 LE --depth of last consumed preimage (conditions)' },
+        { name: 'committed_expiry', dataType: 'NUMERIC', label: 'Committed Expiry', placeholder: 'uint32 LE --max block height the spend may fire at (conditions)' },
+        { name: 'owner_id', dataType: 'PUBKEY_COMMIT', label: 'Owner ID', placeholder: '32-byte SHA256(owner Rung 0 FALCON pubkey) (conditions)' },
+        { name: 'spend_preimage', dataType: 'PREIMAGE', label: 'Spend Preimage', placeholder: '32-byte preimage at depth committed_depth+1 (witness-only)' }
+      ]},
+    ]
+  },
 ];
 
 // Internal block type for referencing output coils from other rungs
@@ -2753,7 +2773,7 @@ const BLOCK_RULES = {
   ANCHOR_RESERVE: 'Reserve anchor: N-of-M guardian set. Requires N <= M.',
   ANCHOR_SEAL: 'Seal anchor: permanently binds UTXO to a data commitment.',
   ANCHOR_ORACLE: 'Oracle anchor: requires oracle pubkey and quorum count.',
-  DATA_RETURN: 'On-chain data (max 40 bytes) appended to MLSC output (0xC2 + root + data). Visible at fund time. Replaces OP_RETURN at 4 WU/byte. Max 1 per tx, zero-value.',
+  DATA_RETURN: 'On-chain data (max 40 bytes) appended to MLSC output (0xDF + root + data). Visible at fund time. Replaces OP_RETURN at 4 WU/byte. Max 1 per tx, zero-value.',
   HYSTERESIS_FEE: 'Satisfied when tx fee rate falls within [low, high] sat/vB.',
   HYSTERESIS_VALUE: 'Satisfied when output amount falls within [low, high] sats.',
   TIMER_CONTINUOUS: 'Satisfied when accumulated >= target blocks.',
@@ -2779,6 +2799,8 @@ const BLOCK_RULES = {
   P2WSH_LEGACY: 'Legacy P2WSH wrapped. SHA256 of inner conditions must match. SCRIPT_BODY carries serialised Ladder Script conditions (up to 32 bytes). Same pattern as P2SH but with SHA256 hash.',
   P2TR_LEGACY: 'Legacy P2TR key-path wrapped. Same evaluation as SIG --key-path Taproot spend with typed fields. Closes key-path data surfaces.',
   P2TR_SCRIPT_LEGACY: 'Legacy P2TR script-path wrapped. HASH256 is Merkle root of script tree, internal key folded into Merkle leaf. Revealed leaf (SCRIPT_BODY) must be valid Ladder Script conditions (up to 32 bytes). Closes the primary inscription/data-embedding vector.',
+  QABI_PRIME: 'QABIO priming state transition. Reveals the next auth chain preimage, bumps committed_depth, and mutates the QABI_SPEND rung\'s committed_root + committed_expiry via a covenant check (tx.vout[0] must be an MLSC UTXO whose conditions_root equals the re-computed primed tree). Participant-authorised: only the auth_seed holder can produce a valid preimage. No coordinator signature required at priming time.',
+  QABI_SPEND: 'QABIO batch spend. Consensus-enforced N-party atomic batch: each primed input reveals its preimage at committed_depth+1, verifies against committed auth_tip, then a single FALCON-512 coordinator signature (SIGHASH_QABO, 666 B) authorises the whole tx. Output set must bit-exact match the QABIBlock outputs list (tx-level hashOutputs). Tx-level aggregated_sig is shared across all inputs \u2014 one FALCON verify per tx, not per input.',
 };
 
 // Realistic test data for every block type --deterministic fake keys/hashes
@@ -3969,7 +3991,7 @@ async function computeMerkleProof(leafHexes, targetIdx) {
   return { siblings, leaf: leafHexes[targetIdx] };
 }
 
-// Convert stored rung objects back to createrungtx conditions format
+// Convert stored rung objects back to createtxmlsc conditions format
 function rungsToConditions(storedRungs) {
   return storedRungs.map(rung => {
     const cond = {
@@ -4067,8 +4089,8 @@ function wireFieldsToValues(wireBlock) {
   return { type: wireBlock.type, values };
 }
 
-// Export as createrungtx wire format
-function exportCreateRungtx(rungs, txOutputs, txInputs, locktime) {
+// Legacy per-output MLSC export (retained for reference, not called)
+function exportCreateRungtxLegacy(rungs, txOutputs, txInputs, locktime) {
   // Build inputs
   const inputs = txInputs
     .filter(i => i.txid)
@@ -4170,6 +4192,95 @@ function exportCreateRungtx(rungs, txOutputs, txInputs, locktime) {
 
   const result = { inputs, outputs };
   if (relays.length > 0) result.relays = relays;
+  const lt = parseInt(locktime);
+  if (lt > 0) result.locktime = lt;
+
+  return result;
+}
+
+// Export as createtxmlsc wire format (TX_MLSC: shared condition tree)
+function exportCreateTxMLSC(rungs, txOutputs, txInputs, locktime) {
+  // Build inputs (same as createtxmlsc)
+  const inputs = txInputs
+    .filter(i => i.txid)
+    .map(i => {
+      const inp = { txid: i.txid, vout: parseInt(i.vout) || 0 };
+      const seq = parseInt(i.sequence);
+      if (!isNaN(seq) && seq !== 4294967294) inp.sequence = seq;
+      return inp;
+    });
+
+  // Build output amounts
+  const outputIdToIndex = new Map();
+  const amounts = [];
+  txOutputs.forEach((o, idx) => {
+    if (!rungs.some(r => r.output.type !== 'relay' && r.output.txOutputId === o.id)) return;
+    outputIdToIndex.set(o.id, amounts.length);
+    amounts.push((parseInt(o.amount) || 0) / 100000000); // sats → BTC
+  });
+
+  // Build shared rung array with output_index
+  const sharedRungs = [];
+  rungs.forEach(rung => {
+    if (rung.output.type === 'relay') return;
+    if (rung.output.txOutputId === null || rung.output.txOutputId === undefined) return;
+    const outputIdx = outputIdToIndex.get(rung.output.txOutputId);
+    if (outputIdx === undefined) return;
+
+    // Build blocks (conditions-only: no PUBKEY/SIGNATURE fields)
+    const blocks = rung.blocks
+      .filter(b => b.type !== 'OUTPUT_REF')
+      .map(b => {
+        const def = getBlockDef(b.type);
+        const fields = [];
+        def.fields.forEach(f => {
+          if (f.noWire || f.witnessOnly || f.computed) return;
+          if (f.dataType === 'PUBKEY') return; // pubkeys are separate in TX_MLSC
+          const val = b.values[f.name];
+          if (!val) return;
+          if (f.dataType === 'NUMERIC') {
+            fields.push({ type: 'NUMERIC', hex: toNumericHex(val) });
+          } else if (f.dataType === 'SCHEME' && val) {
+            const schemeMap = { SCHNORR: '01', ECDSA: '02', FALCON512: '10', FALCON1024: '11', DILITHIUM3: '12', SPHINCS_SHA: '13' };
+            fields.push({ type: 'SCHEME', hex: schemeMap[val] || '01' });
+          } else if (f.dataType === 'HASH256') {
+            fields.push({ type: 'HASH256', hex: val });
+          } else if (f.dataType === 'HASH160') {
+            fields.push({ type: 'HASH160', hex: val });
+          } else if (f.dataType === 'PREIMAGE') {
+            fields.push({ type: 'PREIMAGE', hex: val });
+          } else if (f.dataType === 'SCRIPT_BODY') {
+            fields.push({ type: 'SCRIPT_BODY', hex: val });
+          }
+        });
+        const out = { type: b.type, fields };
+        if (b.inverted) out.inverted = true;
+        return out;
+      });
+
+    // Collect pubkeys for merkle_pub_key binding
+    const pubkeys = [];
+    rung.blocks.forEach(b => {
+      if (b.type === 'OUTPUT_REF') return;
+      const def = getBlockDef(b.type);
+      def.fields.forEach(f => {
+        if (f.dataType !== 'PUBKEY') return;
+        const val = b.values[f.name];
+        if (!val) return;
+        if (f.multi) {
+          val.split(',').map(k => k.trim()).filter(Boolean).forEach(k => pubkeys.push(k));
+        } else {
+          pubkeys.push(val);
+        }
+      });
+    });
+
+    const rungObj = { output_index: outputIdx, blocks };
+    if (pubkeys.length > 0) rungObj.pubkeys = pubkeys;
+    sharedRungs.push(rungObj);
+  });
+
+  const result = { inputs, outputs: amounts, rungs: sharedRungs };
   const lt = parseInt(locktime);
   if (lt > 0) result.locktime = lt;
 
@@ -4282,10 +4393,34 @@ function rungsToDescriptor(rungs) {
     return 'and(' + blocks.join(', ') + ')';
   };
 
-  const rungStrs = activeRungs.map(formatRung).filter(Boolean);
-  if (rungStrs.length === 0) return 'ladder()';
-  if (rungStrs.length === 1) return 'ladder(' + rungStrs[0] + ')';
-  return 'ladder(or(\n  ' + rungStrs.join(',\n  ') + '\n))';
+  // TX_MLSC: group rungs by output and use output() wrapper
+  const rungsByOutput = new Map();
+  activeRungs.forEach(r => {
+    const outId = r.output.txOutputId;
+    if (outId === null || outId === undefined) return;
+    if (!rungsByOutput.has(outId)) rungsByOutput.set(outId, []);
+    rungsByOutput.get(outId).push(r);
+  });
+
+  // Assign sequential output indices
+  const outputEntries = [...rungsByOutput.entries()];
+  if (outputEntries.length === 0) {
+    // Fallback: no output assignment, format as flat descriptor
+    const rungStrs = activeRungs.map(formatRung).filter(Boolean);
+    if (rungStrs.length === 0) return 'ladder()';
+    if (rungStrs.length === 1) return 'ladder(' + rungStrs[0] + ')';
+    return 'ladder(or(\n  ' + rungStrs.join(',\n  ') + '\n))';
+  }
+
+  const outputParts = outputEntries.map(([_, outRungs], idx) => {
+    const rungStrs = outRungs.map(formatRung).filter(Boolean);
+    if (rungStrs.length === 0) return null;
+    const inner = rungStrs.length === 1 ? rungStrs[0] : 'or(' + rungStrs.join(', ') + ')';
+    return 'output(' + idx + ', ' + inner + ')';
+  }).filter(Boolean);
+
+  if (outputParts.length === 0) return 'ladder()';
+  return 'ladder(\n  ' + outputParts.join(',\n  ') + '\n)';
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -6285,11 +6420,11 @@ function CoilPropertiesPanel({ rungId }) {
               C++ RPC coil settings. These define how the output is unlocked on-chain.
             </div>
             <div className="prop-row">
-              <span className="prop-label" title="Wire coil type --UNLOCK (standard spend), UNLOCK_TO (spend to address + conditions), COVENANT (constrain spending tx)">Coil Type</span>
+              <span className="prop-label" title="Wire coil type --UNLOCK (standard spend), UNLOCK_TO (spend to address + conditions), ">Coil Type</span>
               <select
                 className="prop-select"
                 value={rung.output.wireType || 'UNLOCK'}
-                title="How this output is unlocked on-chain --UNLOCK for standard spends, COVENANT to constrain the spending transaction"
+                title="How this output is unlocked on-chain --UNLOCK for standard spends"
                 onChange={(e) => onChange(rung.id, 'wireType', e.target.value)}
               >
                 {WIRE_COIL_TYPES.map(ct => (
@@ -6302,7 +6437,7 @@ function CoilPropertiesPanel({ rungId }) {
               <select
                 className="prop-select"
                 value={rung.output.attestation || 'INLINE'}
-                title="INLINE = signatures in witness data. AGGREGATE = block-level aggregate. DEFERRED = template hash only"
+                title="INLINE = signatures in witness data. AGGREGATE and DEFERRED are reserved for future extension."
                 onChange={(e) => onChange(rung.id, 'attestation', e.target.value)}
               >
                 {ATTESTATION_TYPES.map(at => (
@@ -6367,7 +6502,7 @@ function HighlightedJson({ scanStep }) {
 
   // Build line-level annotation map: each JSON line gets a state + optional marker
   const { lines, lineAnnotations } = React.useMemo(() => {
-    const data = exportCreateRungtx(rungs, txOutputs, txInputs, locktime);
+    const data = exportCreateTxMLSC(rungs, txOutputs, txInputs, locktime);
     const fullJson = JSON.stringify(data, null, 2);
     const jsonLines = fullJson.split('\n');
     // annotations[i] = { state: 'neutral'|'executed'|'blocked'|'active'|'passed'|'next', marker: bool }
@@ -7922,6 +8057,116 @@ const EXAMPLES = [
     ],
     inputMap: [[0]], outputMap: [0],
   },
+  {
+    title: 'QABIO UTXO --FRESH (unprimed)',
+    desc: 'A brand-new QABIO-enabled UTXO with the standard 3-rung deployment shape. Not yet primed for any specific batch. Three spend paths: the SIG escape rung (participant sweeps unilaterally with their own key), the QABI_PRIME rung (participant opts the UTXO into a specific upcoming coordinator batch), and the QABI_SPEND rung (coordinator-driven batch spend, only valid after priming).\n\nESCAPE: Participant spends with their own key, no coordinator involvement.\nPRIME:   Participant reveals auth-chain preimage to commit into a batch.\nSPEND:   Coordinator finalises the batch (only after a QABI_PRIME has set committed_root).',
+    tags: [['SIG', 'sig'], ['QABI_PRIME', 'qabi'], ['QABI_SPEND', 'qabi']],
+    rungs: [
+      { label: 'ESCAPE', blocks: [
+        { type: 'SIG', values: { pubkey: FAKE.pk1 } },
+      ], output: { name: 'PARTICIPANT_SWEEP', type: 'standard' } },
+      { label: 'PRIME', blocks: [
+        { type: 'QABI_PRIME', values: {
+            new_committed_root: FAKE.hash1,
+            prime_depth: '10',
+            new_committed_expiry: '500',
+            prime_preimage: FAKE.hash2,
+        } },
+      ], output: { name: 'PRIMED_UTXO', type: 'standard' } },
+      { label: 'SPEND', blocks: [
+        { type: 'QABI_SPEND', values: {
+            auth_tip: FAKE.hash3,
+            committed_root: '0000000000000000000000000000000000000000000000000000000000000000',
+            committed_depth: '0',
+            committed_expiry: '0',
+            owner_id: FAKE.hash4,
+            spend_preimage: FAKE.preimage1,
+        } },
+      ], output: { name: 'BATCH_PAYOUT', type: 'standard' } },
+    ],
+    txInputs: [{ txid: FAKE.txid1, vout: 0 }],
+    txOutputs: [
+      { address: FAKE.addr1, amount: 49990 },
+      { address: FAKE.addr2, amount: 49980 },
+      { address: FAKE.addr3, amount: 49970 },
+    ],
+    inputMap: [[0], [0], [0]], outputMap: [0, 1, 2],
+  },
+  {
+    title: 'QABIO UTXO --PRIMED',
+    desc: 'The same QABIO UTXO after a QABI_PRIME has fired. committed_root now points at a specific coordinator batch, committed_depth is 10, committed_expiry is 500. The QABI_SPEND rung is now valid for that batch --the coordinator can finalise it by signing once with FALCON-512 over the whole batch tx. The SIG escape rung is STILL valid: if the coordinator bails, the participant can sweep via the SIG rung using their own key. The QABI_PRIME rung can still fire again to re-prime at a deeper auth depth if the current batch misses its window.\n\nESCAPE: Unchanged --still works if the coordinator disappears.\nRE_PRIME: Participant can prime again at a deeper auth depth, committing to a different batch.\nSPEND:   Coordinator finalises --single FALCON-512 sig authorises the whole N-party tx.',
+    tags: [['SIG', 'sig'], ['QABI_PRIME', 'qabi'], ['QABI_SPEND', 'qabi']],
+    rungs: [
+      { label: 'ESCAPE', blocks: [
+        { type: 'SIG', values: { pubkey: FAKE.pk1 } },
+      ], output: { name: 'PARTICIPANT_SWEEP', type: 'standard' } },
+      { label: 'RE_PRIME', blocks: [
+        { type: 'QABI_PRIME', values: {
+            new_committed_root: FAKE.hash4,
+            prime_depth: '20',
+            new_committed_expiry: '1000',
+            prime_preimage: FAKE.hash2,
+        } },
+      ], output: { name: 'RE_PRIMED', type: 'standard' } },
+      { label: 'SPEND', blocks: [
+        { type: 'QABI_SPEND', values: {
+            auth_tip: FAKE.hash3,
+            committed_root: FAKE.hash1,
+            committed_depth: '10',
+            committed_expiry: '500',
+            owner_id: FAKE.hash4,
+            spend_preimage: FAKE.preimage1,
+        } },
+      ], output: { name: 'BATCH_PAYOUT', type: 'standard' } },
+    ],
+    txInputs: [{ txid: FAKE.txid2, vout: 0 }],
+    txOutputs: [
+      { address: FAKE.addr4, amount: 49970 },
+      { address: FAKE.addr5, amount: 49960 },
+      { address: FAKE.addr6, amount: 49950 },
+    ],
+    inputMap: [[0], [0], [0]], outputMap: [0, 1, 2],
+  },
+  {
+    title: 'QABIO COORDINATOR BAILS --ESCAPE',
+    desc: 'The safety-test shape: a minimal 1-rung MLSC UTXO a participant sweeps into via the SIG escape rung after the coordinator has disappeared mid-batch. This is the destination of the escape path from the PRIMED example above --the participant produces a Schnorr signature under their own key, the primed UTXO is consumed, and the funds land in a fresh MLSC(SIG-only) UTXO they control unilaterally.\n\nSIG_ONLY: Single-key Schnorr signature. Spendable any time. No coordinator, no preimage, no batch state --just a normal one-of-one key-controlled UTXO that happens to live in the MLSC envelope.',
+    tags: [['SIG', 'sig']],
+    rungs: [
+      { label: 'SIG_ONLY', blocks: [
+        { type: 'SIG', values: { pubkey: FAKE.pk1 } },
+      ], output: { name: 'RECOVERED', type: 'standard' } },
+    ],
+    txInputs: [{ txid: FAKE.txid3, vout: 0 }],
+    txOutputs: [
+      { address: FAKE.addr1, amount: 49950 },
+    ],
+    inputMap: [[0]], outputMap: [0],
+  },
+  {
+    title: 'QABIO BATCH PAYOUT --COORDINATOR VIEW',
+    desc: 'The tx a coordinator constructs when finalising an N-party batch. Single QABI_SPEND rung authorises the whole tx; the FALCON-512 aggregated_sig (666 bytes, tx-level) is verified once per tx and shared across every primed input. In practice each primed input has its own QABI_SPEND witness revealing its own spend_preimage, but the ladder structure is the same --N copies of this rung, one per input, all consuming the same tx-level signature.\n\nSPEND: All 9 QABI_SPEND consensus checks run per-input, but the expensive FALCON verify is cached across inputs (~865 us/input at N=1000).',
+    tags: [['QABI_SPEND', 'qabi']],
+    rungs: [
+      { label: 'SPEND', blocks: [
+        { type: 'QABI_SPEND', values: {
+            auth_tip: FAKE.hash3,
+            committed_root: FAKE.hash1,
+            committed_depth: '10',
+            committed_expiry: '500',
+            owner_id: FAKE.hash4,
+            spend_preimage: FAKE.preimage1,
+        } },
+      ], output: { name: 'BATCH_OUT', type: 'standard' } },
+    ],
+    txInputs: [{ txid: FAKE.txid4, vout: 0 }],
+    txOutputs: [
+      { address: FAKE.addr1, amount: 12500 },
+      { address: FAKE.addr2, amount: 12500 },
+      { address: FAKE.addr3, amount: 12500 },
+      { address: FAKE.addr4, amount: 12400 },
+    ],
+    inputMap: [[0]], outputMap: [0, 1, 2, 3],
+  },
 ];
 
 function ExamplesModal({ onClose, onLoad }) {
@@ -7954,7 +8199,7 @@ function ExamplesModal({ onClose, onLoad }) {
 // DECODED JSON → BUILDER RUNG CONVERTER
 // ═══════════════════════════════════════════════════════════════
 
-// Convert decoded rung JSON (from decoderung RPC, createrungtx format, or raw tx)
+// Convert decoded rung JSON (from decoderung RPC, createtxmlsc format, or raw tx)
 // into the builder's internal rung format for visualization.
 function decodedToBuilderRungs(data) {
   if (!data || typeof data !== 'object') return null;
@@ -8034,7 +8279,7 @@ function decodedToBuilderRungs(data) {
   if (Array.isArray(data) && data.length > 0 && (data[0].blocks || data[0].contacts)) {
     return { rungs: data.map(convertRung), txInputs: [], txOutputs: [] };
   }
-  // Format 3: createrungtx / wire format --{ inputs, outputs[].conditions[].blocks[] }
+  // Format 3: createtxmlsc / wire format --{ inputs, outputs[].conditions[].blocks[] }
   if (data.outputs && Array.isArray(data.outputs)) {
     const txInputs = (data.inputs || []).map(i => ({ id: uid(), txid: i.txid || '', vout: i.vout || 0, sequence: i.sequence !== undefined ? String(i.sequence) : '' }));
     const txOutputs = [];
@@ -8253,7 +8498,7 @@ seedSessionLogIfEmpty();
 
 const SIGNET_API = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
   ? 'http://localhost:8801'
-  : 'https://bitcoinghost.org';
+  : location.origin;
 
 // ═══════════════════════════════════════════════════════════════
 // SHARED API CLIENT
@@ -8297,7 +8542,7 @@ function ConvertPanel() {
       <div style={sty.section}>
         <div style={sty.label}>PASTE RUNG TX JSON</div>
         <div style={{ color: 'var(--text-dim)', fontSize: 10, marginBottom: 6, lineHeight: 1.5 }}>
-          Paste decoded JSON from <code style={{ color: 'var(--amber)', background: 'var(--bg-primary)', padding: '0 3px' }}>decoderung</code>, <code style={{ color: 'var(--amber)', background: 'var(--bg-primary)', padding: '0 3px' }}>createrungtx</code>, or <code style={{ color: 'var(--amber)', background: 'var(--bg-primary)', padding: '0 3px' }}>decoderawtransaction</code> output to visualize it as a ladder diagram. Works offline --no signet connection needed.
+          Paste decoded JSON from <code style={{ color: 'var(--amber)', background: 'var(--bg-primary)', padding: '0 3px' }}>decoderung</code>, <code style={{ color: 'var(--amber)', background: 'var(--bg-primary)', padding: '0 3px' }}>createtxmlsc</code>, or <code style={{ color: 'var(--amber)', background: 'var(--bg-primary)', padding: '0 3px' }}>decoderawtransaction</code> output to visualize it as a ladder diagram. Works offline --no signet connection needed.
         </div>
         <textarea
           style={{ ...sty.input, height: 160, resize: 'vertical', fontFamily: 'var(--font-mono)', fontSize: 11 }}
@@ -8331,7 +8576,7 @@ function ConvertPanel() {
           <strong style={{ color: 'var(--text-secondary)' }}>Supported formats:</strong>
           <ul style={{ margin: '6px 0 0 16px', padding: 0 }}>
             <li><code style={{ color: 'var(--amber)' }}>decoderung</code> output --decoded witness/conditions with block_type, params</li>
-            <li><code style={{ color: 'var(--amber)' }}>createrungtx</code> format --inputs, outputs with conditions and blocks</li>
+            <li><code style={{ color: 'var(--amber)' }}>createtxmlsc</code> format --inputs, outputs with conditions and blocks</li>
             <li><code style={{ color: 'var(--amber)' }}>decoderawtransaction</code> output --raw tx with scriptPubKey</li>
           </ul>
         </div>
@@ -9181,8 +9426,15 @@ function SignetPanel() {
     if (data) { addToHistory('faucet', data.txid, 'Faucet: ' + data.amount + ' tBTC'); setTimeout(refreshWallet, 2000); }
   };
   const handleCreate = async () => {
-    const txData = exportCreateRungtx(rungs, txOutputs, txInputs, locktime);
-    const data = await apiCall('/api/ladder/create', txData);
+    const txData = exportCreateTxMLSC(rungs, txOutputs, txInputs, locktime);
+    // exportCreateTxMLSC produces the TX_MLSC shape (flat `outputs: [amount_btc]`
+    // + shared `rungs[]` with `output_index`). That matches the new `createtxmlsc`
+    // RPC, not the legacy `createrungtx` that the `/api/ladder/create` endpoint
+    // routes to. Routing to `/api/ladder/create` here hits the legacy RPC which
+    // expects `outputs: [{amount, conditions}]`, so `outputs_arr[i]["amount"]`
+    // lands on a bare number, returns null, and the evaluator throws
+    // "Amount is not a number or string". Use the typed endpoint instead.
+    const data = await apiCall('/api/ladder/createtxmlsc', txData);
     if (data) { setTxHex(data.hex); setSignedHex(''); setTxid(''); setMined(false); }
   };
   const handleSign = async () => {
@@ -9190,7 +9442,7 @@ function SignetPanel() {
     if (!signingData) { setError('No signing data. Click FUND FROM WALLET first.'); return; }
 
     // Bootstrap signing: the wallet UTXOs are standard wpkh outputs, not ladder outputs.
-    // The ladder conditions define the new OUTPUT spending rules (already encoded by createrungtx).
+    // The ladder conditions define the new OUTPUT spending rules (already encoded by createtxmlsc).
     // For INPUT signing, we use the standard wallet key (even when outputs use PQ schemes).
     const inputKey = signingData.walletKey || signingData.keypairs[0];
     const signers = signingData.selectedUtxos.map((u, inputIdx) => ({
@@ -9220,11 +9472,11 @@ function SignetPanel() {
       addToHistory('broadcast', data.txid, rungs.length + ' rungs');
       // Save to session log for Review tab (decoded tx with full wire data)
       const fundSize = hex ? Math.floor(hex.length / 2) : null;
-      let fundPayload = exportCreateRungtx(rungs, txOutputs, txInputs, locktime);
+      let fundPayload = exportCreateTxMLSC(rungs, txOutputs, txInputs, locktime);
       try {
         const decoded = await apiCallBase('/api/ladder/tx/' + data.txid);
         if (decoded) fundPayload = decoded;
-      } catch (e) { /* use createrungtx fallback */ }
+      } catch (e) { /* use createtxmlsc fallback */ }
       saveSessionTx({ fundTxid: data.txid, label: rungs.length + ' rungs', fundJson: fundPayload, fundSize });
       setTimeout(refreshWallet, 2000);
       refreshMempool();
@@ -9378,7 +9630,7 @@ function SignetPanel() {
         // Build wire-format conditions from inner blocks
         const innerConditions = [{ blocks: updatedInner.map(exportBlockFields) }];
 
-        // Use createrungtx via API to serialize the inner conditions
+        // Use createtxmlsc via API to serialize the inner conditions
         const dummyPayload = {
           inputs: [{ txid: '0'.repeat(64), vout: 0 }],
           outputs: [{ amount: 0.00001, conditions: innerConditions }]
@@ -9748,7 +10000,7 @@ function SignetPanel() {
       <div style={sty.sectionTitle}>BUILD &amp; BROADCAST</div>
       {/* TX PREVIEW --inputs, outputs, rungs + JSON */}
       {(() => {
-        const txJson = exportCreateRungtx(rungs, txOutputs, txInputs, locktime);
+        const txJson = exportCreateTxMLSC(rungs, txOutputs, txInputs, locktime);
         const jsonStr = JSON.stringify(txJson, null, 2);
         const hasInputs = txJson.inputs && txJson.inputs.length > 0;
         const hasOutputs = txJson.outputs && txJson.outputs.length > 0;
@@ -9879,8 +10131,8 @@ function SignetPanel() {
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
           <div style={{ flex: '1 1 160px', minWidth: 140, textAlign: 'center' }}>
             <div style={sty.label}>1. CREATE</div>
-            <button style={{ ...sty.btn, ...(txHex ? sty.btnGreen : sty.btnPrimary), opacity: online ? 1 : 0.3 }} onClick={handleCreate} disabled={!online || loading === '/api/ladder/create'}>
-              {loading === '/api/ladder/create' ? 'CREATING...' : txHex ? '\u2713 CREATED' : 'CREATERUNGTX'}
+            <button style={{ ...sty.btn, ...(txHex ? sty.btnGreen : sty.btnPrimary), opacity: online ? 1 : 0.3 }} onClick={handleCreate} disabled={!online || loading === '/api/ladder/createtxmlsc'}>
+              {loading === '/api/ladder/createtxmlsc' ? 'CREATING...' : txHex ? '\u2713 CREATED' : 'CREATETXMLSC'}
             </button>
           </div>
           <div style={{ color: txHex ? 'var(--green-bright)' : 'var(--border-light)', fontSize: 20 }}>&#x2192;</div>
@@ -10501,7 +10753,7 @@ function SpendPanel() {
       }
       if (voutRungs.length > 1) {
         signerEntry.rung = rungIdx;
-        addLog('Passing rung index ' + rungIdx + ' to signrungtx (condition ' + (rungIdx + 1) + ' of ' + voutRungs.length + ')', 'info');
+        addLog('Passing rung index ' + rungIdx + ' to signladder (condition ' + (rungIdx + 1) + ' of ' + voutRungs.length + ')', 'info');
       }
       // Pass coil if non-default (PQ scheme, UNLOCK_TO, etc.) — must match fund-time coil for Merkle leaf
       const coilScheme = targetRung.coilScheme || rec.scheme || 'SCHNORR';
@@ -12026,7 +12278,7 @@ function App() {
   const totalBlocks = rungs.reduce((s, r) => s + r.blocks.length, 0);
   const liveValidation = useMemo(() => validateLadder(rungs, txInputs, txOutputs, locktime), [rungs, txInputs, txOutputs, locktime]);
   const jsonOutput = useMemo(() => {
-    return JSON.stringify(exportCreateRungtx(rungs, txOutputs, txInputs, locktime), null, 2);
+    return JSON.stringify(exportCreateTxMLSC(rungs, txOutputs, txInputs, locktime), null, 2);
   }, [rungs, txInputs, txOutputs, locktime]);
 
   const descriptorOutput = useMemo(() => rungsToDescriptor(rungs), [rungs]);
@@ -12359,7 +12611,7 @@ ${ladderRows.map(r => `
 <h1>APPENDIX B --JSON</h1>
 <div class="json-block">${jsonOutput.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
 
-<div class="footer">Ladder Script Engine --Bitcoin Ghost</div>
+<div class="footer">Ladder Script Engine --Ladder Script</div>
 
 </body></html>`);
 
@@ -12398,14 +12650,14 @@ ${ladderRows.map(r => `
   }, []);
 
   const handleImport = useCallback(() => {
-    const input = prompt('Paste createrungtx JSON (or legacy conditions array):');
+    const input = prompt('Paste createtxmlsc JSON (or legacy conditions array):');
     if (!input) return;
     try {
       const data = JSON.parse(input);
 
-      // Detect format: createrungtx has { inputs, outputs } at top level
+      // Detect format: createtxmlsc has { inputs, outputs } at top level
       if (data.inputs && data.outputs && !Array.isArray(data)) {
-        // createrungtx wire format
+        // createtxmlsc wire format
         const newTxInputs = (data.inputs || []).map(i => ({
           id: uid(), txid: i.txid || '', vout: i.vout || 0, sequence: i.sequence !== undefined ? String(i.sequence) : ''
         }));
@@ -12505,7 +12757,7 @@ ${ladderRows.map(r => `
         <div className="header-actions">
           <button className="header-btn" onClick={() => window.open('docs/index.html#ENGINE_GUIDE', '_blank')} title={showTooltips ? 'Open the Ladder Script engine guide in a new window' : undefined}>HELP</button>
           <button className="header-btn primary" onClick={() => dispatch({ type: 'SET_SHOW_EXAMPLES', value: true })} title={showTooltips ? 'Load pre-built example programs' : undefined}>EXAMPLES</button>
-          <button className="header-btn" onClick={handleImport} title={showTooltips ? 'Import createrungtx JSON from clipboard' : undefined}>IMPORT</button>
+          <button className="header-btn" onClick={handleImport} title={showTooltips ? 'Import createtxmlsc JSON from clipboard' : undefined}>IMPORT</button>
           <button className="header-btn" onClick={handleCopyJson} title={showTooltips ? 'Validate and copy wire-format JSON to clipboard' : undefined}>COPY JSON</button>
           <button className="header-btn" onClick={handlePrint} title={showTooltips ? 'Print ladder diagram' : undefined}>PRINT</button>
           <button className="header-btn" onClick={() => setWalkthroughActive(true)} title={showTooltips ? 'Start the guided walkthrough tutorial' : undefined} style={{ color: 'var(--cyan)' }}>TUTORIAL</button>
@@ -12557,7 +12809,7 @@ ${ladderRows.map(r => `
             {!isSimMode && <button className={`panel-tab ${rightTab === 'tx' ? 'active' : ''}`} onClick={() => dispatch({ type: 'SET_RIGHT_TAB', value: 'tx' })} title={showTooltips ? 'Configure transaction inputs, outputs, and locktime' : undefined}>TX</button>}
             {isSimMode && <button className={`panel-tab ${rightTab === 'simulate' ? 'active' : ''}`} onClick={() => dispatch({ type: 'SET_RIGHT_TAB', value: 'simulate' })} title={showTooltips ? 'Set simulation context --amounts, heights, timestamps' : undefined}>CONTEXT</button>}
             <button className={`panel-tab ${rightTab === 'descriptor' ? 'active' : ''}`} onClick={() => dispatch({ type: 'SET_RIGHT_TAB', value: 'descriptor' })} title={showTooltips ? 'View the descriptor notation for the current conditions' : undefined}>DESCRIPTOR</button>
-            <button className={`panel-tab ${rightTab === 'json' ? 'active' : ''}`} onClick={() => dispatch({ type: 'SET_RIGHT_TAB', value: 'json' })} title={showTooltips ? 'View the createrungtx RPC JSON for this transaction' : undefined}>RPC</button>
+            <button className={`panel-tab ${rightTab === 'json' ? 'active' : ''}`} onClick={() => dispatch({ type: 'SET_RIGHT_TAB', value: 'json' })} title={showTooltips ? 'View the createtxmlsc RPC JSON for this transaction' : undefined}>RPC</button>
           </div>
           <div className="panel-content">
             {!isSimMode && rightTab === 'properties' && selectedInputId ? (
@@ -12853,6 +13105,6 @@ ${ladderRows.map(r => `
 
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);
 </script>
-<script>(function(){var a=(location.hostname==='localhost'||location.hostname==='127.0.0.1')?'http://localhost:8801':'https://bitcoinghost.org';fetch(a+'/api/ladder/analytics/visit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page:location.pathname,referrer:document.referrer})}).catch(function(){});})()</script>
+<script>(function(){var a=(location.hostname==='localhost'||location.hostname==='127.0.0.1')?'http://localhost:8801':location.origin;fetch(a+'/api/ladder/analytics/visit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page:location.pathname,referrer:document.referrer})}).catch(function(){});})()</script>
 </body>
 </html>

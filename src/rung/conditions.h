@@ -1,4 +1,4 @@
-// Copyright (c) 2026 The Bitcoin Ghost developers
+// Copyright (c) 2026 The Ladder Script developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or https://opensource.org/license/mit/.
 
@@ -21,10 +21,10 @@ namespace rung {
 static constexpr uint8_t RUNG_CONDITIONS_PREFIX = 0xc1;
 
 /** Magic prefix byte identifying a scriptPubKey as MLSC (Merkelised Ladder Script Conditions).
- *  Output format: 0xC2 + conditions_root(32 bytes) = 33-byte scriptPubKey.
+ *  Output format: 0xDF + conditions_root(32 bytes) = 33-byte scriptPubKey.
  *  Full conditions are revealed only at spend time in the witness.
  *  This is the ONLY accepted output format. Inline conditions (0xC1) are removed. */
-static constexpr uint8_t RUNG_MLSC_PREFIX = 0xc2;
+static constexpr uint8_t RUNG_MLSC_PREFIX = 0xdf;
 
 /** Nothing-up-my-sleeve constant for empty Merkle tree leaf padding.
  *  = SHA256("LADDER_EMPTY_LEAF"). Cannot collide with valid serialized rung/coil/relay data. */
@@ -60,7 +60,7 @@ struct RungConditions {
     RungCoil coil;               //!< Output coil (per-output, serialized with conditions)
     std::vector<Relay> relays;   //!< Relay definitions (shared condition sets)
     std::optional<TemplateReference> template_ref; //!< Template inheritance reference (if set, rungs are empty until resolved)
-    std::optional<uint256> conditions_root; //!< MLSC: Merkle root from UTXO (set for 0xC2 outputs)
+    std::optional<uint256> conditions_root; //!< MLSC: Merkle root from UTXO (set for 0xDF outputs)
 
     bool IsEmpty() const { return rungs.empty() && !template_ref.has_value() && !conditions_root.has_value(); }
     bool IsTemplateRef() const { return template_ref.has_value(); }
@@ -95,14 +95,19 @@ inline bool IsConditionFieldType(RungDataType type) { return IsConditionDataType
 // MLSC (Merkelized Ladder Script Conditions)
 // ============================================================================
 
-/** Check if scriptPubKey is an MLSC output (0xC2 + 32-byte root + optional DATA_RETURN payload).
- *  Valid sizes: 33 bytes (standard) or 34-73 bytes (with DATA_RETURN, max 40 bytes data). */
+/** Check if scriptPubKey is an MLSC output (0xDF prefix).
+ *  Accepts both full (33+ bytes: 0xDF + root) and compact (1 byte: 0xDF only, from UTXO decompression). */
 bool IsMLSCScript(const CScript& scriptPubKey);
 
-/** Check if scriptPubKey is a Ladder Script output (MLSC 0xC2). */
+/** Check if scriptPubKey is a Ladder Script output (MLSC 0xDF). */
 bool IsLadderScript(const CScript& scriptPubKey);
 
-/** Extract the 32-byte conditions root from an MLSC scriptPubKey. */
+/** Check if this is a compact MLSC scriptPubKey (1 byte, root not embedded).
+ *  The conditions_root must be recovered from the creating transaction. */
+bool IsCompactMLSC(const CScript& scriptPubKey);
+
+/** Extract the 32-byte conditions root from a full MLSC scriptPubKey.
+ *  Returns false for compact (1-byte) MLSC — use block database lookup instead. */
 bool GetMLSCRoot(const CScript& scriptPubKey, uint256& root_out);
 
 /** Extract the DATA_RETURN payload from an MLSC scriptPubKey (bytes after the root).
@@ -112,10 +117,10 @@ std::vector<uint8_t> GetMLSCData(const CScript& scriptPubKey);
 /** Check if an MLSC scriptPubKey has a DATA_RETURN payload appended. */
 bool HasMLSCData(const CScript& scriptPubKey);
 
-/** Create an MLSC scriptPubKey: 0xC2 + conditions_root. */
+/** Create an MLSC scriptPubKey: 0xDF + conditions_root. */
 CScript CreateMLSCScript(const uint256& conditions_root);
 
-/** Create an MLSC scriptPubKey with DATA_RETURN payload: 0xC2 + conditions_root + data.
+/** Create an MLSC scriptPubKey with DATA_RETURN payload: 0xDF + conditions_root + data.
  *  Data must be 1-80 bytes. */
 CScript CreateMLSCScript(const uint256& conditions_root, const std::vector<uint8_t>& data);
 
@@ -138,6 +143,38 @@ uint256 ComputeRelayLeaf(const Relay& relay,
  *  @return the Merkle root. */
 uint256 BuildMerkleTree(std::vector<uint256> leaves);
 
+/** Build a Merkle path (sibling hashes from leaf to root) for a target leaf.
+ *  The tree uses sorted interior nodes, so no direction bits are needed.
+ *  @param leaves        The full leaf array (will be padded to next power of 2)
+ *  @param target_index  Index of the target leaf
+ *  @return vector of sibling hashes, one per tree level (bottom to top). */
+std::vector<uint256> BuildMerklePath(std::vector<uint256> leaves, size_t target_index);
+
+/** Verify a Merkle path against an expected root.
+ *  Uses sorted interior nodes — no direction bits needed.
+ *  @param leaf           The leaf hash to verify
+ *  @param path           Sibling hashes from leaf to root
+ *  @param total_leaves   Number of leaves before padding (for depth computation)
+ *  @param expected_root  The expected Merkle root
+ *  @param error          Error message on failure
+ *  @return true if the path verifies correctly. */
+bool VerifyMerklePath(const uint256& leaf,
+                      const std::vector<uint256>& path,
+                      size_t total_leaves,
+                      const uint256& expected_root,
+                      std::string& error);
+
+/** Compute a Ladder Script tweaked conditions root for key-path spending.
+ *  tweaked_key = internal_pubkey + H_LadderTweak(internal_pubkey || merkle_root) * G
+ *  @return (tweaked x-only key as uint256, parity) or nullopt on failure. */
+std::optional<std::pair<uint256, bool>> ComputeTweakedConditionsRoot(
+    const std::vector<uint8_t>& internal_pubkey_bytes,
+    const uint256& merkle_root);
+
+/** Compute the Merkle root from a leaf and its path (without checking against an expected root).
+ *  Uses sorted interior nodes. */
+uint256 ComputeMerkleRootFromPath(const uint256& leaf, const std::vector<uint256>& path);
+
 /** Compute the MLSC conditions root for a complete set of conditions.
  *  Leaf order: [rung_leaf[0], ..., rung_leaf[N-1], relay_leaf[0], ..., relay_leaf[M-1], coil_leaf].
  *  @param rung_pubkeys   Per-rung pubkey lists (outer index = rung index)
@@ -158,15 +195,24 @@ struct MLSCVerifiedLeaves {
     uint16_t total_relays;        //!< Number of relay leaves
 };
 
+/** Proof mode for MLSC spending proofs. */
+enum class MLSCProofMode : uint8_t {
+    FULL_LEAVES = 0x00,  //!< Legacy: all unrevealed leaf hashes (O(N) witness size)
+    MERKLE_PATH = 0x01,  //!< Sibling hashes from leaf to root (O(log N) witness size)
+    SHARED      = 0x02,  //!< References another input's proof from the same source tx
+};
+
 /** MLSC spending proof — revealed conditions + Merkle proof hashes.
- *  Carried in witness stack[1] when spending an MLSC (0xC2) output. */
+ *  Carried in witness stack[1] when spending an MLSC (0xDF) output. */
 struct MLSCProof {
     uint16_t total_rungs;      //!< Total number of rungs in the original conditions
     uint16_t total_relays;     //!< Total number of relays in the original conditions
     uint16_t rung_index;       //!< Which rung leaf is being revealed (0-based)
     Rung revealed_rung;        //!< Condition blocks for the revealed rung
     std::vector<std::pair<uint16_t, Relay>> revealed_relays; //!< (relay_index, condition blocks) for each revealed relay
-    std::vector<uint256> proof_hashes; //!< Leaf hashes for unrevealed leaves, in leaf-order
+    std::vector<uint256> proof_hashes; //!< FULL_LEAVES: unrevealed leaf hashes. MERKLE_PATH: sibling hashes from leaf to root. SHARED: empty.
+    MLSCProofMode proof_mode{MLSCProofMode::FULL_LEAVES}; //!< Proof format
+    uint16_t shared_source_input{0}; //!< SHARED mode: input index carrying the full proof for the same source tx
     std::vector<std::pair<uint16_t, Rung>> revealed_mutation_targets; //!< (rung_index, condition blocks) for cross-rung mutation targets (optional, backward-compatible)
 };
 
@@ -196,6 +242,41 @@ bool VerifyMLSCProof(const MLSCProof& proof,
                      std::string& error,
                      MLSCVerifiedLeaves* verified_out = nullptr,
                      const std::vector<std::vector<std::vector<uint8_t>>>& mutation_target_pubkeys = {});
+
+// ============================================================================
+// TX_MLSC (Transaction-Level Merkelised Ladder Script Conditions)
+// ============================================================================
+
+/** A single rung in the creation proof — structural template + opaque value commitment.
+ *  The structural template (block types, inverted flags, coil) is validated at block
+ *  acceptance. The value_commitment = SHA256(field_values || pubkeys) is opaque —
+ *  a hash output, not attacker-chosen data.
+ *
+ *  Together they form the leaf: TaggedHash("LadderLeaf", template || value_commitment). */
+struct CreationProofRung {
+    std::vector<std::pair<uint16_t, uint8_t>> blocks;  //!< Per-block: (block_type, inverted)
+    RungCoil coil;                                      //!< Coil including output_index
+    uint256 value_commitment;                           //!< SHA256(field_values || pubkeys)
+};
+
+/** Serialize a structural template (block types + inverted flags + coil) for leaf hashing.
+ *  Used at spend time to reconstruct rung leaves from witness data. */
+std::vector<uint8_t> SerializeStructuralTemplate(const CreationProofRung& rung);
+
+/** Compute a TX_MLSC leaf from a rung's structural template + value commitment.
+ *  leaf = TaggedHash("LadderLeaf", structural_template || value_commitment)
+ *  Used at both creation (by RPC) and spend time (by evaluator). */
+uint256 ComputeTxMLSCLeaf(const CreationProofRung& rung);
+
+/** Compute the TX_MLSC conditions root from a set of rung leaves.
+ *  Builds a Merkle tree using sorted interior nodes. */
+uint256 ComputeTxMLSCRoot(const std::vector<CreationProofRung>& rungs);
+
+/** Compute a value_commitment for a rung: SHA256(field_values || pubkeys).
+ *  Used by RPC commands when building conditions and by the evaluator
+ *  when verifying spend-time Merkle proofs. */
+uint256 ComputeValueCommitment(const Rung& rung,
+                                const std::vector<std::vector<uint8_t>>& pubkeys);
 
 } // namespace rung
 

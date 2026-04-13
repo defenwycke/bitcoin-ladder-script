@@ -1,4 +1,4 @@
-// Copyright (c) 2026 The Bitcoin Ghost developers
+// Copyright (c) 2026 The Ladder Script developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or https://opensource.org/license/mit/.
 
@@ -12,7 +12,9 @@
 #include <script/script_error.h>
 
 #include <consensus/amount.h>
+#include <primitives/transaction_identifier.h>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <uint256.h>
 
@@ -24,26 +26,33 @@ namespace rung {
 /** Batch Schnorr signature verifier.
  *  Collects (sighash, pubkey, signature) tuples during evaluation and verifies
  *  them all in a single batch after all inputs pass. Falls back to individual
- *  verification if batch verification is not available. */
+ *  verification if batch verification is not available.
+ *
+ *  Half-aggregation support: entries with aggregated=true contain only R (32 bytes).
+ *  Verification uses the transaction-level aggregated_s value. */
 struct BatchVerifier {
     struct Entry {
         uint256 sighash;
         XOnlyPubKey pubkey;
-        std::vector<unsigned char> sig;
+        std::vector<unsigned char> sig; //!< R||s (64 bytes) for INLINE, R only (32 bytes) for AGGREGATE
+        bool aggregated{false};         //!< If true, sig is R only; s comes from aggregated_sig
     };
     std::vector<Entry> entries;
     bool active{false};
+    std::vector<unsigned char> aggregated_s; //!< 32-byte aggregated s value from transaction
 
     /** Add a verification entry to the batch. */
-    void Add(const uint256& sighash, const XOnlyPubKey& pk, std::span<const unsigned char> sig) {
+    void Add(const uint256& sighash, const XOnlyPubKey& pk, std::span<const unsigned char> sig, bool agg = false) {
         Entry e;
         e.sighash = sighash;
         e.pubkey = pk;
         e.sig.assign(sig.begin(), sig.end());
+        e.aggregated = agg;
         entries.push_back(std::move(e));
     }
 
-    /** Batch verify all entries. Returns true if all signatures are valid. */
+    /** Batch verify all entries. Returns true if all signatures are valid.
+     *  For aggregated entries, uses half-aggregation verification with aggregated_s. */
     bool Verify() const;
 
     /** On batch failure, find the index of the first invalid entry.
@@ -239,16 +248,27 @@ uint256 ComputeCTVHash(const CTransaction& tx, uint32_t input_index);
 /** Rung verification flags (use high bits to avoid collision with SCRIPT_VERIFY_* flags). */
 static constexpr unsigned int RUNG_VERIFY_MLSC_ONLY = (1U << 28); //!< Reject 0xC1 inline conditions (mainnet)
 
-/** Consensus: validate all outputs of a v4 RUNG_TX transaction.
- *  Every output must be a valid Ladder Script output:
- *    - 0xC2 + 32-byte MLSC root
- *    - 0xC1 + valid rung conditions (only if RUNG_VERIFY_MLSC_ONLY not set)
- *    - DATA_RETURN block (exactly one per transaction, max 80 bytes)
- *  No raw OP_RETURN, no legacy scriptPubKey types.
- *  Returns false with error on any invalid output. */
+/** @deprecated Legacy per-output MLSC output validation.
+ *  TX_MLSC validates conditions at spend time via Merkle proof (no creation proof).
+ *  Retained for recursive covenant evaluators (RECURSE_SAME, RECURSE_MODIFIED,
+ *  RECURSE_DECAY) which verify output conditions match expected roots. */
 bool ValidateRungOutputs(const CTransaction& tx, unsigned int flags, std::string& error);
 
-/** Top-level verification entry point for v4 RUNG_TX transactions. */
+/** Cache entry for same-source proof sharing. */
+struct SharedTreeEntry {
+    uint256 root;                   //!< Verified conditions_root
+    std::vector<uint256> leaves;    //!< All leaf hashes in the tree (for leaf membership check)
+};
+
+/** Cache for same-source proof sharing: maps source txid to verified tree data.
+ *  When multiple inputs reference the same source tx, subsequent inputs can use
+ *  SHARED proof mode — but must still prove their leaf is in the cached tree. */
+using SharedTreeCache = std::map<Txid, SharedTreeEntry>;
+
+/** Top-level verification entry point for v4 RUNG_TX transactions.
+ *  TX_MLSC: validates creation proof, verifies spend proof against shared tree,
+ *  checks coil.output_index matches spent output.
+ *  @param shared_cache  Optional cache for same-source proof sharing. */
 bool VerifyRungTx(const CTransaction& tx,
                   unsigned int nIn,
                   const CTxOut& spent_output,
@@ -256,7 +276,8 @@ bool VerifyRungTx(const CTransaction& tx,
                   const BaseSignatureChecker& checker,
                   const PrecomputedTransactionData& txdata,
                   ScriptError* serror,
-                  int32_t block_height = 0);
+                  int32_t block_height = 0,
+                  SharedTreeCache* shared_cache = nullptr);
 
 } // namespace rung
 

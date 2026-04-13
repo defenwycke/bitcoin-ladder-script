@@ -146,8 +146,8 @@ per rung:
       block_type:  uint16  (must be known — one of 61 types)
       inverted:    uint8   (0x00 or 0x01, validated per block type)
     coil:
-      coil_type:     uint8 (UNLOCK=0x01, UNLOCK_TO=0x02, COVENANT=0x03)
-      attestation:   uint8 (INLINE=0x01, AGGREGATE=0x02, DEFERRED=0x03)
+      coil_type:     uint8 (UNLOCK=0x01, UNLOCK_TO=0x02)
+      attestation:   uint8 (INLINE=0x01; AGGREGATE/DEFERRED reserved)
       scheme:        uint8
       output_index:  uint8 (which output this rung governs — must be < vout_count)
       has_address:   uint8 (0 or 1)
@@ -278,15 +278,9 @@ Total: 647 WU = 162 vB
 Fee (10 sat/vB): 1,620 sats
 ```
 
-With AGGREGATE PQ (FALCON-512):
-
-```
-Witness: LadderWitness(52) + MLSCProof(43) + overhead(4) + creation(84)
-       = 183 bytes × 1 WU = 183 WU
-
-Total: 404 + 183 = 587 WU = 147 vB
-Fee (10 sat/vB): 1,468 sats
-```
+Note: post-quantum signatures (FALCON-512, Dilithium3, etc.) are supported
+via the SCHEME byte but produce larger witnesses due to larger signature and
+key sizes. PQ migration is a security upgrade, not a fee reduction.
 
 ### Full comparison — simple payment (1 in, 2 out)
 
@@ -299,18 +293,14 @@ Fee (10 sat/vB): 1,468 sats
 | P2TR key-path | Schnorr | 621 | 155 | 1,553 sats |
 | P2TR script 2-of-3 | Schnorr | 854 | 214 | 2,135 sats |
 | **TX_MLSC** | **Schnorr** | **647** | **162** | **1,620 sats** |
-| **TX_MLSC** | **FALCON-512** | **587** | **147** | **1,468 sats** |
-
-TX_MLSC with FALCON-512 (quantum-resistant) is cheaper than Taproot
-key-path (classical). 19 WU from P2WPKH.
 
 ### Batch payment comparison (1 in, N out, 1 rung per out)
 
-| Outputs | P2PKH | P2WPKH | P2TR | **TX_MLSC** | **TX_MLSC (PQ)** |
-|---------|-------|--------|------|-------------|------------------|
-| 2 | 904 | 568 | 621 | **647** | **587** |
-| 10 | 1,992 | 1,560 | 1,997 | **1,279** | **1,219** |
-| 100 | 14,792 | 13,108 | 17,497 | **7,867** | **7,807** |
+| Outputs | P2PKH | P2WPKH | P2TR | **TX_MLSC** |
+|---------|-------|--------|------|-------------|
+| 2 | 904 | 568 | 621 | **647** |
+| 10 | 1,992 | 1,560 | 1,997 | **1,279** |
+| 100 | 14,792 | 13,108 | 17,497 | **7,867** |
 
 TX_MLSC is the cheapest format for 3+ outputs. For 100 outputs:
 40% cheaper than P2WPKH, 55% cheaper than P2TR.
@@ -419,7 +409,7 @@ non-DATA_RETURN output to have at least one rung assigned. **Blocked.**
 |------|---------|---------|
 | Block types per rung | Yes | SIG, CSV, MULTISIG, CTV, etc. |
 | Inverted flags | Yes | Which blocks are negated |
-| Coil type and attestation | Yes | UNLOCK/UNLOCK_TO/COVENANT, INLINE/AGGREGATE |
+| Coil type and attestation | Yes | UNLOCK/UNLOCK_TO, INLINE only |
 | Output assignments | Yes | Which rung governs which output |
 | Rung count per output | Yes | Number of spending paths |
 | Field values | **No** | Hidden in value_commitment |
@@ -590,7 +580,7 @@ per-output root in UTXO set). Standard soft fork activation boundary.
 - [ ] Spend: invalid Merkle proof rejected
 - [ ] Spend from 1-output TX_MLSC (degenerate tree, 0 proof hashes)
 - [ ] Spend from 10-output TX_MLSC (deep tree)
-- [ ] AGGREGATE attestation with TX_MLSC
+- [ ] Attestation mode enforcement (INLINE only, AGGREGATE/DEFERRED reserved)
 - [ ] Backward compat: spend pre-activation per-output MLSC
 - [ ] DATA_RETURN handling (nValue == 0)
 - [ ] Dust threshold enforcement (nValue >= 546 for non-DATA_RETURN)
@@ -626,4 +616,4 @@ per-output root in UTXO set). Standard soft fork activation boundary.
 
 ---
 
-*TX_MLSC Specification v0.2 · Bitcoin Ghost Project · March 2026*
+*TX_MLSC Specification v0.2 · Ladder Script Project · March 2026*

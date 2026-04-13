@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ghost Labs — Ladder Script Builder</title>
+<title>Ladder Script — Ladder Script Builder</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -615,11 +615,11 @@ nav {
       <a href="how-it-works.html">How It Works</a>
       <a href="economics.html">Economics</a>
       <a href="docs/index.html">Docs</a>
-      <a href="ghost-labs.html" class="active">Labs</a>
+      <a href="index.html" class="active">Labs</a>
     </div>
     <div class="nav-right">
       <div class="labs-badge"><span class="dot"></span> LABS</div>
-      <a href="https://github.com/bitcoin-ghost/ghost-labs-ladder-script" class="btn btn-ghost">GitHub</a>
+      <a href="https://github.com/defenwycke/bitcoin-core-ladder-script" class="btn btn-ghost">GitHub</a>
       <a href="get-started.html" class="btn btn-primary">Get Started</a>
     </div>
   </div>
@@ -817,7 +817,7 @@ const CATEGORIES = [
   { id: 'sig',      name: 'SIGNATURE', color: '#00FFB3' },
   { id: 'timelock', name: 'TIMELOCK',  color: '#FFB700' },
   { id: 'hash',     name: 'HASH',      color: '#4488FF' },
-  { id: 'covenant', name: 'COVENANT',  color: '#FF6644' },
+  { id: 'covenant', name: 'UNLOCK',  color: '#FF6644' },
   { id: 'anchor',   name: 'ANCHOR L2', color: '#AA44FF' },
   { id: 'recurse',  name: 'RECURSE',   color: '#FF44AA' },
   { id: 'plc',      name: 'PLC',       color: '#44DDFF' },
@@ -828,7 +828,7 @@ const CATEGORIES = [
 const COIL_DEFS = {
   UNLOCK:    { label: 'UNLOCK',    desc: 'Send to address — standard spend.', hasAddress: true, hasLogic: false },
   UNLOCK_TO: { label: 'UNLOCK_TO', desc: 'Send to address — with additional conditions the recipient must satisfy.', hasAddress: true, hasLogic: true },
-  COVENANT:  { label: 'COVENANT',  desc: 'Constrains the spending transaction structure.', hasAddress: false, hasLogic: true },
+  ,
 };
 const COIL_TYPES = Object.keys(COIL_DEFS);
 
@@ -1639,12 +1639,12 @@ function buildPhaseJSON(phase) {
 function buildAllPhasesJSON() {
   if (state.phases.length === 1) {
     const result = buildPhaseJSON(state.phases[0]);
-    // Add signrungtx hint with diff witness info
+    // Add signladder hint with diff witness info
     const dwHints = state.phases[0].inputs
       .map((inp, i) => ({ idx: i, dw: inp.diffWitness, src: inp.sourceInput }))
       .filter(h => h.dw);
     if (dwHints.length > 0) {
-      result._signrungtx_hint = {
+      result._signladder_hint = {
         note: 'Use diff_witness signer format for these inputs',
         diff_witness_inputs: dwHints.map(h => ({
           input: h.idx,
@@ -1767,11 +1767,11 @@ async function broadcastTx() {
     const tx = buildPhaseJSON(P());
     toast('Creating transaction...', 'success');
 
-    // Build createrungtx params
+    // Build createtxmlsc params
     const inputs = tx.inputs.map(i => ({ txid: i.txid, vout: i.vout, ...(i.sequence !== undefined ? { sequence: i.sequence } : {}) }));
     const outputs = tx.outputs.map(o => ({ amount: o.amount, conditions: o.conditions, ...(o.coil ? { coil: o.coil } : {}) }));
 
-    const result = await rpcCall('createrungtx', [inputs, outputs]);
+    const result = await rpcCall('createtxmlsc', [inputs, outputs]);
     toast(`Created unsigned tx: ${result.hex.length / 2} bytes`, 'success');
 
     // For now, just show the hex — signing requires private keys
@@ -1779,9 +1779,9 @@ async function broadcastTx() {
     toast(`Unsigned hex: ${hexPreview}`, 'success');
     const dwInputs = P().inputs.filter((inp, i) => i > 0 && inp.diffWitness);
     if (dwInputs.length > 0) {
-      toast(`${dwInputs.length} input(s) use diff witness — signrungtx will use diff_witness signer format`, 'success');
+      toast(`${dwInputs.length} input(s) use diff witness — signladder will use diff_witness signer format`, 'success');
     }
-    toast('Sign with signrungtx RPC to complete', 'success');
+    toast('Sign with signladder RPC to complete', 'success');
 
   } catch (e) {
     toast(`Broadcast failed: ${e.message}`, 'error');
@@ -2092,7 +2092,7 @@ const TEMPLATES = [
       inputs: [{ txid: 'aabbccdd00112233445566778899aabbccddeeff00112233445566778899aabb', vout: 0, sequence: 0xfffffffe }],
       outputs: [{ amount: '0.999', rungs: [
         { blocks: [{ type: 'SIG', inverted: false, params: { pubkey: '02a1633cafcc01ebfb6d78e39f687a1f0995c62fc95f51ead10a02ee0be551b5dc' } }] },
-      ], coil: { type: 'COVENANT', address: '', rungs: [
+      ], coil: { type: 'UNLOCK', address: '', rungs: [
         { blocks: [{ type: 'TAGGED_HASH', inverted: false, params: { tag_hash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', expected: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2' } }] },
         { blocks: [{ type: 'SIG', inverted: false, params: { pubkey: '03f028892bad7ed57d2fb57bf33081d5cfcf6f9ed3d3d7f159c2e2fff579dc341a' } }] },
       ]}}],
@@ -2173,6 +2173,6 @@ buildPalette();
 buildTemplatesBar();
 render();
 </script>
-<script>(function(){var a=(location.hostname==='localhost'||location.hostname==='127.0.0.1')?'http://localhost:8801':'https://bitcoinghost.org';fetch(a+'/api/ladder/analytics/visit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page:location.pathname,referrer:document.referrer})}).catch(function(){});})()</script>
+<script>(function(){var a=(location.hostname==='localhost'||location.hostname==='127.0.0.1')?'http://localhost:8801':location.origin;fetch(a+'/api/ladder/analytics/visit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({page:location.pathname,referrer:document.referrer})}).catch(function(){});})()</script>
 </body>
 </html>

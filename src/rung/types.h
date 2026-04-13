@@ -1,4 +1,4 @@
-// Copyright (c) 2026 The Bitcoin Ghost developers
+// Copyright (c) 2026 The Ladder Script developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or https://opensource.org/license/mit/.
 
@@ -272,7 +272,7 @@ inline size_t FieldMaxSize(RungDataType type)
     case RungDataType::SCRIPT_BODY:   return 80;
     case RungDataType::SIGNATURE:     return 50000;
     case RungDataType::SPEND_INDEX:   return 4;
-    case RungDataType::NUMERIC:       return 4;
+    case RungDataType::NUMERIC:       return 8;
     case RungDataType::SCHEME:        return 1;
     case RungDataType::DATA:          return 40;  // hash (32) + protocol metadata (8)
     }
@@ -388,7 +388,6 @@ inline bool IsKeyConsumingBlockType(RungBlockType type)
     case RungBlockType::PTLC:
     case RungBlockType::TIMELOCKED_MULTISIG:
     case RungBlockType::KEY_REF_SIG:
-    case RungBlockType::COSIGN:
     case RungBlockType::ADAPTOR_SIG:
     case RungBlockType::MUSIG_THRESHOLD:
     case RungBlockType::P2PK_LEGACY:
@@ -424,20 +423,17 @@ inline bool IsInvertibleBlockType(RungBlockType type)
     case RungBlockType::TAGGED_HASH:
     // Covenant
     case RungBlockType::CTV:
-    case RungBlockType::VAULT_LOCK:
     case RungBlockType::AMOUNT_LOCK:
     // Policy / Governance
     case RungBlockType::WEIGHT_LIMIT:
     case RungBlockType::INPUT_COUNT:
     case RungBlockType::OUTPUT_COUNT:
     case RungBlockType::ACCUMULATOR:  // Inverted ACCUMULATOR = blocklist ("NOT in set")
-    // Anchor
+    // Anchor (non-key-consuming only)
     case RungBlockType::ANCHOR:
-    case RungBlockType::ANCHOR_CHANNEL:
     case RungBlockType::ANCHOR_POOL:
     case RungBlockType::ANCHOR_RESERVE:
     case RungBlockType::ANCHOR_SEAL:
-    case RungBlockType::ANCHOR_ORACLE:
     case RungBlockType::DATA_RETURN:
     // Recursion
     case RungBlockType::RECURSE_SAME:
@@ -446,15 +442,11 @@ inline bool IsInvertibleBlockType(RungBlockType type)
     case RungBlockType::RECURSE_COUNT:
     case RungBlockType::RECURSE_SPLIT:
     case RungBlockType::RECURSE_DECAY:
-    // PLC
+    // PLC (non-key-consuming only)
     case RungBlockType::HYSTERESIS_FEE:
     case RungBlockType::HYSTERESIS_VALUE:
     case RungBlockType::TIMER_CONTINUOUS:
     case RungBlockType::TIMER_OFF_DELAY:
-    case RungBlockType::LATCH_SET:
-    case RungBlockType::LATCH_RESET:
-    case RungBlockType::COUNTER_UP:
-    case RungBlockType::COUNTER_DOWN:
     case RungBlockType::COUNTER_PRESET:
     case RungBlockType::COMPARE:
     case RungBlockType::SEQUENCER:
@@ -480,6 +472,7 @@ enum class RungCoilType : uint8_t {
 /** Attestation mode for signatures in this rung. */
 enum class RungAttestationMode : uint8_t {
     INLINE    = 0x01, //!< Signatures inline in witness
+    AGGREGATE = 0x02, //!< Half-aggregated: R per input in witness, aggregated s at tx level
 };
 
 /** Signature scheme for this rung. */
@@ -508,6 +501,7 @@ inline bool IsKnownAttestationMode(uint8_t a)
 {
     switch (static_cast<RungAttestationMode>(a)) {
     case RungAttestationMode::INLINE:
+    case RungAttestationMode::AGGREGATE:
         return true;
     }
     return false;
@@ -543,6 +537,7 @@ struct RungCoil {
     RungScheme scheme{RungScheme::SCHNORR};
     std::vector<uint8_t> address_hash;         //!< SHA256(destination address) — raw address never on-chain. Empty if none.
     std::vector<std::pair<uint16_t, std::vector<uint8_t>>> rung_destinations; //!< Per-rung destination overrides: (rung_index, address_hash). Bounded by MAX_RUNGS.
+    uint8_t output_index{0};                   //!< TX_MLSC: which output this rung governs. Committed in Merkle leaf.
 };
 
 /** A single typed field within a block. Type constrains the allowed data size. */
@@ -1293,7 +1288,7 @@ inline const BlockDescriptor* LookupBlockDescriptor(RungBlockType type)
         {RungBlockType::HASH_GUARDED, "HASH_GUARDED", true, false, false, 0, &HASH_GUARDED_CONDITIONS, &HASH_GUARDED_WITNESS, false},
         // Covenant family
         {RungBlockType::CTV, "CTV", true, true, false, 0, &CTV_CONDITIONS, &CTV_WITNESS, true},
-        {RungBlockType::VAULT_LOCK, "VAULT_LOCK", true, true, true, 2, &VAULT_LOCK_CONDITIONS, nullptr, true},
+        {RungBlockType::VAULT_LOCK, "VAULT_LOCK", true, false, true, 2, &VAULT_LOCK_CONDITIONS, nullptr, true},
         {RungBlockType::AMOUNT_LOCK, "AMOUNT_LOCK", true, true, false, 0, &AMOUNT_LOCK_CONDITIONS, nullptr, true},
         // Recursion family
         {RungBlockType::RECURSE_SAME, "RECURSE_SAME", true, true, false, 0, &RECURSE_SAME_CONDITIONS, nullptr, true},
@@ -1304,27 +1299,27 @@ inline const BlockDescriptor* LookupBlockDescriptor(RungBlockType type)
         {RungBlockType::RECURSE_DECAY, "RECURSE_DECAY", true, true, false, 0, nullptr, nullptr, false},
         // Anchor family
         {RungBlockType::ANCHOR, "ANCHOR", true, true, false, 0, &ANCHOR_CONDITIONS, nullptr, true},
-        {RungBlockType::ANCHOR_CHANNEL, "ANCHOR_CHANNEL", true, true, true, 2, &ANCHOR_CHANNEL_CONDITIONS, nullptr, true},
+        {RungBlockType::ANCHOR_CHANNEL, "ANCHOR_CHANNEL", true, false, true, 2, &ANCHOR_CHANNEL_CONDITIONS, nullptr, true},
         {RungBlockType::ANCHOR_POOL, "ANCHOR_POOL", true, true, false, 0, &ANCHOR_POOL_CONDITIONS, nullptr, true},
         {RungBlockType::ANCHOR_RESERVE, "ANCHOR_RESERVE", true, true, false, 0, &ANCHOR_RESERVE_CONDITIONS, nullptr, true},
         {RungBlockType::ANCHOR_SEAL, "ANCHOR_SEAL", true, true, false, 0, &ANCHOR_SEAL_CONDITIONS, nullptr, true},
-        {RungBlockType::ANCHOR_ORACLE, "ANCHOR_ORACLE", true, true, true, 1, &ANCHOR_ORACLE_CONDITIONS, nullptr, true},
+        {RungBlockType::ANCHOR_ORACLE, "ANCHOR_ORACLE", true, false, true, 1, &ANCHOR_ORACLE_CONDITIONS, nullptr, true},
         {RungBlockType::DATA_RETURN, "DATA_RETURN", true, true, false, 0, &DATA_RETURN_CONDITIONS, nullptr, true},
         // PLC family
         {RungBlockType::HYSTERESIS_FEE, "HYSTERESIS_FEE", true, true, false, 0, &HYSTERESIS_FEE_CONDITIONS, nullptr, true},
         {RungBlockType::HYSTERESIS_VALUE, "HYSTERESIS_VALUE", true, true, false, 0, &HYSTERESIS_VALUE_CONDITIONS, nullptr, true},
         {RungBlockType::TIMER_CONTINUOUS, "TIMER_CONTINUOUS", true, true, false, 0, &TIMER_CONTINUOUS_CONDITIONS, nullptr, true},
         {RungBlockType::TIMER_OFF_DELAY, "TIMER_OFF_DELAY", true, true, false, 0, &TIMER_OFF_DELAY_CONDITIONS, nullptr, true},
-        {RungBlockType::LATCH_SET, "LATCH_SET", true, true, true, 1, &LATCH_SET_CONDITIONS, nullptr, true},
-        {RungBlockType::LATCH_RESET, "LATCH_RESET", true, true, true, 1, &LATCH_RESET_CONDITIONS, nullptr, true},
-        {RungBlockType::COUNTER_DOWN, "COUNTER_DOWN", true, true, true, 1, &COUNTER_DOWN_CONDITIONS, nullptr, true},
+        {RungBlockType::LATCH_SET, "LATCH_SET", true, false, true, 1, &LATCH_SET_CONDITIONS, nullptr, true},
+        {RungBlockType::LATCH_RESET, "LATCH_RESET", true, false, true, 1, &LATCH_RESET_CONDITIONS, nullptr, true},
+        {RungBlockType::COUNTER_DOWN, "COUNTER_DOWN", true, false, true, 1, &COUNTER_DOWN_CONDITIONS, nullptr, true},
         {RungBlockType::COUNTER_PRESET, "COUNTER_PRESET", true, true, false, 0, &COUNTER_PRESET_CONDITIONS, nullptr, true},
-        {RungBlockType::COUNTER_UP, "COUNTER_UP", true, true, true, 1, &COUNTER_UP_CONDITIONS, nullptr, true},
+        {RungBlockType::COUNTER_UP, "COUNTER_UP", true, false, true, 1, &COUNTER_UP_CONDITIONS, nullptr, true},
         {RungBlockType::COMPARE, "COMPARE", true, true, false, 0, &COMPARE_CONDITIONS, nullptr, true},
         {RungBlockType::SEQUENCER, "SEQUENCER", true, true, false, 0, &SEQUENCER_CONDITIONS, nullptr, true},
         {RungBlockType::ONE_SHOT, "ONE_SHOT", true, true, false, 0, &ONE_SHOT_CONDITIONS, nullptr, true},
         {RungBlockType::RATE_LIMIT, "RATE_LIMIT", true, true, false, 0, &RATE_LIMIT_CONDITIONS, nullptr, true},
-        {RungBlockType::COSIGN, "COSIGN", true, false, true, 0, &COSIGN_CONDITIONS, &COSIGN_WITNESS, false},
+        {RungBlockType::COSIGN, "COSIGN", true, false, false, 0, &COSIGN_CONDITIONS, &COSIGN_WITNESS, false},
         // Compound family
         {RungBlockType::TIMELOCKED_SIG, "TIMELOCKED_SIG", true, false, true, 1, &TIMELOCKED_SIG_CONDITIONS, &TIMELOCKED_SIG_WITNESS, false},
         {RungBlockType::HTLC, "HTLC", true, false, true, 2, &HTLC_CONDITIONS, &HTLC_WITNESS, false},

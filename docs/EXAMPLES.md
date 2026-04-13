@@ -4,8 +4,10 @@ This document presents detailed, end-to-end examples of Ladder Script
 configurations. Each example shows the use case, descriptor notation (when
 applicable), block structure, evaluation logic, and approximate wire format size.
 
-All examples use `RUNG_TX_VERSION = 4` and MLSC (`0xC2`) outputs. Inline
-conditions (`0xC1`) are removed.
+All examples use `RUNG_TX_VERSION = 4` and TX_MLSC (`0xDF`) outputs. Each
+output is 8 bytes (value only) with one shared conditions_root per transaction.
+A creation proof in the witness is validated at block acceptance. Inline
+conditions (`0xC1`) and per-output MLSC (`0xC2`) are removed.
 
 ---
 
@@ -45,26 +47,15 @@ Ladder:
 7. Verifies the 64-byte Schnorr signature against the x-only pubkey and sighash.
 8. Returns SATISFIED on valid signature.
 
-### Wire format size
+### Wire format size (TX_MLSC)
 
-**Conditions (MLSC output)**: 33 bytes (`0xC2` + 32-byte Merkle root)
+**Output**: 8 bytes (value only)
 
-**MLSC proof** (witness stack[1]):
-- total_rungs(1) + total_relays(1) + rung_index(1) = 3 bytes
-- Rung blocks: n_blocks(1) + SIG micro-header(1) + SCHEME(1) = 3 bytes
-- Rung relay_refs: 0(1) = 1 byte
-- Revealed relays: 0(1) = 1 byte
-- Proof hashes: 0(1) = 1 byte (single rung, no unrevealed leaves except coil
-  leaf hash = 32 bytes + count)
-- Total proof: ~42 bytes
+**Shared conditions_root**: `0xDF` + 32-byte Merkle root (once per transaction)
 
-**Witness** (stack[0]):
-- n_rungs(1) + n_blocks(1) + SIG micro-header(1) + SCHEME(1) + PUBKEY(1+32) +
-  SIGNATURE(1+64) = ~102 bytes
-- Coil: 3 + addr_len(1) + n_conditions(1) + rung_dests(1) = 6 bytes
-- Total witness: ~108 bytes
+**Simple payment**: 647 WU / 162 vB
 
-**Total per-input overhead**: ~150 bytes (conditions + proof + witness)
+**Batch 100 outputs**: 7,867 WU / ~1,967 vB (cheapest format in existence)
 
 ---
 
@@ -201,7 +192,7 @@ Ladder:
     Block 0: CTV (0x0301)
       Conditions fields: [HASH256(template_hash)]
       Witness fields:    (none -- CTV is witness-free)
-  Coil: COVENANT(0x03), INLINE(0x01), SCHNORR(0x01)
+  Coil: UNLOCK(0x01), INLINE(0x01), SCHNORR(0x01)
 ```
 
 ### Evaluation
@@ -470,7 +461,7 @@ Ladder:
       Conditions fields: [NUMERIC(12)]   -- 12 remaining steps
     Block 2: CSV (0x0101)
       Conditions fields: [NUMERIC(4380)] -- ~1 month between steps
-  Coil: COVENANT(0x03), INLINE(0x01), SCHNORR(0x01)
+  Coil: UNLOCK(0x01), INLINE(0x01), SCHNORR(0x01)
 ```
 
 ### Evaluation (count > 0)
@@ -787,7 +778,7 @@ chain (source must not itself be a template reference).
 - **UNLOCK_TO**: Directed spend. The output value goes to the address specified
   in the coil's `address_hash` field. Per-rung destinations
   (`rung_destinations`) can override this per rung.
-- **COVENANT**: The spending transaction is constrained by covenant/recursion
+- **UNLOCK**: Standard spend. Covenant/recursion constraints are enforced by block types (CTV, RECURSE_*, VAULT_LOCK), not the coil.
   blocks in the rung. The output must carry specific MLSC conditions.
 
 ### Evaluation result semantics
