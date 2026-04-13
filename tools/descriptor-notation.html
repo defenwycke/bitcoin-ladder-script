@@ -554,19 +554,19 @@ $ ghost-cli -signet signladder \
   <!-- PROXY API -->
   <div class="section">
     <div class="section-head">HTTP API (no node required)</div>
-    <p>If you don't want to run a node, the same flow works via the public proxy API at <code>ladder-script.com</code>:</p>
+    <p>If you don't want to run a node, the same flow works via the public proxy API at <code>ladder-script.org</code>:</p>
     <div class="code-block"><span class="cm"># Create</span>
-$ curl -X POST https://ladder-script.com/api/ladder/create \
+$ curl -X POST https://ladder-script.org/api/ladder/create \
   -H "Content-Type: application/json" \
   -d '{"inputs":[...],"outputs":[{"amount":0.001,"conditions":[...]}]}'
 
 <span class="cm"># Sign (descriptor path)</span>
-$ curl -X POST https://ladder-script.com/api/ladder/sign-descriptor \
+$ curl -X POST https://ladder-script.org/api/ladder/sign-descriptor \
   -H "Content-Type: application/json" \
   -d '{"hex":"...","descriptor":"ladder(sig(@alice))","keys":{"alice":"cVt..."},"spent_outputs":[...]}'
 
 <span class="cm"># Broadcast</span>
-$ curl -X POST https://ladder-script.com/api/ladder/broadcast \
+$ curl -X POST https://ladder-script.org/api/ladder/broadcast \
   -H "Content-Type: application/json" \
   -d '{"hex":"...signed..."}'</div>
   </div>
