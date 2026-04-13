@@ -1,22 +1,24 @@
 #!/bin/bash
 set -euo pipefail
 
-# Deploy the ladder-script.org site. This is the neutral, project-specific
-# home for Ladder Script and QABIO — separate from bitcoinghost.org, which
-# hosts the ghost-fork materials.
+# Deploy the ladder-script.org site to ghost-labs (85.9.213.194) —
+# the same machine that already runs the ladder-proxy signet node.
+# This is the neutral, project-specific home for Ladder Script and
+# QABIO, independent of the bitcoinghost.org / ghost-fork infra.
 #
 # Targets:
-#   web      — rsync labs tree to /var/www/ladder-script on the web host
+#   prep     — apt install nginx on ghost-labs (idempotent)
 #   nginx    — push the vhost config and reload nginx
+#   web      — rsync labs tree to /var/www/ladder-script
 #   smoke    — curl the signet proxy through the new hostname
-#   all      — nginx + web + smoke
+#   all      — prep + nginx + web + smoke
 #
-# Usage: ./deploy/deploy-ladder-script.sh [web|nginx|smoke|all]
+# Usage: ./deploy/deploy-ladder-script.sh [prep|web|nginx|smoke|all]
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$SCRIPT_DIR")"
 
-WEB_HOST="ghost-web"
+WEB_HOST="ghost-labs"
 WEB_ROOT="/var/www/ladder-script"
 VHOST_NAME="ladder-script"
 VHOST_SRC="$SCRIPT_DIR/nginx-ladder-script.conf"
@@ -32,6 +34,25 @@ confirm() {
         [yY]|[yY][eE][sS]) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+# ── Install nginx on ghost-labs ──────────────────────────────────────────
+#
+# ghost-labs ships without nginx (the signet node only runs bitcoind
+# and the ladder-proxy Python service, bound to 0.0.0.0:8340). Install
+# it once before the first cutover. Idempotent: skips if already
+# installed.
+
+install_nginx() {
+    echo "=== Install nginx on $WEB_HOST ==="
+    if ssh "$WEB_HOST" "command -v nginx >/dev/null 2>&1"; then
+        echo "  nginx already installed — skipping"
+        return 0
+    fi
+    confirm "Run 'sudo apt install -y nginx' on $WEB_HOST?" || return 0
+    ssh "$WEB_HOST" "sudo apt update && sudo apt install -y nginx"
+    ssh "$WEB_HOST" "sudo systemctl enable nginx && sudo systemctl start nginx"
+    echo "  nginx installed and started."
 }
 
 # ── Nginx vhost ──────────────────────────────────────────────────────────
@@ -114,17 +135,19 @@ smoke_test() {
 }
 
 case "$TARGET" in
+    prep)   install_nginx ;;
     web)    deploy_web ;;
     nginx)  deploy_nginx ;;
     smoke)  smoke_test ;;
     all)
+        install_nginx
         deploy_nginx
         deploy_web
         echo ""
         smoke_test || true
         ;;
     *)
-        echo "Usage: $0 [web|nginx|smoke|all]"
+        echo "Usage: $0 [prep|web|nginx|smoke|all]"
         exit 1
         ;;
 esac
