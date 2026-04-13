@@ -44,15 +44,27 @@ Both must resolve to `85.9.213.194`. If they don't yet, wait —
 running certbot against an unresolved domain fails hard and
 rate-limits for an hour.
 
-### 2. Install nginx on ghost-labs
+### 2. Install nginx and open the firewall on ghost-labs
 
 ```
 ./deploy/deploy-ladder-script.sh prep
 ```
 
-This runs `sudo apt install -y nginx` on ghost-labs and enables the
-service. Idempotent — skips if nginx is already installed. Safe to
-run even if you're unsure about the current state of the box.
+This does two things, both idempotent:
+
+1. Opens TCP ports 80 and 443 in UFW (`sudo ufw allow 80/tcp` and
+   `sudo ufw allow 443/tcp`). **ghost-labs ships with a restrictive
+   default-deny UFW policy** — only 22/SSH, 38333/signet-p2p, and
+   8340/ladder-proxy (from ghost-web only) are open. Without this
+   step, every inbound HTTP request times out at the firewall and
+   the nginx install looks like it worked but the site is
+   unreachable. This gotcha cost ~5 minutes during the first
+   cutover.
+2. Runs `sudo apt install -y nginx` and enables the service. Skips
+   if nginx is already installed.
+
+Safe to run even if you're unsure about the current state of the
+box — both operations are no-ops when the state is already correct.
 
 ### 3. Install the vhost (HTTP only, no TLS yet)
 

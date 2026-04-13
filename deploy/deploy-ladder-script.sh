@@ -45,8 +45,14 @@ confirm() {
 
 install_nginx() {
     echo "=== Install nginx on $WEB_HOST ==="
+    # Open 80/443 in UFW first (idempotent). ghost-labs ships with a
+    # restrictive UFW policy — default deny, only 22/38333/8340
+    # allowed. Without opening 80/443 the nginx install completes but
+    # every inbound HTTP request times out at the firewall.
+    ssh "$WEB_HOST" "sudo ufw allow 80/tcp comment 'ladder-script.org HTTP' && sudo ufw allow 443/tcp comment 'ladder-script.org HTTPS'"
+
     if ssh "$WEB_HOST" "command -v nginx >/dev/null 2>&1"; then
-        echo "  nginx already installed — skipping"
+        echo "  nginx already installed — skipping apt install"
         return 0
     fi
     confirm "Run 'sudo apt install -y nginx' on $WEB_HOST?" || return 0
