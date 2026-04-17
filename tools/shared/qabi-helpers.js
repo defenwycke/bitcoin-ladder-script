@@ -23,12 +23,14 @@
     return apiCallBase('/api/ladder/qabi/authchain', body);
   }
 
-  async function buildBlock({ coordinatorPubkey, primeExpiryHeight, entries, outputs }) {
+  async function buildBlock({ coordinatorPubkey, primeExpiryHeight, batchId, entries, outputsConditionsRoot, outputValues }) {
     return apiCallBase('/api/ladder/qabi/buildblock', {
       coordinator_pubkey: coordinatorPubkey,
       prime_expiry_height: primeExpiryHeight,
+      batch_id: batchId || '00'.repeat(32),
       entries,
-      outputs,
+      outputs_conditions_root: outputsConditionsRoot,
+      output_values: outputValues,
     });
   }
 
@@ -37,11 +39,11 @@
   }
 
   async function sighash(hexTx) {
-    return apiCallBase('/api/ladder/qabi/sighash', { hex_tx: hexTx });
+    return apiCallBase('/api/ladder/qabi/sighash', { hex: hexTx });
   }
 
   async function signQabo(hexTx, privkey) {
-    return apiCallBase('/api/ladder/qabi/signqabo', { hex_tx: hexTx, privkey });
+    return apiCallBase('/api/ladder/qabi/signqabo', { hex: hexTx, privkey });
   }
 
   async function generateKeypair(scheme) {

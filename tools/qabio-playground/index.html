@@ -1034,10 +1034,27 @@ function StagePanel({ apiCall }) {
       contribution: (p.contributionSats / 1e8).toFixed(8),
       destination_index: i,
     }));
-    const outputs = primedParts.map((p, i) => ({
-      amount: ((p.contributionSats - 100) / 1e8).toFixed(8),
-      script_pubkey: '0014' + (p.ownerId.slice(0, 40)),
+
+    // Pre-compute the batch destination conditions_root via a dummy
+    // createtxmlsc so the QABI block commits to the right tree.
+    const batchRungs = primedParts.map((p, i) => ({
+      output_index: i,
+      blocks: [{ type: 'SIG', fields: [{ type: 'SCHEME', hex: '01' }] }],
+      pubkeys: [p.walletKey.pubkey],
     }));
+    const batchAmounts = primedParts.map(p => ((p.contributionSats - 1000) / 1e8));
+    const dummyTx = await apiCall('/api/ladder/createtxmlsc', {
+      inputs: [{ txid: '0'.repeat(64), vout: 0 }],
+      outputs: batchAmounts,
+      rungs: batchRungs,
+    });
+    if (!dummyTx || !dummyTx.conditions_root) {
+      log('Failed to compute batch conditions_root', 'err'); return;
+    }
+    // conditions_root from createtxmlsc is in display order (uint256::GetHex);
+    // qabi_buildblock stores it in wire/in-memory order. Byte-reverse to match.
+    const outputsConditionsRoot = reverseHex(dummyTx.conditions_root);
+    const outputValues = batchAmounts;
 
     log('Building QABI block for ' + state.n + ' participants…');
     const res = await apiCall('/api/ladder/qabi/buildblock', {
@@ -1045,7 +1062,8 @@ function StagePanel({ apiCall }) {
       prime_expiry_height: state.coordinator.expiryHeight,
       batch_id: state.coordinator.batchId,
       entries,
-      outputs,
+      outputs_conditions_root: outputsConditionsRoot,
+      output_values: outputValues,
     });
     if (!res) { log('buildblock failed', 'err'); return; }
     storeJson('qabi_block', 'QABI block (raw)', res);
