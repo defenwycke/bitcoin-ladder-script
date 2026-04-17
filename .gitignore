@@ -29,7 +29,6 @@ proxy/
 docs/BLOCK_LIBRARY_IMPL.md
 docs/LADDER_SCRIPT_SCENARIOS.md
 tools/generate-tx-docs.py
-tools/test-presets.py
 ghost-core/
 spec/jdk-*/
 spec/*.tar.gz
