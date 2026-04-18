@@ -75,6 +75,9 @@ a:hover { text-decoration: underline; }
 .tx-id { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--blue); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tx-version { font-family: 'JetBrains Mono', monospace; text-align: center; }
 .tx-version.v4 { color: var(--accent-dark); font-weight: 600; }
+.tx-version.qabio { color: #8e44ad; font-weight: 600; }
+.tx-row.qabio { background: #f3e5f520; }
+.tx-row.qabio .tx-id { color: #8e44ad; }
 .tx-size { font-family: 'JetBrains Mono', monospace; text-align: center; color: var(--text-dim); }
 .tx-value { font-family: 'JetBrains Mono', monospace; text-align: right; }
 
@@ -171,6 +174,7 @@ a:hover { text-decoration: underline; }
   <div class="goggles-legend">
     <span class="goggles-legend-item"><span class="goggles-swatch" style="background:#3498db"></span> Standard tx</span>
     <span class="goggles-legend-item"><span class="goggles-swatch" style="background:var(--accent)"></span> RUNG_TX (v4)</span>
+    <span class="goggles-legend-item"><span class="goggles-swatch" style="background:#8e44ad"></span> QABIO</span>
     <span class="goggles-legend-item"><span class="goggles-swatch" style="background:#95a5a6"></span> Coinbase</span>
   </div>
   <div id="goggles-container" class="goggles-container">
@@ -258,17 +262,19 @@ async function loadBlocks() {
 
     let html = '';
     for (const block of blocks) {
-      // Count v4 rung txs by checking each tx
-      let rungCount = 0;
+      // Count v4 rung txs and QABIO txs
+      let rungCount = 0, qabioCount = 0;
       for (const txid of block.txids) {
         try {
           const tx = await fetchJSON('/api/ladder/tx/' + txid);
           if (tx.version === 4) rungCount++;
+          if (tx.is_qabio) qabioCount++;
         } catch (e) { /* skip */ }
       }
 
+      const qabioHtml = qabioCount > 0 ? ` <span class="rung-badge" style="background:#8e44ad;color:#fff;">${qabioCount} QABIO</span>` : '';
       const rungHtml = rungCount > 0
-        ? `<span class="rung-badge">${rungCount}</span>`
+        ? `<span class="rung-badge">${rungCount - qabioCount || ''}</span>${qabioHtml}`
         : '<span class="no-rung">0</span>';
 
       html += `
@@ -308,10 +314,12 @@ async function toggleBlock(row, hash, txids) {
     try {
       const tx = await fetchJSON('/api/ladder/tx/' + txid);
       const totalValue = tx.vout.reduce((sum, o) => sum + o.value, 0).toFixed(8);
-      const versionClass = tx.version === 4 ? 'tx-version v4' : 'tx-version';
-      const versionLabel = tx.version === 4 ? 'v4 RUNG' : 'v' + tx.version;
+      const isQabio = tx.is_qabio;
+      const versionClass = isQabio ? 'tx-version qabio' : (tx.version === 4 ? 'tx-version v4' : 'tx-version');
+      const versionLabel = isQabio ? 'QABIO' : (tx.version === 4 ? 'v4 RUNG' : 'v' + tx.version);
+      const rowClass = isQabio ? 'tx-row qabio' : 'tx-row';
       txHtml += `
-        <div class="tx-row" style="cursor:pointer" onclick="searchTxDirect('${txid}')">
+        <div class="${rowClass}" style="cursor:pointer" onclick="searchTxDirect('${txid}')">
           <div class="tx-id">${truncHash(txid)}</div>
           <div class="${versionClass}">${versionLabel}</div>
           <div class="tx-size">${tx.vsize} vB</div>
@@ -344,11 +352,16 @@ async function searchTxDirect(txid) {
   try {
     const tx = await fetchJSON('/api/ladder/tx/' + txid);
     const isRung = tx.version === 4;
+    const isQabio = tx.is_qabio;
     const totalIn = tx.vin.length;
     const totalOut = tx.vout.length;
     const totalValue = tx.vout.reduce((sum, o) => sum + o.value, 0).toFixed(8);
 
-    let html = `<div class="tx-panel-title">Transaction ${isRung ? '<span style="color:var(--accent)">[RUNG_TX v4]</span>' : '[v' + tx.version + ']'}</div>`;
+    let badge;
+    if (isQabio) badge = '<span style="color:#8e44ad">[QABIO]</span>';
+    else if (isRung) badge = '<span style="color:var(--accent)">[RUNG_TX v4]</span>';
+    else badge = '[v' + tx.version + ']';
+    let html = `<div class="tx-panel-title">Transaction ${badge}</div>`;
     html += `<div style="font-family:JetBrains Mono,monospace;font-size:12px;color:var(--blue);margin-bottom:16px;word-break:break-all">${tx.txid}</div>`;
 
     html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;font-size:14px">';
@@ -407,17 +420,19 @@ async function loadGoggles() {
         try {
           const tx = await fetchJSON('/api/ladder/tx/' + txid);
           const isRung = tx.version === 4;
+          const isQabio = tx.is_qabio;
           const isCoinbase = tx.vin.length === 1 && tx.vin[0].coinbase;
 
           // Width proportional to vsize (min 8px, max 200px)
           const width = Math.max(8, Math.min(200, Math.round(tx.vsize / 5)));
 
           let colour;
-          if (isRung) colour = 'var(--accent)';
+          if (isQabio) colour = '#8e44ad';
+          else if (isRung) colour = 'var(--accent)';
           else if (isCoinbase) colour = '#95a5a6';
           else colour = '#3498db';
 
-          const label = isRung ? 'RUNG v4' : isCoinbase ? 'coinbase' : 'v' + tx.version;
+          const label = isQabio ? 'QABIO' : isRung ? 'RUNG v4' : isCoinbase ? 'coinbase' : 'v' + tx.version;
           const tip = truncHash(txid) + ' (' + label + ', ' + tx.vsize + ' vB)';
 
           html += `<div class="goggles-tx" style="width:${width}px;background:${colour}" title="${tip}" onclick="searchTxDirect('${txid}')"></div>`;
