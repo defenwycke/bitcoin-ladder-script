@@ -2716,8 +2716,7 @@ def main():
             print(f"  ~ {r['title']}: {r['reason']}")
 
     # Write summary results (no decoded TX data) and full results
-    # (with decoded TX JSON for doc generation) next to this script —
-    # was hardcoded to the pre-rename ghost-labs-ladder-script path.
+    # (with decoded TX JSON for doc generation) next to this script.
     script_dir = os.path.dirname(os.path.abspath(__file__))
     summary_path = os.path.join(script_dir, "test-results.json")
     summary = []

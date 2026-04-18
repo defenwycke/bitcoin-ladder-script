@@ -48,7 +48,7 @@ FAUCET_AMOUNT = float(os.environ.get("FAUCET_AMOUNT", "0.001"))
 FAUCET_COOLDOWN = int(os.environ.get("FAUCET_COOLDOWN", "300"))  # seconds per IP
 RATE_LIMIT_RPM = int(os.environ.get("RATE_LIMIT_RPM", "120"))  # requests per minute
 ALLOWED_ORIGINS = os.environ.get(
-    "ALLOWED_ORIGINS", "https://bitcoinghost.org,https://www.bitcoinghost.org,http://localhost:8080,http://127.0.0.1:8080"
+    "ALLOWED_ORIGINS", "https://ladder-script.org,https://www.ladder-script.org,http://localhost:8080,http://127.0.0.1:8080"
 ).split(",")
 LISTEN_HOST = os.environ.get("LISTEN_HOST", "0.0.0.0")
 LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "8340"))

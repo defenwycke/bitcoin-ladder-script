@@ -18,7 +18,7 @@ import urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
 
-PROXY = os.environ.get("PROXY_URL", "https://bitcoinghost.org")
+PROXY = os.environ.get("PROXY_URL", "https://ladder-script.org")
 API = f"{PROXY}/api/ladder"
 VECTORS_FILE = Path(__file__).resolve().parent / "vectors" / "signet_spends.json"
 

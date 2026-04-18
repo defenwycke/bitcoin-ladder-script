@@ -1,16 +1,16 @@
 #!/bin/bash
 set -euo pipefail
 
-# Deploy the ladder-script.org site to ghost-labs (85.9.213.194) —
-# the same machine that already runs the ladder-proxy signet node.
-# This is the neutral, project-specific home for Ladder Script and
-# QABIO, independent of the bitcoinghost.org / ghost-fork infra.
+# Deploy the ladder-script.org site to the production VM
+# (SSH alias: ladder-script, IP 85.9.213.194). Same machine that
+# runs the ladder-proxy signet node, so /api/ladder/* is a
+# localhost hop on the box.
 #
 # Targets:
-#   prep     — apt install nginx on ghost-labs (idempotent)
+#   prep     — apt install nginx + open UFW 80/443 (idempotent)
 #   nginx    — push the vhost config and reload nginx
-#   web      — rsync labs tree to /var/www/ladder-script
-#   smoke    — curl the signet proxy through the new hostname
+#   web      — rsync tools/ to /var/www/ladder-script
+#   smoke    — curl /api/ladder/status to confirm the proxy works
 #   all      — prep + nginx + web + smoke
 #
 # Usage: ./deploy/deploy-ladder-script.sh [prep|web|nginx|smoke|all]
@@ -18,7 +18,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$SCRIPT_DIR")"
 
-WEB_HOST="ghost-labs"
+WEB_HOST="ladder-script"
 WEB_ROOT="/var/www/ladder-script"
 VHOST_NAME="ladder-script"
 VHOST_SRC="$SCRIPT_DIR/nginx-ladder-script.conf"
@@ -36,16 +36,16 @@ confirm() {
     esac
 }
 
-# ── Install nginx on ghost-labs ──────────────────────────────────────────
+# ── Install nginx on the production VM ───────────────────────────────────
 #
-# ghost-labs ships without nginx (the signet node only runs bitcoind
+# the production VM ships without nginx (the signet node only runs bitcoind
 # and the ladder-proxy Python service, bound to 0.0.0.0:8340). Install
 # it once before the first cutover. Idempotent: skips if already
 # installed.
 
 install_nginx() {
     echo "=== Install nginx on $WEB_HOST ==="
-    # Open 80/443 in UFW first (idempotent). ghost-labs ships with a
+    # Open 80/443 in UFW first (idempotent). The VM ships with a
     # restrictive UFW policy — default deny, only 22/38333/8340
     # allowed. Without opening 80/443 the nginx install completes but
     # every inbound HTTP request times out at the firewall.
@@ -102,7 +102,7 @@ deploy_web() {
 
     # Note: \$USER is escaped so it evaluates on the remote side, not
     # locally — the remote user is whatever the SSH alias resolves to
-    # (e.g. `ghost` on ghost-labs), not the local user.
+    # (e.g. `ghost` on the VM), not the local user.
     ssh "$WEB_HOST" "sudo mkdir -p $WEB_ROOT && sudo chown -R \$USER:\$USER $WEB_ROOT"
 
     echo "--- Landing page and tools ---"
